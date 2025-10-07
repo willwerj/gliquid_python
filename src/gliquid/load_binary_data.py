@@ -20,7 +20,7 @@ from pymatgen.core import Composition, Element, Structure
 from pymatgen.entries.computed_entries import ComputedEntry
 from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
-import shutil
+# import shutil
 import gliquid.config as config
 
 melt_enthalpies = json.load(open(config.fusion_enthalpies_file)) if os.path.exists(config.fusion_enthalpies_file) else {}
@@ -163,7 +163,7 @@ def extract_digitized_liquidus(mpds_json: dict) -> tuple[list[list] | None, bool
         filled_T = np.linspace(p1[1], p2[1], num_points)
         return [[x, t] for x, t in zip(filled_X, filled_T)][1:-1]
 
-    # Fill in ranges with missing points
+    # Fill in composition ranges with missing liquidus points
     for i in reversed(range(len(mpds_liquidus) - 1)):
         if mpds_liquidus[i + 1][0] - mpds_liquidus[i][0] > 0.06:
             filler = fill_liquidus(mpds_liquidus[i], mpds_liquidus[i + 1], 0.03)
@@ -181,7 +181,7 @@ def extract_digitized_liquidus(mpds_json: dict) -> tuple[list[list] | None, bool
     return mpds_liquidus, is_partial
 
 
-def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, list[list] | None]:
+def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | None, bool]]:
     """Retrieves MPDS data for a binary system.
     
     Args:
@@ -189,9 +189,9 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, list[list] | None]:
         verbose (bool): If True, outputs additional debugging information.
 
     Returns:
-        tuple[dict, dict, list[list]]: A tuple containing the system MPDS JSON, component thermodynamic data, and
-        digitized liquidus curve that is properly formatted for fitting purposes. Note that the MPDS json in the
-        specified cache directory must follow the alphabetized, hyphenated naming convention (e.g. 'A-B.json')
+        tuple[dict, dict, tuple[list[list], bool]]: A tuple containing the system MPDS JSON, component thermodynamic 
+        data, and digitized liquidus curve that is properly formatted for fitting purposes. Note that the MPDS json in 
+        the specified cache directory must follow the alphabetized, hyphenated naming convention (e.g. 'A-B.json')
     """
     components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
     component_data = {
