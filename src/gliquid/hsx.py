@@ -62,7 +62,7 @@ class HSX:
         # Compute S and H bounds
         s_min, s_extr = np.min(self.points[:, -2]), np.max([self.liq_points[0, -2], self.liq_points[-1, -2]])
         h_max = np.max(self.points[:, -1])
-        upper_bound = 10 * h_max
+        upper_bound = 20 * h_max
 
         # Generate fictitious points
         liq_fict_coords = np.column_stack((self.liq_points[:, 0], self.liq_points[:, 1],
@@ -323,17 +323,15 @@ class HSX:
         liq_df.sort_values(by=['x', 't'], inplace=True)
         liq_df.drop_duplicates(subset='x', keep='first', inplace=True)
         solid_df = new_df_tx[new_df_tx['label'] != 'L']
-        # element_df = pd.concat([
-        #     solid_df[solid_df['x'] == 0].nlargest(1, 't', keep='last'),
-        #     solid_df[solid_df['x'] == 100].nlargest(1, 't', keep='last')
-        # ])
-        # element_df['label'] = 'L'
-        # liq_df = pd.concat([liq_df, element_df]).sort_values(by='x')
 
         lhs_tm, rhs_tm = liq_df.iloc[0]['t'], liq_df.iloc[-1]['t']
         max_liq, min_liq = liq_df['t'].max(), liq_df['t'].min()
 
-        if not pred or digitized_liquidus:
+        if digitized_liquidus:
+            max_liq = max(max_liq, max([p[1] - 273.15 for p in digitized_liquidus]))
+            min_liq = min(min_liq, min([p[1] - 273.15 for p in digitized_liquidus]))
+
+        if not pred:
             self.conds[1] = max(min(self.conds[1] * 2 + 100, max_liq), self.conds[1])
         else:
             self.conds = [min_liq - 0.1 * (max_liq - min_liq), max_liq]

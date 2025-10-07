@@ -1,6 +1,6 @@
 """
 Authors: Joshua Willwerth, Shibo Tan, Abrar Rauf
-Last Modified: August 12, 2025
+Last Modified: August 4, 2025
 Description: This script is designed for the thermodynamic modeling of two-component systems.
 It provides tools for fitting the non-ideal mixing parameters of the liquid phase from T=0K DFT-calculated phases and
 digitized equilibrium phase boundary data. The data stored and produced may be visualized using the BLPlotter class
@@ -25,7 +25,7 @@ from itertools import combinations
 from io import StringIO
 from pymatgen.core import Composition
 
-from gliquid.phase_diagram import PDPlotter, PhaseDiagram, PDEntry  # Note that the PMG PDPlotter source code has been modified
+from gliquid.phase_diagram import PDPlotter, PhaseDiagram, PDEntry  # The PMG PDPlotter source code is modified here
 import gliquid.load_binary_data as lbd
 from gliquid.hsx import HSX
 
@@ -151,6 +151,32 @@ def build_thermodynamic_expressions(param_format: str = 'linear',
     }
 
 
+def build_phases_from_chull(ch: PhaseDiagram, component_name: str) -> list[dict]:
+    """
+    Updates the phase list with new phase data.
+
+    Args:
+        ch (PhaseDiagram): A pymatgen PhaseDiagram object containing stable entries.
+        component_name (str): The name of the second component in the binary system.
+
+    Returns:
+        list: Updated list of phase dictionaries.
+    """
+    phases = []
+    for entry in ch.stable_entries:
+        composition = entry.composition.fractional_composition.as_dict().get(component_name, 0)
+        phase = {
+            'name': entry.name,
+            'comp': composition,
+            'energy': 96485 * ch.get_form_energy_per_atom(entry),
+            'points': [],
+        }
+        phases.append(phase)
+    phases.sort(key=lambda x: x['comp'])
+    phases.append({'name': 'L', 'points': []})
+    return phases
+
+
 def validate_binary_mixing_parameters(input, param_format='linear') -> list[int | float]:
     """
     Args:
@@ -228,10 +254,16 @@ class BinaryLiquid:
         self.nmpath = None
         self.hsx = None
 
-
+    def __str__(self):
+        return f"BinaryLiquid({self.sys_name})"
+    
+    def __repr__(self):
+        return (f"BinaryLiquid(sys_name='{self.sys_name}', components={self.components}, "
+                f"params={self._params}, param_format='{self._param_format}', dft_type='{self.dft_type}')")
+    
     @classmethod
     def from_cache(cls, input, dft_type='GGA', pd_ind=None, params=[], param_format='linear', reconstruction=False, 
-                   comp_range_fit_lim=0.3) -> BinaryLiquid:
+                   comp_range_fit_lim=0.3, **kwargs) -> BinaryLiquid:
         """
         Initializes a BinaryLiquid object from cached data.
 
@@ -256,21 +288,7 @@ class BinaryLiquid:
                 params[2] *= -1
 
         ch, _ = lbd.get_dft_convexhull(components, dft_type)
-        phases = []
-        for entry in ch.stable_entries:
-            composition = entry.composition.fractional_composition.as_dict().get(components[1], 0)
-            phase = {
-                'name': entry.name,
-                'comp': composition,
-                'points': [],
-                'energy': 96485 * ch.get_form_energy_per_atom(entry),
-            }
-            phases.append(phase)
-        phases.sort(key=lambda x: x['comp'])
-
-        hull_points = np.array([[p['comp'], p['energy']] for p in phases])
-
-        phases.append({'name': 'L', 'points': []})
+        phases = build_phases_from_chull(ch, components[1])
 
         mpds_json, component_data, (digitized_liq, is_partial) = lbd.load_mpds_data(components, pd_ind=pd_ind)
         if not reconstruction and not is_partial and digitized_liq:
@@ -290,24 +308,30 @@ class BinaryLiquid:
             gb_expr=component_data[components[1]][0] - \
                 t_sym * component_data[components[1]][0] / component_data[components[1]][1])
         
+        hull_points = np.array([[p['comp'], p['energy']] for p in phases if 'comp' in p])
         eqs['h_hull_interp'] = np.interp(_x_vals[1:-1], hull_points[:, 0], hull_points[:, 1])
         init_triangle = build_init_triangle(param_format=param_format)
 
         comp_range = mpds_json.get('comp_range', [0, 100]) # Need to transform liquidus x when comp_range is partial?
         comp_range = [max(min(digitized_liq, key=lambda x: x[0])[0], comp_range[0]/100.0), 
                       min(max(digitized_liq, key=lambda x: x[0])[0], comp_range[1]/100.0)] if digitized_liq else comp_range
-
-        if not digitized_liq or (comp_range[1] - comp_range[0]) < comp_range_fit_lim:
-            return cls(sys_name, components, True, mpds_json=mpds_json, component_data=component_data,
-                       temp_range=temp_range, dft_type=dft_type, dft_ch=ch, phases=phases, params=params, 
-                       param_format=param_format, eqs=eqs, pd_ind=pd_ind, init_triangle=init_triangle,
-                       comp_range_fit_lim=comp_range_fit_lim)
-
-        return cls(sys_name, components, False, mpds_json=mpds_json, component_data=component_data,
-                   digitized_liq=digitized_liq, temp_range=temp_range, dft_type=dft_type, dft_ch=ch, phases=phases,
-                   params=params, param_format=param_format, eqs=eqs, pd_ind=pd_ind, init_triangle=init_triangle,
-                   comp_range_fit_lim=comp_range_fit_lim)
-    
+        init_error = not (bool(digitized_liq) or bool((comp_range[1] - comp_range[0]) < comp_range_fit_lim))
+        kwargs.update({
+            'mpds_json': mpds_json,
+            'component_data': component_data,
+            'digitized_liq': digitized_liq,
+            'temp_range': temp_range,
+            'dft_type': dft_type,
+            'dft_ch': ch,
+            'phases': phases,
+            'params': params,
+            'param_format': param_format,
+            'eqs': eqs,
+            'pd_ind': pd_ind,
+            'init_triangle': init_triangle,
+            'comp_range_fit_lim': comp_range_fit_lim
+        })
+        return cls(sys_name, components, init_error, **kwargs)
 
     def to_HSX(self, fmt="dict") -> dict | pd.DataFrame:
         """
@@ -832,7 +856,7 @@ class BinaryLiquid:
             last_coords = coords
         return True
     
-    def calculate_deviation_metrics(self, num_points=30, **kwargs) -> tuple[float, float]:
+    def calculate_deviation_metrics(self, num_points=30, **kwargs) -> tuple[float, float, float, float]:
         """
         Calculates the deviation metrics between the digitized (measured) liquidus and the generated liquidus.
 
@@ -840,32 +864,34 @@ class BinaryLiquid:
             num_points (int): Number of points to sample for deviation metrics. Default is 30.
             **kwargs: Additional keyword arguments:
                 - ignored_ranges (bool): If True, ignores the composition ranges specified in self.ignored_comp_ranges.
-                - small_range (bool): If True, allows for small composition ranges in the generated points.
+                - allow_sparse_data (bool): If True, allows for small composition ranges in the generated points.
 
         Returns:
-            tuple: Mean absolute error (MAE) and root mean square error (RMSE).
+            tuple: MAE, RMSE, MAPE, RMSPE of the liquidus in temperature units (K) and percentage (%).
         """
         # Convert liquidus data to numpy arrays
+        if self.init_error or not self.digitized_liq:
+            return (float('inf'),) * 4
         digitized = np.array(self.digitized_liq)
+        if not self.phases[-1]['points']:
+            self.update_phase_points()
         generated = np.array(self.phases[-1]['points'])
 
         # Filter out endpoint compositions (x=0 and x=1)
         mask = (digitized[:, 0] != 0) & (digitized[:, 0] != 1)
         if not np.any(mask):
-            return float('inf'), float('inf')
+            return (float('inf'),) * 4
         digitized = digitized[mask]
-
-        if len(digitized) > 1: # Composition range limits imposed by input liquidus data
-            digitized_liq_lims = [digitized[0, 0], digitized[-1, 0]] 
-        else: # 1 point only limit
-            digitized_liq_lims = [digitized[0, 0] - 5 * _x_step, digitized[0, 0] + 5 * _x_step]
-
-        # Composition range limits imposed by ignored ranges
+  
+        digitized_liq_lims = [digitized[0, 0], digitized[-1, 0]] 
         if kwargs.get('ignored_ranges', True) and self.ignored_comp_ranges: 
-            mask = np.ones_like(generated[:, 0], dtype=bool)
+            dig_mask = np.ones_like(digitized[:, 0], dtype=bool)
+            gen_mask = np.ones_like(generated[:, 0], dtype=bool)
             for lower, upper in self.ignored_comp_ranges:
-                mask = mask & ((generated[:, 0] < lower) | (generated[:, 0] > upper))
-            generated = generated[mask] 
+                gen_mask = gen_mask & ((generated[:, 0] < lower) | (generated[:, 0] > upper))
+                dig_mask = dig_mask & ((digitized[:, 0] < lower) | (digitized[:, 0] > upper))    
+            generated = generated[gen_mask]
+            digitized = digitized[dig_mask]
             ignored_comp_lims = [generated[0, 0], generated[-1, 0]]
         else:
             ignored_comp_lims = [0, 1]
@@ -873,23 +899,30 @@ class BinaryLiquid:
         x_min = max(_x_step, digitized_liq_lims[0], ignored_comp_lims[0])
         x_max = min(1 - _x_step, digitized_liq_lims[1], ignored_comp_lims[1])
         if x_max - x_min < self.comp_range_fit_lim:
-            print(f"Error: Large composition range filtered out (remaining range = {[x_min, x_max]})")
-            return float('inf'), float('inf')
+            print(f"Error: Large composition range not considered (remaining range = {[float(x_min), float(x_max)]})")
+            return (float('inf'),) * 4
 
-        # Reduce the composition range of the generated points to the composition range of digitized points
-        generated = generated[(generated[:, 0] >= digitized[0, 0]) & (generated[:, 0] <= digitized[-1, 0])]
-        if not kwargs.get('small_range', False) and len(generated) <= num_points:
-            print("Error: Not enough generated points for accurate deviation metrics calculation.")
-            return float('inf'), float('inf')
+        x_mesh = np.linspace(x_min, x_max, num_points)
+        mesh_mask = np.ones_like(x_mesh, dtype=bool)
+        if kwargs.get('ignored_ranges', True) and self.ignored_comp_ranges:
+            for lower, upper in self.ignored_comp_ranges:
+                mesh_mask = mesh_mask & ((x_mesh < lower) | (x_mesh > upper))
+        x_mesh = x_mesh[mesh_mask]
+        
+        if len(digitized) < len(x_mesh):
+            x_mesh = np.array([pt[0] for pt in digitized])
 
-        # Determine x-coordinates for evaluation not exceeding the number of generated points
-        x_mesh = np.linspace(x_min, x_max, min(num_points, len(generated) + 1))
-
+        if not kwargs.get('allow_sparse_data', False) and len(x_mesh) < 10:
+                print("Error: Not enough comparison points for accurate deviation metrics calculation.")
+                return (float('inf'),) * 4
+        
         # Find closest temperature values for each evaluation point
         Y1 = np.array([digitized[np.argmin(np.abs(digitized[:, 0] - x)), 1] for x in x_mesh])
         Y2 = np.array([generated[np.argmin(np.abs(generated[:, 0] - x)), 1] for x in x_mesh])
         diffs = np.abs(Y1 - Y2)
-        return float(np.mean(diffs)), float(np.sqrt(np.mean(diffs**2)))
+        pdiffs = diffs / Y1 * 100
+        return (float(np.mean(diffs)), float(np.sqrt(np.mean(diffs**2))),
+                float(np.mean(pdiffs)), float(np.sqrt(np.mean(pdiffs**2))))
     
     def f(self, guess: list | tuple, **kwargs) -> float:
         """
@@ -928,7 +961,7 @@ class BinaryLiquid:
             print(f'Liquidus continuity constraint violated for guess {self.get_params()}')
             return float('inf')
         # Evaluate the liquidus temperature deviation metrics
-        mae, _ = self.calculate_deviation_metrics(**kwargs)
+        mae, _, _, _ = self.calculate_deviation_metrics(**kwargs)
         return mae
 
     def nelder_mead(self, max_iter=64, tol=0.05, verbose=False, 
@@ -980,9 +1013,10 @@ class BinaryLiquid:
                     print("--- Nelder-Mead stopped after %s seconds ---" % (time.time() - initial_time))
                     best_recent_idx = np.argmin(self.nmpath[:, -1, i-1])
                     self.f(self.nmpath[best_recent_idx, :-1, i-1], **kwargs)
-                    mae, rmse = self.calculate_deviation_metrics(**kwargs)
+                    kwargs['ignored_ranges'] = False # Re-include all points for final metrics
+                    mae, rmse, mape, rmspe = self.calculate_deviation_metrics(**kwargs)
                     print("Mean temperature deviation per point between liquidus curves =", mae, '\n')
-                    return mae, rmse, self.nmpath[:, :, :i]
+                    return (mae, rmse, mape, rmspe), self.nmpath[:, :, :i]
 
             centroid = np.mean(x0[f_vals != f_vals[iworst]], axis=0)
             xreflect = centroid + 1.0 * (centroid - x0[iworst, :])
@@ -1018,7 +1052,7 @@ class BinaryLiquid:
                         x0[imid, :] = x0[ibest, :] + 0.5 * (x0[imid, :] - x0[ibest, :])
 
             if verbose:
-                guess_dict = {symbol: guess for symbol, guess in zip(self.guess_symbols, x0[ibest, :])}
+                guess_dict = {symbol: float(guess) for symbol, guess in zip(self.guess_symbols, x0[ibest, :])}
                 print("Best guess:", guess_dict, f'f={f_vals[ibest]}')
                 print("Height of triangle =", 2 * np.max(np.abs(x0 - centroid)))
                 print("--- %s seconds elapsed ---" % (time.time() - start_time))
@@ -1027,20 +1061,22 @@ class BinaryLiquid:
             if np.max(np.abs(x0 - centroid)) < tol:
                 self.f(x0[ibest, :], **kwargs)
                 print("--- Nelder-Mead converged in %s seconds ---" % (time.time() - initial_time))
-                mae, rmse = self.calculate_deviation_metrics(**kwargs)
+                kwargs['ignored_ranges'] = False # Re-include all points for final metrics
+                mae, rmse, mape, rmspe = self.calculate_deviation_metrics(**kwargs)
                 print("Mean temperature deviation per point between liquidus curves =", mae, '\n')
                 self.nmpath = self.nmpath[:, :, :i]
-                return mae, rmse, self.nmpath
+                return (mae, rmse, mape, rmspe), self.nmpath
             
             if i >= 1: # Overexpansion limit - if MAE is not improving significantly, stop Nelder-Mead
                 f_improvement = np.min(self.nmpath[:, -1, i-1])/self.nmpath[ibest, -1, i]
-                if 1 < f_improvement < 1.00001:
+                if 1 < f_improvement < 1.00005:
                     print("--- Nelder-Mead stopped after %s seconds ---" % (time.time() - initial_time))
                     self.f(x0[ibest, :], **kwargs)
-                    mae, rmse = self.calculate_deviation_metrics(**kwargs)
+                    kwargs['ignored_ranges'] = False # Re-include all points for final metrics
+                    mae, rmse, mape, rmspe = self.calculate_deviation_metrics(**kwargs)
                     print("Mean temperature deviation per point between liquidus curves =", mae, '\n')
                     self.nmpath = self.nmpath[:, :, :i]
-                    return mae, rmse, self.nmpath
+                    return (mae, rmse, mape, rmspe), self.nmpath
                 
         raise RuntimeError("Nelder-Mead algorithm did not converge within limit.")
 
@@ -1055,14 +1091,16 @@ class BinaryLiquid:
             n_opts (int): Number of optimization attempts. Updates the BinaryLiquid object to reflect the lowest MAE fit
             t_tol (float): Temperature tolerance for invariant point identification.
             **kwargs: Additional keyword arguments for fitting options or arguments passed to nelder-mead.
-                - ignore_euts (bool): If True, ignores eutectics as constraints if critical eutectic phases are missing.
+                - max_iter (int): Maximum number of iterations for the Nelder-Mead algorithm. Default is 64.
+                - disable_inv_constrs (bool): If True, does not use invariant points as constraints.
                 - ignored_ranges (bool): If True, ignores the composition ranges specified in self.ignored_comp_ranges.
-                - small_range (bool): If True, allows for small composition ranges in the generated points.
+                - allow_sparse_data (bool): If True, allows for small composition ranges in the generated points.
                 - check_full_ss (bool): If True, checks if the full solid solution is present in the system.
                 - check_phase_mismatch (bool): If True, checks phase mismatch between invariant points and self.phases.
                 - check_lupis_elliott (bool): If True, checks Lupis-Elliott sign constraints.
                 - check_h0_below_ch (bool): If True, checks if the liquid enthalpy at T=0K is below the solid convex hull.
                 - check_liquidus_continuity (bool): If True, checks if the generated liquidus is continuous.
+                - params_init (list): Initial parameter guesses for the Nelder-Mead algorithm.
 
         Returns:
             list[dict]: Parameter fitting data containing results of all optimization attempts.
@@ -1088,7 +1126,7 @@ class BinaryLiquid:
                     return abs((self.digitized_liq[i][1] + self.digitized_liq[i + 1][1]) / 2 - phase['tbounds'][1][1]) < tol
 
         # Find invariant points, can set self.init_error to True if system is identified to be isomorphous
-        if self.invariants is None:
+        if self.invariants is None and not kwargs.get('disable_inv_constrs', False):
             self.invariants, mpds_lowt_phases = self.find_invariant_points(
                 verbose=True, t_tol=t_tol, check_full_ss=kwargs.get('check_full_ss', True))
             # Low T phases that decompose near the liquidus line and aren't component solid solutions are critical
@@ -1104,105 +1142,108 @@ class BinaryLiquid:
 
         if self.init_error:
             return []
-
+        
         # Compare invariant points to self.phases to assess solving conditions
         eqs = []
-        for inv in self.invariants:
-            if inv['type'] == 'mig':
-                x1, t1 = inv['cbounds'][0]  # Bottom left of dome
-                x2, t2 = inv['tbounds'][1]  # Top of dome
-                x3, t3 = inv['cbounds'][1]  # Bottom right of dome
+        auto_ignored_ranges = not bool(self.ignored_comp_ranges)
+        if not kwargs.get('disable_inv_constrs', False):
+            for inv in self.invariants:
+                if inv['type'] == 'mig':
+                    x1, t1 = inv['cbounds'][0]  # Bottom left of dome
+                    x2, t2 = inv['tbounds'][1]  # Top of dome
+                    x3, t3 = inv['cbounds'][1]  # Bottom right of dome
 
-                eqn1 = sp.Eq(self.eqs['g_double_prime'].subs({xb_sym: x2, t_sym: t2}), 0)
-                eqn4 = sp.Eq(self.eqs['g_prime'].subs({xb_sym: x1, t_sym: t1}), self.eqs['g_prime'].subs({xb_sym: x3, t_sym: t3}))
+                    eqn1 = sp.Eq(self.eqs['g_double_prime'].subs({xb_sym: x2, t_sym: t2}), 0)
+                    eqn4 = sp.Eq(self.eqs['g_prime'].subs({xb_sym: x1, t_sym: t1}), self.eqs['g_prime'].subs({xb_sym: x3, t_sym: t3}))
 
-                eqs.append([f'mig - {round(x2, 2)}', '2nd order', t2, eqn1])
-                eqs.append([f'mig - {round(x1, 2)}-{round(x3, 2)}', '1st order', t1, eqn4])
+                    eqs.append([f'mig - {round(x2, 2)}', '2nd order', t2, eqn1])
+                    eqs.append([f'mig - {round(x1, 2)}-{round(x3, 2)}', '1st order', t1, eqn4])
 
-            if inv['type'] == 'cmp':
-                if '(' in inv['phases'][0]:
-                    if inv['comp'] < 0.5:
-                        self.ignored_comp_ranges.append([0, inv['comp']])
-                    elif inv['comp'] > 0.5:
-                        self.ignored_comp_ranges.append([inv['comp'], 1])
-                    continue
+                if inv['type'] == 'cmp' and auto_ignored_ranges:
+                    if '(' in inv['phases'][0]:
+                        if inv['comp'] < 0.5:
+                            self.ignored_comp_ranges.append([0, inv['comp']])
+                        elif inv['comp'] > 0.5:
+                            self.ignored_comp_ranges.append([inv['comp'], 1])
+                        continue
 
-                nearest_phase, _ = find_nearest_phase(inv['comp'])
-                if not nearest_phase:
-                    continue
+                    nearest_phase, _ = find_nearest_phase(inv['comp'])
+                    if not nearest_phase:
+                        continue
 
-                x1, t1 = nearest_phase['comp'], inv['temp']
-                eqn = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), nearest_phase['energy'])
-                eqs.append(['cmp', f'{round(x1, 2)} - 0th order', t1, eqn])
+                    x1, t1 = nearest_phase['comp'], inv['temp']
+                    eqn = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), nearest_phase['energy'])
+                    eqs.append(['cmp', f'{round(x1, 2)} - 0th order', t1, eqn])
 
-            if inv['type'] == 'per':
-                if '(' in inv['phases'][0]:
-                    if inv['phase_comps'][0] < inv['comp']:
-                        self.ignored_comp_ranges.append([0, inv['comp']])
-                    elif inv['phase_comps'][0] > inv['comp']:
-                        self.ignored_comp_ranges.append([inv['comp'], 1])
-                    continue
+                if inv['type'] == 'per' and auto_ignored_ranges:
+                    if '(' in inv['phases'][0]:
+                        if inv['phase_comps'][0] < inv['comp']:
+                            self.ignored_comp_ranges.append([0, inv['comp']])
+                        elif inv['phase_comps'][0] > inv['comp']:
+                            self.ignored_comp_ranges.append([inv['comp'], 1])
+                        continue
 
-                per_phase, _ = find_nearest_phase(inv['phase_comps'][0], tol=0.04)
-                if not per_phase:
-                    continue
+                    per_phase, _ = find_nearest_phase(inv['phase_comps'][0], tol=0.04)
+                    if not per_phase:
+                        continue
 
-                x1, t1 = inv['comp'], inv['temp']
-                x2, g2 = per_phase['comp'], per_phase['energy']
+                    x1, t1 = inv['comp'], inv['temp']
+                    x2, g2 = per_phase['comp'], per_phase['energy']
 
-                eqn1 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}) + self.eqs['g_prime'].subs({xb_sym: x1, t_sym: t1}) * (x2 - x1), g2)
-                eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), g2)
+                    eqn1 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}) + self.eqs['g_prime'].subs({xb_sym: x1, t_sym: t1}) * (x2 - x1), g2)
+                    eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), g2)
 
-                liq_point_at_phase = min(self.digitized_liq, key=lambda x: abs(x[0] - x2))
-                temp_below_liq = liq_point_at_phase[1] - t1
+                    liq_point_at_phase = min(self.digitized_liq, key=lambda x: abs(x[0] - x2))
+                    temp_below_liq = liq_point_at_phase[1] - t1
 
-                if temp_below_liq > t_tol:
-                    eqs.append([f'per - {round(x1, 2)}', '0th order', t1, eqn1])
-                else:
-                    eqs.append([f'per - {round(x1, 2)}', 'pseudo 0th order', t1, eqn2])
+                    if temp_below_liq > t_tol:
+                        eqs.append([f'per - {round(x1, 2)}', '0th order', t1, eqn1])
+                    else:
+                        eqs.append([f'per - {round(x1, 2)}', 'pseudo 0th order', t1, eqn2])
 
-            if inv['type'] == 'eut':
-                if None in inv['phase_comps']:
-                    continue
+                if inv['type'] == 'eut':
+                    if None in inv['phase_comps']:
+                        continue
 
-                lhs_phase, _ = find_nearest_phase(inv['phase_comps'][0], tol=0.04)
-                rhs_phase, _ = find_nearest_phase(inv['phase_comps'][1], tol=0.04)
+                    lhs_phase, _ = find_nearest_phase(inv['phase_comps'][0], tol=0.04)
+                    rhs_phase, _ = find_nearest_phase(inv['phase_comps'][1], tol=0.04)
 
-                if kwargs.get('ignore_euts', True):
                     invalid_eut = False
                     if not lhs_phase or lhs_phase['comp'] > inv['comp']:
-                        self.ignored_comp_ranges.append([inv['phase_comps'][0], inv['comp']])
+                        if auto_ignored_ranges:
+                            self.ignored_comp_ranges.append([inv['phase_comps'][0], inv['comp']])
                         invalid_eut = True
                     elif '(' in inv['phases'][0] and inv['phase_comps'][0] > 0.05:
                         invalid_eut = True
                     if not rhs_phase or rhs_phase['comp'] < inv['comp']:
-                        self.ignored_comp_ranges.append([inv['comp'], inv['phase_comps'][1]])
+                        if auto_ignored_ranges:
+                            self.ignored_comp_ranges.append([inv['comp'], inv['phase_comps'][1]])
                         invalid_eut = True
                     elif '(' in inv['phases'][1] and inv['phase_comps'][1] < 0.95:
                         invalid_eut = True
                     if invalid_eut:
                         continue
 
-                x1, g1 = lhs_phase['comp'], lhs_phase['energy']
-                x2, t2 = inv['comp'], inv['temp']
-                x3, g3 = rhs_phase['comp'], rhs_phase['energy']
+                    x1, g1 = lhs_phase['comp'], lhs_phase['energy']
+                    x2, t2 = inv['comp'], inv['temp']
+                    x3, g3 = rhs_phase['comp'], rhs_phase['energy']
 
-                eqn1 = sp.Eq(self.eqs['g_prime'].subs({xb_sym: x2, t_sym: t2}), (g3 - g1) / (x3 - x1))
-                eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) + 
-                             self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) * (x1 - x2), g1)
-                eqn3 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) + 
-                             self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) * (x3 - x2), g3)
+                    eqn1 = sp.Eq(self.eqs['g_prime'].subs({xb_sym: x2, t_sym: t2}), (g3 - g1) / (x3 - x1))
+                    eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) + 
+                                self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) * (x1 - x2), g1)
+                    eqn3 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) + 
+                                self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) * (x3 - x2), g3)
 
-                eqs.append([f'eut - {round(x2, 2)}', '1st order', t2, eqn1])
-                if g1 <= g3:
-                    eqs.append([f'eut - {round(x2, 2)}', '0th order lhs', t2, eqn2])
-                else:
-                    eqs.append([f'eut - {round(x2, 2)}', '0th order rhs', t2, eqn3])
+                    eqs.append([f'eut - {round(x2, 2)}', '1st order', t2, eqn1])
+                    if g1 <= g3:
+                        eqs.append([f'eut - {round(x2, 2)}', '0th order lhs', t2, eqn2])
+                    else:
+                        eqs.append([f'eut - {round(x2, 2)}', '0th order rhs', t2, eqn3])
 
 
         # # Determine the sign of the enthalpy of mixing and modify default initial guesses accordingly
         # currently only used for linear model defult initial guesses, TODO: find a better way to do this
-        self.update_params([])
+        self.update_params(kwargs.get('params_init', []))
         self.update_phase_points()
         # BLPlotter(self).show('fit+liq') # Show the current HSX object
         mid_digitized_liq = min(self.digitized_liq, key=lambda x: abs(x[0] - 0.5)) # closest to middle as possible
@@ -1215,7 +1256,7 @@ class BinaryLiquid:
             hull_skew = (self.component_data[self.components[1]][0] - self.component_data[self.components[0]][0]) / 4.0
             for phase in self.phases[:-1]:
                 hull_skew += (phase['comp'] - 0.5) * phase['energy']
-            return hull_skew
+            return float(hull_skew)
     
         # Test invariant-derived equations for validity as constraints
         two_constr_methods = ['combined', 'exponential', 'linear']
@@ -1286,7 +1327,7 @@ class BinaryLiquid:
                 hull_mid_ref = self.dft_ch.get_hull_energy_per_atom(Composition({c: 0.5 for c in self.components}))
                 e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + self.component_data[self.components[0]][0] + 
                                                 rhs_ref * 96485 + self.component_data[self.components[1]][0]) / 2 
-                return e_depth
+                return float(e_depth)
             
             skew_e = get_hull_skew()
             e_depth = get_hull_midpoint_depth_from_h0()
@@ -1304,12 +1345,13 @@ class BinaryLiquid:
             return l_guesses
 
         try:
-            self.update_params([]) # Restore parameter defaults
+            self.update_params(kwargs.get('params_init', [])) # Restore parameter defaults
             self.guess_symbols = [a_sym, c_sym]
             self.constraints = sp.solve([no_L0Sxs_eq, no_L1Sxs_eq], (b_sym, d_sym), rational=False, simplify=False)
             psuedo_triangle = gen_la_triangle()
             print("Initial triangle for pseudo-constraints:", psuedo_triangle)
-            init_mae, _, _ = self.nelder_mead(tol=10, verbose=True, initial_guesses=psuedo_triangle, **kwargs)
+            (init_mae, _, _, _), _ = self.nelder_mead(tol=10, verbose=verbose, initial_guesses=psuedo_triangle, **kwargs)
+
             eq1 = sp.Eq(self.eqs['l0'].subs({t_sym: mean_liq_temp}),
                         self.eqs['l0'].subs({t_sym: mean_liq_temp, a_sym: self.get_L0_a(), b_sym: self.get_L0_b()}))
             
@@ -1357,17 +1399,15 @@ class BinaryLiquid:
             self.constraints = sp.solve(selected_eqs, solve_symbols, rational=False, simplify=False)
             convergence_tol = 5 if self._param_format == 'exponential' else 5E-2 # Changed from 5E-1
             try:
-                mae, rmse, path = self.nelder_mead(verbose=verbose, tol=convergence_tol,
+                (mae, rmse, mape, rmspe), path = self.nelder_mead(verbose=verbose, tol=convergence_tol,
                                                    initial_guesses=selected_ics['init_tri'], **kwargs)
             except RuntimeError as e:
                 print("Nelder-Mead process encountered a fatal error: ", e)
                 continue
-            norm_mae = mae / self.max_liq_temp
-            norm_rmse = rmse / self.max_liq_temp
             l0 = float(self.eqs['l0'].subs({t_sym: mean_liq_temp, a_sym: self.get_L0_a(), b_sym: self.get_L0_b()}))
             l1 = float(self.eqs['l1'].subs({t_sym: mean_liq_temp, c_sym: self.get_L1_a(), d_sym: self.get_L1_b()}))
             fit_invs = self.hsx.liquidus_invariants()[0]
-            fitting_data.append({'mae': mae, 'rmse': rmse, 'norm_mae': norm_mae, 'norm_rmse': norm_rmse, 
+            fitting_data.append({'mae': mae, 'rmse': rmse, 'mape': mape, 'rmspe': rmspe, 
                                  'constrs': constrs_str, 'algo': constr_algo, 'n_iters': path.shape[2], 'nmpath': path,
                                  'L0_a': self.get_L0_a(), 'L0_b': self.get_L0_b(), 'L1_a': self.get_L1_a(),
                                  'L1_b': self.get_L1_b(), 'L0': l0, 'L1': l1,
@@ -1580,6 +1620,11 @@ class BLPlotter:
             """
             if any(len(Composition(comp).as_dict()) > 1 for comp in self._bl.components):
                 raise NotImplementedError("This feature is not presently supported for compound components")
+            
+            if not self._bl.component_data:
+                print("BinaryLiquid object phase diagram not initialized! Returning plot without liquid energy")
+                plot_type = 'ch' # Override to avoid errors
+
             if plot_type == 'vch':
                 # Generate volume-referenced convex hull
                 ch, atomic_vols = lbd.get_dft_convexhull(self._bl.sys_name, self._bl.dft_type, inc_structure_data=True)
@@ -1591,24 +1636,17 @@ class BLPlotter:
 
                 vch = PhaseDiagram(new_entries)
                 pdp = PDPlotter(vch)
+                fig = pdp.get_plot()
+                fig.update_yaxes(title={'text': 'Referenced Atomic Volume (Å^3/atom)'})
             else:
-                # Use the standard convex hull
                 pdp = PDPlotter(self._bl.dft_ch)
-
-            if plot_type in ['ch', 'vch']:
-                # Generate a basic convex hull plot
+            
+            if plot_type == 'ch':
+                # Use the standard convex hull
                 fig = pdp.get_plot()
 
-                if plot_type == 'vch':
-                    fig.update_yaxes(title={'text': 'Referenced Atomic Volume (Å^3/atom)'})
-
-            elif (not self._bl.component_data or not self._bl.digitized_liq) and 't_vals' not in kwargs:
-                # Handle uninitialized BinaryLiquid data
-                print("BinaryLiquid object phase diagram not initialized! Returning plot without liquid energy")
-                fig = pdp.get_plot()
-
-            else:
-                # Generate convex hull plot with liquidus curves
+            else: # plot_type == 'ch+g'
+                # Generate convex hull plot with liquidus curves overlaid
                 t_vals = kwargs.get('t_vals', [])
                 if not isinstance(t_vals, list) or not all(isinstance(t, (int, float)) for t in t_vals):
                     raise ValueError("kwarg 't_vals' must be a list of valid temperatures, either as ints or floats!")
@@ -1618,24 +1656,24 @@ class BLPlotter:
                 if t_units and not t_vals:
                     print("No arguments specified for 't_vals', setting 't_units' to 'K'")
 
-                max_phase_temp = 0
-                if not t_vals:
-                    t_units = 'K'
-
-                    # Estimate temperature range from liquidus data
-                    asc_temp = sorted(self._bl.digitized_liq, key=lambda x: x[1])
-                    mpds_phases = lbd.identify_mpds_phases(self._bl.mpds_json)
-
-                    if mpds_phases:
-                        max_phase_temp = max(mpds_phases, key=lambda x: x['tbounds'][1][1])['tbounds'][1][1]
+                if not t_vals: # Determine max phase temp if there are compounds, else maximum or minimum liquidus temp
+                    if not self._bl.phases[-1]['points']:
+                        self._bl.update_phase_points()
+                    solid_phases = [p for p in self._bl.phases if (p['name'] not in self._bl.components + ['L'])
+                                     and len(p['points']) > 0]
+                    if solid_phases:
+                        max_phase_temp = max([max(p['points'], key=lambda x: x[1])[1] for p in solid_phases])
+                    elif max(self._bl.phases[-1]['points'], key=lambda x: x[1])[1] > max(self._bl.component_data.values(),
+                                                                                         key=lambda x: x[1])[1]:
+                        max_phase_temp = max(self._bl.phases[-1]['points'], key=lambda x: x[1])[1] # liquid misc gap
                     else:
-                        max_phase_temp = asc_temp[0][1]
+                        max_phase_temp = min(self._bl.phases[-1]['points'], key=lambda x: x[1])[1] # eutectic or azeotrope
+                    t_units = 'K'
+                    t_vals = [max_phase_temp, 0]
                 if t_units == 'C':
                     t_vals = [t + 273.15 for t in t_vals if t >= 0]
                 else:
                     t_vals = [t for t in t_vals if t >= 0]
-
-                params = self._bl._params
 
                 def get_g_curve(A=0, B=0, C=0, D=0, T=0, name="") -> go.Scatter:
                     """
@@ -1660,26 +1698,16 @@ class BLPlotter:
                         mode='lines',
                         name=name
                     )
+      
+                # Generate liquidus curve traces
+                params = self._bl.get_params()
+                fig = pdp.get_plot(data=[get_g_curve(A=params[0], B=params[1], C=params[2], D=params[3], T=temp) 
+                                         for temp in reversed(t_vals)])
 
-                # Generate liquidus curves
-                if t_vals:
-                    traces = [get_g_curve(A=params[0], B=params[1], C=params[2], D=params[3], T=temp)
-                            for temp in reversed(t_vals)]
-                else:
-                    traces = [
-                        # get_g_curve(B=1E-10, D=1E-10, T=max_phase_temp),
-                        get_g_curve(A=params[0], B=params[1], C=params[2], D=params[3], T=max_phase_temp),
-                        # get_g_curve(B=1E-10, D=1E-10),
-                        get_g_curve(A=params[0], B=params[1], C=params[2], D=params[3]),
-                    ]
-
-                # Add traces to convex hull plot
-                fig = pdp.get_plot(data=traces)
-
-            fig.update_layout(plot_bgcolor="white",
-                              paper_bgcolor="white", 
+            fig.update_layout(plot_bgcolor='white',
+                              paper_bgcolor='white', 
                               xaxis=dict(title=dict(text="Composition (fraction)")),
-                              width=960, height=700)
+                              width=750, height=600)
             return fig
 
     def _generate_liquidus_fit_plot(self, plot_type: str) -> go.Figure:
