@@ -20,7 +20,6 @@ from pymatgen.core import Composition, Element, Structure
 from pymatgen.entries.computed_entries import ComputedEntry
 from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
-# import shutil
 import gliquid.config as config
 
 melt_enthalpies = json.load(open(config.fusion_enthalpies_file)) if os.path.exists(config.fusion_enthalpies_file) else {}
@@ -84,7 +83,6 @@ def extract_digitized_liquidus(mpds_json: dict) -> tuple[list[list] | None, bool
     if mpds_json.get('reference') is None:
         print("No data in MPDS JSON.")
         return None, False
-
     data = next((b['svgpath'] for b in mpds_json['shapes'] if b.get('label') == 'L'), "")
     if not data:
         print("No liquidus data found.")
@@ -503,22 +501,22 @@ def get_dft_convexhull(input, dft_type='GGA',
             json.dump(computed_entry_dicts, f)
 
     if any(len(Composition(c).elements) > 1 for c in components):
-        pd = CompoundPhaseDiagram(
+        dft_ch = CompoundPhaseDiagram(
             terminal_compositions=[Composition(c) for c in components],
             entries=[ComputedEntry.from_dict(e) for e in computed_entry_dicts],
         )
     else:
-        pd = PhaseDiagram(
+        dft_ch = PhaseDiagram(
             elements=[Element(c) for c in components],
             entries=[ComputedEntry.from_dict(e) for e in computed_entry_dicts],
         )
     if verbose:
-        print(f"{len(pd.stable_entries) - 2} stable line compound(s) on the DFT convex hull.")
+        print(f"{len(dft_ch.stable_entries) - 2} stable line compound(s) on the DFT convex hull.")
 
     stable_entry_atomic_volumes = {}
 
     if inc_structure_data:
-        for entry in pd.stable_entries:
+        for entry in dft_ch.stable_entries:
             entries_matching_composition = [
                 e
                 for e in computed_entry_dicts
@@ -531,4 +529,28 @@ def get_dft_convexhull(input, dft_type='GGA',
             atomic_volume = ucell_volume / ucell_n_atoms  # Atomic volume in cubic angstroms per atom
             stable_entry_atomic_volumes[entry.composition.reduced_formula] = atomic_volume
 
-    return pd, stable_entry_atomic_volumes
+    return dft_ch, stable_entry_atomic_volumes
+
+    
+def get_hull_rel_enth_skew(dft_ch: PhaseDiagram) -> float:
+    """
+    Calculate the enthalpy skew of the DFT T=0K convex hull, relative to the ideal liquid enthalpy.
+    """
+    hull_skew = (melt_enthalpies[str(dft_ch.elements[0])] - melt_enthalpies[str(dft_ch.elements[1])]) / 4.0
+    for e in dft_ch.stable_entries:
+        xb_comp = e.composition.fractional_composition.as_dict().get(str(dft_ch.elements[1]), 0)
+        form_energy_kj = dft_ch.get_form_energy_per_atom(e) * 96485
+        hull_skew += (xb_comp - 0.5) * form_energy_kj 
+    return float(hull_skew)
+
+
+def get_hull_rel_mid_depth(dft_ch: PhaseDiagram) -> float:
+    """
+    Calculate the depth at the middle composition of the DFT T=0K convex hull, relative to the ideal liquid enthalpy.
+    """
+    lhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[0]): 1}))
+    rhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[1]): 1}))
+    hull_mid_ref = dft_ch.get_hull_energy_per_atom(Composition({str(e): 0.5 for e in dft_ch.elements}))
+    e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[0])] + 
+                                    rhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[1])]) / 2 
+    return float(e_depth)

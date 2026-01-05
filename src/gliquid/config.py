@@ -28,7 +28,16 @@ def set_dir_structure(structure: str):
     if structure not in _DIR_STRUCT_OPTS:
         raise ValueError(f"dir_structure must be one of {_DIR_STRUCT_OPTS}")
     dir_structure = structure
+   
+def find_project_root(dirname = 'gliquid_python'):
+    current = Path.cwd()
+    if current.name == dirname:
+        return current
+    for parent in current.parents:
+        if parent.name == dirname:
+            return parent
+    return current
 
-set_project_root(Path.cwd())
+set_project_root(find_project_root())
 set_data_dir(Path(project_root / "data"))
 set_dir_structure(_DIR_STRUCT_OPTS[0])

@@ -32,33 +32,53 @@ from gliquid.hsx import HSX
 _x_step = 0.01  # Sets composition grid precision; has not been tested for values other than 0.01
 _x_prec = len(str(_x_step).split('.')[-1])
 _x_vals = np.arange(0, 1 + _x_step, _x_step)
-tau = 8000
+tau = 30000 # 8000
 
 # Define base thermodynamic symbols
-# These can be used by the BinaryLiquid class to construct specific expressions
+# These can be used by the BinaryLiquid class to construct custom expressions
 xb_sym, t_sym, a_sym, b_sym, c_sym, d_sym = sp.symbols('x t a b c d')
-_DEFAULT_LINEAR_PARAMS = [0, 0, 0, 0]  # Default linear parameters
-_DEFAULT_EXP_PARAMS = [0, 10000, 0, 10000]  # Default exponential parameters
-_DEFAULT_PARAM_GUESSES = {'L0_a': [2000, 10000], 'L0_b': [0, 5], 'L1_a': [-10000, 0, 10000], 'L1_b': [-5, 0, 5],
-                          'tau': [6000, 8000, 8000]}
+_DEFAULT_PARAMS = [0, 0, 0, 0]  # Default parameter values
+_DEFAULT_EXP_PARAMS = [0, 10000, 0, 10000]  # Default exponential parameter values
+_DEFAULT_PARAM_GUESSES = {'L0_a': [-10000, 0, 10000], 'L0_b': [-5, 0, 5],
+                          'L1_a': [-10000, 0, 10000], 'L1_b': [-5, 0, 5],
+                          'tau': [6000, 8000, 10000]}
 
-def build_init_triangle(param_format: str = 'linear') -> list[list[float]]:
+def build_init_triangle(param_format: str = 'linear', dft_ch: PhaseDiagram = None) -> list[list[float]]:
     if param_format in ['linear', 'combined']:
         guess_keys = ['L0_b', 'L1_b']
-    elif param_format == 'exponential':
-        guess_keys = ['tau', 'tau']
-    elif param_format == 'combined_no_1S':
+    # removed support for exponential params for the moment
+    # elif param_format == 'exponential':  
+    #     guess_keys = ['tau', 'tau']
+    elif param_format in ['comb-exp', 'modcomb-exp']:
         guess_keys = ['L0_b', 'L1_a']
     elif param_format == 'pseudo':
         guess_keys = ['L0_a', 'L1_a']
     else:
-        raise ValueError(f"'param_format' must be either 'linear', 'exponential', 'combined', or 'combined_no_1S'.")
+        raise ValueError(f"'param_format' must be either 'linear', 'combined', or 'comb-exp'.")
+    
+    param_guesses = _DEFAULT_PARAM_GUESSES.copy()
+    no_stable_compounds = True
+    
+    if dft_ch:
+        re_skew = lbd.get_hull_rel_enth_skew(dft_ch)
+        re_depth = lbd.get_hull_rel_mid_depth(dft_ch)
+        param_guesses.update({'L0_a': [re_depth * 2, re_depth, re_depth * -2]}) # Min, Mid, Max
+        param_guesses.update({'L1_a': [re_skew * -5, 0, re_skew * 5]}) # Worst, Best
 
-    pos_0 = _DEFAULT_PARAM_GUESSES[guess_keys[0]]
-    pos_1 = _DEFAULT_PARAM_GUESSES[guess_keys[1]]
-    return [[pos_0[0], pos_1[1]], [pos_0[-1], pos_1[0]], [pos_0[-1], pos_1[-1]]] # [min, mid], [max, min], [max, max]
-    # return [[pos_0[0], pos_1[0]], [pos_0[0], pos_1[-1]], [pos_0[-1], pos_1[1]]] # [min, min], [min, max], [max, mid]
-    # TODO: reimplement for linear model
+        no_stable_compounds = len(dft_ch.facets) == 1
+
+    prm1 = param_guesses[guess_keys[0]]
+    prm2 = param_guesses[guess_keys[1]]
+
+    if no_stable_compounds:
+        return [[prm1[-1], prm2[-1]], # (max value - best prior, best prior)
+                [prm1[-1] / 2.0, prm2[0]], # (mid value - second best prior, worst prior)
+                [prm1[1] , prm2[1]]] # (mid value - worst prior, best prior)
+    
+    return [[prm1[0], prm2[-1]], # (min value - best prior, best prior)
+            [prm1[0] / 2.0, prm2[0]], # (mid - second best prior, worst prior)
+            [prm1[1], prm2[1]]] # (neutral - no prior, neutral)
+                     
     
 R = 8.314  # J/(mol*K), universal gas constant
 
@@ -71,12 +91,16 @@ def exponential_expr(a: sp.Expr, b: sp.Expr) -> sp.Expr:
 def combined_expr(a: sp.Expr, b: sp.Expr, c: sp.Expr) -> sp.Expr:
     return exponential_expr(linear_expr(a, b), c)
 
+def mod_comb_expr(a: sp.Expr, b: sp.Expr, c: sp.Expr) -> sp.Expr:
+    return linear_expr(a, exponential_expr(b, c))
+
 _L0_LINEAR_EXPR = linear_expr(a_sym, b_sym)
 _L1_LINEAR_EXPR = linear_expr(c_sym, d_sym)
 _L0_EXP_EXPR = exponential_expr(a_sym, b_sym)
 _L1_EXP_EXPR = exponential_expr(c_sym, d_sym)
 _L0_LIN_EXP_EXPR = combined_expr(a_sym, b_sym, sp.Integer(tau))
 _L1_LIN_EXP_EXPR = combined_expr(c_sym, d_sym, sp.Integer(tau))
+_L0_MOD_LIN_EXP_EXPR = mod_comb_expr(a_sym, b_sym, sp.Integer(tau))
 
 def build_thermodynamic_expressions(param_format: str = 'linear',
                                     ga_expr: sp.Symbol = 0*t_sym,
@@ -97,10 +121,12 @@ def build_thermodynamic_expressions(param_format: str = 'linear',
         l0_expr, l1_expr = _L0_LINEAR_EXPR, _L1_LINEAR_EXPR
     elif param_format == 'exponential':
         l0_expr, l1_expr = _L0_EXP_EXPR, _L1_EXP_EXPR
-    elif param_format in ['combined', 'combined_no_1S']:
+    elif param_format in ['combined', 'comb-exp']:
         l0_expr, l1_expr = _L0_LIN_EXP_EXPR, _L1_LIN_EXP_EXPR
+    elif param_format == 'modcomb-exp':
+        l0_expr, l1_expr = _L0_MOD_LIN_EXP_EXPR, _L1_LIN_EXP_EXPR
     else:
-        raise ValueError(f"'param_format' must be either 'linear', 'exponential', 'combined', or 'combined_no_1S'.")
+        raise ValueError(f"'param_format' must be either 'linear', 'exponential', 'combined', or 'comb-exp'.")
 
     xa = 1 - xb_sym
 
@@ -118,11 +144,13 @@ def build_thermodynamic_expressions(param_format: str = 'linear',
     # Entropy of liquid phase: S = - (dG/dT)_P,x
     s_liquid = -sp.diff(g_liquid, t_sym)
     s_l0 = -sp.diff(l0_expr, t_sym)
+    s_l1 = -sp.diff(l1_expr, t_sym)
     
     # Enthalpy of liquid phase: H = G + TS = G - T*(dG/dT)_P,x
     # Using s_liquid = - (dG/dT), H = g_liquid + t * s_liquid
     h_liquid = g_liquid + t_sym * s_liquid
     h_l0 = l0_expr + t_sym * s_l0
+    h_l1 = l1_expr + t_sym * s_l1
     
     # First derivative of G_liquid with respect to xb
     g_prime = sp.diff(g_liquid, xb_sym)
@@ -130,24 +158,34 @@ def build_thermodynamic_expressions(param_format: str = 'linear',
     # Second derivative of G_liquid with respect to xb
     g_double_prime = sp.diff(g_prime, xb_sym)
 
+    # print(l0_expr)
+    # print(s_l0)
+    # print(h_l0)
+
+    # print(l0_expr.subs({t_sym: 0}))
+    # print(s_l0.subs({t_sym: 0}))
+    # print(h_l0.subs({t_sym: 0}))
+
+    # print(l0_expr.subs({t_sym: tau*2}))
+    # print(s_l0.subs({t_sym: tau*2}))
+    # print(h_l0.subs({t_sym: tau*2}))
+
+    # print(sp.limit(l0_expr, t_sym, sp.oo))
+    # print(sp.limit(s_l0, t_sym, sp.oo))
+    # print(sp.limit(h_l0, t_sym, sp.oo))
+
     return {
-        'ga': ga_expr,
-        'gb': gb_expr,
-        'l0': l0_expr,
-        'l1': l1_expr,
-        'g_ideal': g_ideal,
-        'g_xs': g_xs,
-        's_l0': s_l0,
-        's_l0_lambdified': sp.lambdify([t_sym, a_sym, b_sym], s_l0, modules='numpy'),
-        'h_l0': h_l0,
+        'ga': ga_expr, 'gb': gb_expr,
+        'l0': l0_expr, 'h_l0': h_l0, 's_l0': s_l0,
         'h_l0_lambdified': sp.lambdify([t_sym, a_sym, b_sym], h_l0, modules='numpy'),
-        'g_liquid': g_liquid,
-        's_liquid': s_liquid,
-        's_liq_lambdified': sp.lambdify([xb_sym, t_sym, a_sym, b_sym, c_sym, d_sym], s_liquid, modules='numpy'),
-        'h_liquid': h_liquid,
+        's_l0_lambdified': sp.lambdify([t_sym, a_sym, b_sym], s_l0, modules='numpy'),
+        'l1': l1_expr, 'h_l1': h_l1, 's_l1': s_l1,
+        'h_l1_lambdified': sp.lambdify([t_sym, c_sym, d_sym], h_l1, modules='numpy'),
+        's_l1_lambdified': sp.lambdify([t_sym, c_sym, d_sym], s_l1, modules='numpy'),
+        'g_ideal': g_ideal, 'g_xs': g_xs, 'g_liquid': g_liquid, 'h_liquid': h_liquid, 's_liquid': s_liquid,
         'h_liq_lambdified': sp.lambdify([xb_sym, t_sym, a_sym, b_sym, c_sym, d_sym], h_liquid, modules='numpy'),
-        'g_prime': g_prime,
-        'g_double_prime': g_double_prime,
+        's_liq_lambdified': sp.lambdify([xb_sym, t_sym, a_sym, b_sym, c_sym, d_sym], s_liquid, modules='numpy'),
+        'g_prime': g_prime, 'g_double_prime': g_double_prime,
     }
 
 
@@ -168,7 +206,7 @@ def build_phases_from_chull(ch: PhaseDiagram, component_name: str) -> list[dict]
         phase = {
             'name': entry.name,
             'comp': composition,
-            'energy': 96485 * ch.get_form_energy_per_atom(entry),
+            'enthalpy': 96485 * ch.get_form_energy_per_atom(entry),
             'points': [],
         }
         phases.append(phase)
@@ -185,7 +223,7 @@ def validate_binary_mixing_parameters(input, param_format='linear') -> list[int 
     Returns:
         list[int | float]: A validated list of four numerical values representing non-ideal mixing parameters.
     """
-    default = _DEFAULT_EXP_PARAMS if param_format == 'exponential' else _DEFAULT_LINEAR_PARAMS
+    default = _DEFAULT_EXP_PARAMS if param_format == 'exponential' else _DEFAULT_PARAMS
     if isinstance(input, (list, tuple)):
         if len(input) == 0:
             return default
@@ -246,7 +284,7 @@ class BinaryLiquid:
         self.phases = kwargs.get('phases', [])
         self._params = kwargs.get('params', [0, 0, 0, 0])
         self._param_format = kwargs.get('param_format', 'linear')
-        self.init_triangle = kwargs.get('init_triangle', build_init_triangle(self._param_format))
+        self.init_triangle = kwargs.get('init_triangle', build_init_triangle(self._param_format, self.dft_ch))
         self.eqs = kwargs.get('eqs', build_thermodynamic_expressions(self._param_format))
         self.invariants = None
         self.guess_symbols = None
@@ -307,8 +345,8 @@ class BinaryLiquid:
                 t_sym * component_data[components[0]][0] / component_data[components[0]][1],
             gb_expr=component_data[components[1]][0] - \
                 t_sym * component_data[components[1]][0] / component_data[components[1]][1])
-        
-        hull_points = np.array([[p['comp'], p['energy']] for p in phases if 'comp' in p])
+
+        hull_points = np.array([[p['comp'], p['enthalpy']] for p in phases if 'comp' in p])
         eqs['h_hull_interp'] = np.interp(_x_vals[1:-1], hull_points[:, 0], hull_points[:, 1])
         init_triangle = build_init_triangle(param_format=param_format)
 
@@ -363,8 +401,8 @@ class BinaryLiquid:
         for phase in self.phases:
             if phase['name'] == 'L':
                 continue
-            data['H'].append(phase['energy'])
-            data['S'].append(0)
+            data['H'].append(phase['enthalpy'])
+            data['S'].append(phase.get('entropy', 0))
             data['X'].append(round(phase['comp'], _x_prec))
             data['Phase Name'].append(phase['name'])
 
@@ -817,11 +855,18 @@ class BinaryLiquid:
         Returns:
             bool: True if the parameters obey the Lupis-Elliott sign constraints, False otherwise.
         """
-
-        lambda_args_vals = [0, self.get_L0_a(), self.get_L0_b()] # Per Kaptay, T=0K is stricter than self.mean_elt_tm
-        h_l0 = self.eqs['h_l0_lambdified'](*lambda_args_vals)
-        s_l0 = self.eqs['s_l0_lambdified'](*lambda_args_vals)
-        return (h_l0 <= tol and s_l0 <= tol) or (h_l0 >= -tol and s_l0 >= -tol)
+        if self._param_format == 'comb-exp':
+            lambda_args_vals = [self.min_liq_temp, self.get_L0_a(), self.get_L0_b()] # Per Kaptay, T=0K is stricter than self.mean_elt_tm
+            h_l0 = self.eqs['h_l0_lambdified'](*lambda_args_vals)
+            s_l0 = self.eqs['s_l0_lambdified'](*lambda_args_vals)
+            return (h_l0 <= tol and s_l0 <= tol) or (h_l0 >= -tol and s_l0 >= -tol)
+        elif self._param_format in ['linear', 'combined']:
+            largv0, largv1 = [self.min_liq_temp, self.get_L0_a(), self.get_L0_b()], [0, self.get_L1_a(), self.get_L1_b()]
+            h_l0, s_l0 = self.eqs['h_l0_lambdified'](*largv0), self.eqs['s_l0_lambdified'](*largv0)
+            h_l1, s_l1 = self.eqs['h_l1_lambdified'](*largv1), self.eqs['s_l1_lambdified'](*largv1)
+            return ((h_l0 <= tol and s_l0 <= tol) or (h_l0 >= -tol and s_l0 >= -tol)) and \
+                    ((h_l1 <= tol and s_l1 <= tol) or (h_l1 >= -tol and s_l1 >= -tol))
+        return True
 
     def h0_below_ch(self, tol=1e-6) -> bool:
         """
@@ -1172,7 +1217,7 @@ class BinaryLiquid:
                         continue
 
                     x1, t1 = nearest_phase['comp'], inv['temp']
-                    eqn = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), nearest_phase['energy'])
+                    eqn = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), nearest_phase['enthalpy'])
                     eqs.append(['cmp', f'{round(x1, 2)} - 0th order', t1, eqn])
 
                 if inv['type'] == 'per' and auto_ignored_ranges:
@@ -1188,7 +1233,7 @@ class BinaryLiquid:
                         continue
 
                     x1, t1 = inv['comp'], inv['temp']
-                    x2, g2 = per_phase['comp'], per_phase['energy']
+                    x2, g2 = per_phase['comp'], per_phase['enthalpy']
 
                     eqn1 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}) + self.eqs['g_prime'].subs({xb_sym: x1, t_sym: t1}) * (x2 - x1), g2)
                     eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x1, t_sym: t1}), g2)
@@ -1224,9 +1269,9 @@ class BinaryLiquid:
                     if invalid_eut:
                         continue
 
-                    x1, g1 = lhs_phase['comp'], lhs_phase['energy']
+                    x1, g1 = lhs_phase['comp'], lhs_phase['enthalpy']
                     x2, t2 = inv['comp'], inv['temp']
-                    x3, g3 = rhs_phase['comp'], rhs_phase['energy']
+                    x3, g3 = rhs_phase['comp'], rhs_phase['enthalpy']
 
                     eqn1 = sp.Eq(self.eqs['g_prime'].subs({xb_sym: x2, t_sym: t2}), (g3 - g1) / (x3 - x1))
                     eqn2 = sp.Eq(self.eqs['g_liquid'].subs({xb_sym: x2, t_sym: t2}) + 
@@ -1245,22 +1290,16 @@ class BinaryLiquid:
         # currently only used for linear model defult initial guesses, TODO: find a better way to do this
         self.update_params(kwargs.get('params_init', []))
         self.update_phase_points()
-        # BLPlotter(self).show('fit+liq') # Show the current HSX object
-        mid_digitized_liq = min(self.digitized_liq, key=lambda x: abs(x[0] - 0.5)) # closest to middle as possible
-        nearest_generated_liq = min(self.phases[-1]['points'], key=lambda x: abs(x[0] - mid_digitized_liq[0]))
-        l0_a_positive =  mid_digitized_liq[1] > nearest_generated_liq[1] # if ideal mixing liq falls below measured liq, L0_a should be positive
-        if l0_a_positive and self._param_format == 'linear': # L0_b sign should be negative for initial guesses
-            self.init_triangle = [[-p, q] for p, q in self.init_triangle] # TODO: check if this is best practice
-        
-        def get_hull_skew():
-            hull_skew = (self.component_data[self.components[1]][0] - self.component_data[self.components[0]][0]) / 4.0
-            for phase in self.phases[:-1]:
-                hull_skew += (phase['comp'] - 0.5) * phase['energy']
-            return float(hull_skew)
+        # mid_digitized_liq = min(self.digitized_liq, key=lambda x: abs(x[0] - 0.5)) # closest to middle as possible
+        # nearest_generated_liq = min(self.phases[-1]['points'], key=lambda x: abs(x[0] - mid_digitized_liq[0]))
+        # l0_a_positive =  mid_digitized_liq[1] > nearest_generated_liq[1] # if ideal mixing liq falls below measured liq, L0_a should be positive
+        # if l0_a_positive and self._param_format == 'linear': # L0_b sign should be negative for initial guesses
+        #     self.init_triangle = [[-p, q] for p, q in self.init_triangle] # TODO: check if this is best practice
+        # self.init_triangle = build_init_triangle(self._param_format, self.dft_ch)
     
         # Test invariant-derived equations for validity as constraints
         two_constr_methods = ['combined', 'exponential', 'linear']
-        one_constr_methods = ['combined_no_1S']
+        one_constr_methods = ['comb-exp', 'modcomb-exp']
         no1S_constr = ['no1S - L0_b = 0', '0th order', float('inf'), sp.Eq(d_sym, 0)] # this enforces L1_b = 0
         no_L0Sxs_eq = sp.Eq(sp.diff(self.eqs['l0'], t_sym).subs({t_sym: 0}), 0) # this will enforce L0_b != 0 for combined models, such that S0xs at 0K is 0
         no_L1Sxs_eq = sp.Eq(sp.diff(self.eqs['l1'], t_sym).subs({t_sym: 0}), 0) # this will enforce L1_b != 0 for combined models such that S1xs at 0K is 0
@@ -1285,9 +1324,14 @@ class BinaryLiquid:
                                         [self.get_L0_b(), self.get_L1_b()*0.8]]
                         nelder_mead_ics.append({'mae': init_mae, 'constrs': [eq, highest_tm_eq], 'init_tri': init_tri})
                     elif self._param_format in one_constr_methods:
-                        init_tri = [[self.get_L0_b(), self.get_L1_a()],
-                                    [self.get_L0_b()*0.8, self.get_L1_a()],
-                                    [self.get_L0_b(), self.get_L1_a()*0.8]]
+                        if self._param_format == 'modcomb-exp':
+                            init_tri = [[self.init_triangle[0][0], self.get_L1_a()],
+                                        [self.init_triangle[1][0], self.get_L1_a()*0.8],
+                                        [self.init_triangle[2][0], self.get_L1_a()*0.8]]
+                        else:
+                            init_tri = [[self.get_L0_b(), self.get_L1_a()],
+                                        [self.get_L0_b()*0.8, self.get_L1_a()],
+                                        [self.get_L0_b(), self.get_L1_a()*0.8]]
                         nelder_mead_ics.append({'mae': init_mae, 'constrs': [eq, no1S_constr], 'init_tri': init_tri})
                 except RuntimeError as e:
                     print("Error while evaluting invariant constraints", e)
@@ -1302,13 +1346,18 @@ class BinaryLiquid:
                                             'init_tri': min_mae_ics['init_tri']})
                 else: # If only a single constraint is available, use default init triangle and determine init mae
                     try:
-                        self.constraints = sp.solve([sp.Eq(c_sym, get_hull_skew() * 5), highest_tm_eq[3], 
+                        self.constraints = sp.solve([sp.Eq(c_sym, lbd.get_hull_rel_enth_skew(self.dft_ch) * 5), highest_tm_eq[3], 
                                                       no_L0Sxs_eq, no_L1Sxs_eq],
                                                      (a_sym, b_sym, c_sym, d_sym), rational=False, simplify=False)
                         init_mae = self.f([], **kwargs)
-                        init_tri = [[self.get_L0_b(), self.get_L1_a()],
-                                    [self.get_L0_b()*0.8, self.get_L1_a()],
-                                    [self.get_L0_b(), self.get_L1_a()*0.8]]
+                        if self._param_format == 'modcomb-exp':
+                            init_tri = [[self.init_triangle[0][0], self.get_L1_a()],
+                                        [self.init_triangle[1][0], self.get_L1_a()*0.8],
+                                        [self.init_triangle[2][0], self.get_L1_a()*0.8]]
+                        else:
+                            init_tri = [[self.get_L0_b(), self.get_L1_a()],
+                                        [self.get_L0_b()*0.8, self.get_L1_a()],
+                                        [self.get_L0_b(), self.get_L1_a()*0.8]]
                         if init_mae != float('inf'):
                             nelder_mead_ics.append({'mae': init_mae, 'constrs': [highest_tm_eq, no1S_constr], 'init_tri': init_tri})
                     except RuntimeError as e:
@@ -1319,36 +1368,11 @@ class BinaryLiquid:
         print(f"\nMaximum composition range fitted: {[self.digitized_liq[0][0], self.digitized_liq[-1][0]]}")
         print(f"Ignored composition ranges: {self.ignored_comp_ranges}\n")
 
-        def gen_la_triangle():
-            
-            def get_hull_midpoint_depth_from_h0():
-                lhs_ref = self.dft_ch.get_hull_energy_per_atom(Composition({self.components[0]: 1}))
-                rhs_ref = self.dft_ch.get_hull_energy_per_atom(Composition({self.components[1]: 1}))
-                hull_mid_ref = self.dft_ch.get_hull_energy_per_atom(Composition({c: 0.5 for c in self.components}))
-                e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + self.component_data[self.components[0]][0] + 
-                                                rhs_ref * 96485 + self.component_data[self.components[1]][0]) / 2 
-                return float(e_depth)
-            
-            skew_e = get_hull_skew()
-            e_depth = get_hull_midpoint_depth_from_h0()
-            no_stable_dft_compounds = len([p for p in self.phases if p['name'] not in self.components + ['L']]) == 0
-        
-            if no_stable_dft_compounds:
-                l_guesses = [[e_depth * -2, skew_e * 5], # positive L0_a
-                            [e_depth * -2, skew_e * -5], # positive L0_a
-                            [e_depth * 2, skew_e * 5]] # negative L0_a
-            else:
-                l_guesses = [[0.0, 0.0], # ideal mixing
-                        [e_depth, skew_e * -5], # negative L0_a
-                        [e_depth * 2, skew_e * 5]] # more negative L0_a
-  
-            return l_guesses
-
         try:
             self.update_params(kwargs.get('params_init', [])) # Restore parameter defaults
             self.guess_symbols = [a_sym, c_sym]
             self.constraints = sp.solve([no_L0Sxs_eq, no_L1Sxs_eq], (b_sym, d_sym), rational=False, simplify=False)
-            psuedo_triangle = gen_la_triangle()
+            psuedo_triangle = build_init_triangle('pseudo', self.dft_ch)
             print("Initial triangle for pseudo-constraints:", psuedo_triangle)
             (init_mae, _, _, _), _ = self.nelder_mead(tol=10, verbose=verbose, initial_guesses=psuedo_triangle, **kwargs)
 
@@ -1368,9 +1392,14 @@ class BinaryLiquid:
                                         'constrs': [['pseudo', '0th order', mean_liq_temp, e] for e in [eq1, eq2]],
                                         'init_tri': init_tri})
             elif self._param_format in one_constr_methods:
-                init_tri = [[self.get_L0_b(), self.get_L1_a()],
-                            [self.get_L0_b()*0.8, self.get_L1_a()],
-                            [self.get_L0_b(), self.get_L1_a()*0.8]]
+                if self._param_format == 'modcomb-exp':
+                    init_tri = [[self.init_triangle[0][0], self.get_L1_a()],
+                                [self.init_triangle[1][0], self.get_L1_a()*0.8],
+                                [self.init_triangle[2][0], self.get_L1_a()*0.8]]
+                else:
+                    init_tri = [[self.get_L0_b(), self.get_L1_a()],
+                                [self.get_L0_b()*0.8, self.get_L1_a()],
+                                [self.get_L0_b(), self.get_L1_a()*0.8]]
                 nelder_mead_ics.append({'mae': init_mae,
                                         'constrs': [['pseudo', '0th order', mean_liq_temp, eq1], no1S_constr],
                                         'init_tri': init_tri})
@@ -1542,7 +1571,7 @@ class BLPlotter:
         mpds_incongruent_phases = {key: value for key, value in mpds_incongruent_phases.items() if '(' not in key}
 
         # Create subplots with specific layout
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 2), gridspec_kw={'hspace': 0})
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 2), gridspec_kw={'hspace': 0, 'left': 0.117, 'bottom': 0.13, 'right': 0.909})
 
         def plot_phases(ax, source, color, alpha=0.5):
             """
@@ -1669,7 +1698,7 @@ class BLPlotter:
                     else:
                         max_phase_temp = min(self._bl.phases[-1]['points'], key=lambda x: x[1])[1] # eutectic or azeotrope
                     t_units = 'K'
-                    t_vals = [max_phase_temp, 0]
+                    t_vals = [0, max_phase_temp]
                 if t_units == 'C':
                     t_vals = [t + 273.15 for t in t_vals if t >= 0]
                 else:
@@ -1706,7 +1735,11 @@ class BLPlotter:
 
             fig.update_layout(plot_bgcolor='white',
                               paper_bgcolor='white', 
-                              xaxis=dict(title=dict(text="Composition (fraction)")),
+                              xaxis=dict(title=dict(text="Composition (fraction)", font=dict(size=18)),
+                                        tickfont=dict(color='black')),
+                              yaxis=dict(title=dict(font=dict(size=18)),
+                                        tickfont=dict(color='black')),
+                              font=dict(color='black', size=15),  # Sets default font color for all text elements
                               width=750, height=600)
             return fig
 
@@ -1770,7 +1803,7 @@ class BLPlotter:
         for i in range(num_iters):
             if plot_a_params: # L0_a, L1_a parameters
                 path_i = self._bl.nmpath[:, [0, 2, -1], i]
-            elif self._bl._param_format == 'combined_no_1S': # L0_b, L1_a parameters
+            elif self._bl._param_format == 'comb-exp': # L0_b, L1_a parameters
                 path_i = self._bl.nmpath[:, [1, 2, -1], i]
             else: # L0_b, L1_b parameters
                 path_i = self._bl.nmpath[:, [1, 3, -1], i]
@@ -1806,7 +1839,7 @@ class BLPlotter:
         for i in range(num_iters):
             if plot_a_params: # L0_a, L1_a parameters
                 path_i = self._bl.nmpath[:, [0, 2, -1], i]
-            elif self._bl._param_format == 'combined_no_1S': # L0_b, L1_a parameters
+            elif self._bl._param_format == 'comb-exp': # L0_b, L1_a parameters
                 path_i = self._bl.nmpath[:, [1, 2, -1], i]
             else: # L0_b, L1_b parameters
                 path_i = self._bl.nmpath[:, [1, 3, -1], i]
@@ -1869,7 +1902,7 @@ class BLPlotter:
         ax.set_xlim((ux + lx) / 2 - (ux - lx) / 2 * 1.1, (ux + lx) / 2 + (ux - lx) / 2 * 1.1)
         if plot_a_params: # L0_a, L1_a parameters
             axes_labels = ['L0_a', 'L1_a'] 
-        elif self._bl._param_format == 'combined_no_1S': # L0_b, L1_a parameters
+        elif self._bl._param_format == 'comb-exp': # L0_b, L1_a parameters
             axes_labels = ['L0_b', 'L1_a'] 
         else: # L0_b, L1_b parameters
             axes_labels = ['L0_b', 'L1_b'] 

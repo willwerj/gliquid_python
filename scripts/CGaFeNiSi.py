@@ -1,6 +1,7 @@
 import os
 import json
 from matplotlib import pyplot as plt
+import plotly.graph_objects as go
 import plotly.offline as ploff
 from gliquid.config import data_dir
 from gliquid.binary import BinaryLiquid, BLPlotter, build_thermodynamic_expressions, t_sym, xb_sym, a_sym, b_sym, c_sym, d_sym
@@ -8,6 +9,7 @@ from gliquid.load_binary_data import shape_to_list
 from ternary_interpolation.ternary_HSX import ternary_gtx_plotter
 import sympy as sp
 import numpy as np
+from itertools import combinations
 
 
 def predict_c_ga_system(method=1, show=True):
@@ -91,65 +93,58 @@ def fit_c_si_system(show=True):
         plt.show()
     return {system.sys_name: {'params': system.get_params(), 'manual_phases': []}}
 
-def fit_fe_ga_system(show=True):
-    fe_ga_system = BinaryLiquid.from_cache("Fe-Ga", param_format='combined_no_1S', comp_range_fit_lim=0)
-    print(fe_ga_system.digitized_liq)
-
-    fe_ga_system.ignored_comp_ranges.append([0, 0.48])
+def fit_fe_ga_system(show=True, params=[]):
+    fe_ga_system = BinaryLiquid.from_cache("Fe-Ga", param_format='combined_no_1S', comp_range_fit_lim=0, params=params)
+    # fe_ga_system.ignored_comp_ranges.append([0, 0.48])
     manual_phases = [{'name': 'GaFe3 Ga+ ht', 'comp': 0.35, 'energy': -30000, 'points': []},
-                     {'name': 'Ga4Fe3', 'comp': 0.571, 'energy': -29000, 'points': []}]
+                     {'name': 'Ga4Fe3', 'comp': 0.571, 'energy': -29000, 'points': []},
+                     {'name': '(Fe10) rt', 'comp': 0.10, 'energy': -15400, 'points': []},
+                     {'name': '(Fe20) rt', 'comp': 0.20, 'energy': -25500, 'points': []}
+                     ]
     fe_ga_system.phases.insert(2, manual_phases[1].copy())
     fe_ga_system.phases.insert(2, manual_phases[0].copy()) 
-    fe_ga_system.phases[1]['energy'] = -19000
+    fe_ga_system.phases.insert(1, manual_phases[2].copy())  # Add Fe 10 phase
+    fe_ga_system.phases.insert(2, manual_phases[3].copy())  # Add Fe 20 phase
+    # fe_ga_system.phases[1]['energy'] = -19000
     print(fe_ga_system.phases)
 
-    fit_res = fe_ga_system.fit_parameters(verbose=True, n_opts=3, check_phase_mismatch=False)
-    for fit in fit_res:
-        fit.pop('nmpath', None)
-        print(fit)
+    # fit_res = fe_ga_system.fit_parameters(verbose=True, n_opts=3, check_phase_mismatch=False)
+    # for fit in fit_res:
+    #     fit.pop('nmpath', None)
+    #     print(fit)
 
     if show:
         blp = BLPlotter(fe_ga_system)
         blp.show('fit+liq')
-        blp.show('nmp', plot_a_params=True)
-        plt.show()
+        # blp.show('ch+g')
+        # blp.show('nmp', plot_a_params=True)
+        # plt.show()
     return {fe_ga_system.sys_name: {'params': fe_ga_system.get_params(), 'manual_phases': manual_phases}}
 
-def correct_fe_ga_system_phases(show=True, fitted_params=[-81580, -2.00, -44018, 0]):
-    # fitted_params = [-72905, -10.46, -44951, 0]  # These are the fitted parameters from the previous fit
-    # fitted_params = [-81580, -2.00, -44018, 0]
-    fe_ga_system = BinaryLiquid.from_cache("Fe-Ga", param_format='combined_no_1S', params=fitted_params)
-
-    # Add max sol ht Fe phase
-    manual_phases = [{'name': 'GaFe3 Ga+ ht', 'comp': 0.35, 'energy': -30000, 'points': []},
-                     {'name': 'Ga4Fe3', 'comp': 0.571, 'energy': -29000, 'points': []}]
-    fe_ga_system.phases.pop(1)  # Remove GaFe3
-    fe_ga_system.phases.insert(1, manual_phases[0].copy())
-    fe_ga_system.phases.insert(2, manual_phases[1].copy())
-    fe_ga_system.update_phase_points()
-
-    if show:
-        blp = BLPlotter(fe_ga_system)
-        blp.show('fit+liq')
-    return {fe_ga_system.sys_name: {'params': fitted_params, 'manual_phases': manual_phases}}
 
 def fit_ga_ni_system(show=True, params=[]):
     system = BinaryLiquid.from_cache("Ga-Ni", param_format='combined_no_1S', comp_range_fit_lim=0, params=params, reconstruction=True)
-    print(system.phases)
-    manual_phases = [{'name': 'GaNi5', 'comp': 0.2, 'energy': -23100, 'points': []}]
+   
+    manual_phases = [{'name': 'GaNi5', 'comp': 0.2, 'energy': -23100, 'points': []},
+                     {'name': '(Ni89)', 'comp': 0.89, 'energy': -15800, 'points': []},
+                     {'name': '(Ni95)', 'comp': 0.95, 'energy': -7900, 'points': []}, 
+                     ]
     system.phases.insert(1, manual_phases[0].copy())  # Add GaNi5 phase
-    system.phases.pop(2)
+    system.phases.insert(7, manual_phases[1].copy())  # Add Ni 89 phase
+    system.phases.insert(8, manual_phases[2].copy())  # Add Ni 95 phase
+    # system.phases.pop(2)
+    # print(system.phases)
 
-    fit_res = system.fit_parameters(verbose=True, n_opts=5, ignore_euts=False, small_range=True)
-    for fit in fit_res:
-        fit.pop('nmpath', None)
-        print(fit)
+    # fit_res = system.fit_parameters(verbose=True, n_opts=5, ignore_euts=False, small_range=True)
+    # for fit in fit_res:
+    #     fit.pop('nmpath', None)
+    #     print(fit)
 
     if show:
         blp = BLPlotter(system)
         blp.show('fit+liq')
-        blp.show('nmp', plot_a_params=True)
-        plt.show()
+        # blp.show('nmp', plot_a_params=True)
+        # plt.show()
     return {system.sys_name: {'params': system.get_params(), 'manual_phases': manual_phases}}
 
 
@@ -282,19 +277,16 @@ def fit_ni_si_system(show=True, params=[]):
     return {system.sys_name: {'params': system.get_params(), 'manual_phases': manual_phases}}
 
 
-def plot_ternary_system(tern_sys, fitted_data, param_format='combined_no_1S', temp_slider=[0, 300], t_incr=5):
-    # binary_systems = fitted_data.keys()
-    # tern_sys = set()
-    # for sys_name in binary_systems:
-    #     tern_sys.update(sys_name.split('-'))
+def plot_ternary_system(tern_sys, binary_data, param_format='combined_no_1S', temp_slider=[0, 300], t_incr=5, delta=0.025):
+
     if isinstance(tern_sys, str):
         tern_sys = tern_sys.split('-')
     tern_sys = sorted(tern_sys)
 
-    fitted_data = {sys_name: data for sys_name, data in fitted_data.items() if set(sys_name.split('-')).issubset(set(tern_sys))}
+    binary_dict = {sys_name: data.copy() for sys_name, data in binary_data.items() if set(sys_name.split('-')).issubset(set(tern_sys))}
     items_to_remove = []
     items_to_add = {}
-    for sys_name, data in fitted_data.items():
+    for sys_name, data in binary_dict.items():
         components = sys_name.split('-')
         if not abs(tern_sys.index(components[0]) - tern_sys.index(components[1])) == 1:
             items_to_remove.append(sys_name)  # Remove if components are in wrong order
@@ -306,12 +298,12 @@ def plot_ternary_system(tern_sys, fitted_data, param_format='combined_no_1S', te
 
     # Remove items after iteration
     for item in items_to_remove:
-        fitted_data.pop(item)
-    fitted_data.update(items_to_add)
-    binary_L_dict = {sys_name: data['params'] for sys_name, data in fitted_data.items()}
+        binary_dict.pop(item)
+    binary_dict.update(items_to_add)
+    binary_L_dict = {sys_name: data['params'] for sys_name, data in binary_dict.items()}
     
     plotter = ternary_gtx_plotter(tern_sys, data_dir, interp_type="linear", param_format=param_format,
-                                  L_dict=binary_L_dict, temp_slider=temp_slider, T_incr=t_incr)
+                                  L_dict=binary_L_dict, temp_slider=temp_slider, T_incr=t_incr, delta=delta)
     plotter.interpolate()
 
     def binary_to_ternary_phase(phase, sys_name):
@@ -331,13 +323,36 @@ def plot_ternary_system(tern_sys, fitted_data, param_format='combined_no_1S', te
 
         return {'x0': x0, 'x1': x1, 'S': 0, 'H': phase['energy'], 'Phase Name': phase['name']}
 
-    for sys_name, data in fitted_data.items():
+    for sys_name, data in binary_dict.items():
         for phase in data['manual_phases']:
             plotter.hsx_df = plotter.hsx_df._append(binary_to_ternary_phase(phase, sys_name), ignore_index=True)
+
+    # remove ga7ni3, feni3, feni, gafe3
+    # phases_to_remove = ['Ga7Ni3', 'FeNi3', 'FeNi', 'GaFe3']
+    # plotter.hsx_df = plotter.hsx_df[~plotter.hsx_df['Phase Name'].isin(phases_to_remove)].reset_index(drop=True)
 
     plotter.process_data()
     tern_fig = plotter.plot_ternary()
     ploff.plot(tern_fig, filename=f'./figures/{"".join(tern_sys)}_system.html', auto_open=True)
+
+    # Plot a point at the flux chemistry
+    # from ternary_interpolation.ternary_HSX import ternary_to_cartesian
+    # cartesian_coords = ternary_to_cartesian(x_A=0.78, x_B=0.11)
+    # tern_fig.add_trace(
+    #     go.Scatter3d(
+    #         x=[cartesian_coords[0]],
+    #         y=[cartesian_coords[1]],
+    #         z=[778],
+    #         mode='markers',
+    #         marker=dict(size=4, color='red', symbol='diamond'),
+    #         showlegend=False,
+    #         opacity=1,
+    #     )
+    # )
+    # print(tern_fig)
+    # tern_fig.show()
+    # ploff.plot(tern_fig, filename=f'./figures/{"".join(tern_sys)}_manual_system.html', auto_open=True)
+
 
 
 if __name__ == "__main__":
@@ -369,12 +384,10 @@ if __name__ == "__main__":
     # json.dump(fitted_data, open(fitted_data_cache, 'w'), indent=4)
 
     # Fe-Ga has fittable PD but missing significant phases in DFT
-    # fitted_data.update(fit_fe_ga_system())
+    # fitted_data.update(fit_fe_ga_system(params=fitted_data['Fe-Ga']['params']))
     # json.dump(fitted_data, open(fitted_data_cache, 'w'), indent=4)
-    # correct_fe_ga_system_phases()
 
     # Ga-Ni has fittable PD
-    # fitted_data.update(fit_ga_ni_system())
     # fitted_data.update(fit_ga_ni_system(params=fitted_data['Ga-Ni']['params']))
     # json.dump(fitted_data, open(fitted_data_cache, 'w'), indent=4)
 
@@ -395,4 +408,10 @@ if __name__ == "__main__":
     # json.dump(fitted_data, open(fitted_data_cache, 'w'), indent=4)
 
     # Plot a ternary system
-    # plot_ternary_system('Ga-Fe-Ni', fitted_data, t_incr=1)
+    # elements = ['C', 'Ga', 'Fe', 'Ni', 'Si']
+    # for combo in combinations(elements, 3):
+    #     system_name = '-'.join(combo)
+    #     print(f"Plotting Hi-Res {system_name} system...")
+    #     plot_ternary_system(system_name, fitted_data, t_incr=1)
+    plot_ternary_system('Ga-Fe-Ni', fitted_data, t_incr=10, delta=0.01)
+    # plot_ternary_system('C-Ga-Si', fitted_data, t_incr=1)

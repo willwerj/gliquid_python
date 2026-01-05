@@ -327,35 +327,25 @@ class HSX:
         lhs_tm, rhs_tm = liq_df.iloc[0]['t'], liq_df.iloc[-1]['t']
         max_liq, min_liq = liq_df['t'].max(), liq_df['t'].min()
 
-        if digitized_liquidus:
+        fig = go.Figure()
+
+        if digitized_liquidus: # update liquidus temperature range based on digitized liquidus
             max_liq = max(max_liq, max([p[1] - 273.15 for p in digitized_liquidus]))
             min_liq = min(min_liq, min([p[1] - 273.15 for p in digitized_liquidus]))
-
-        if not pred:
-            self.conds[1] = max(min(self.conds[1] * 2 + 100, max_liq), self.conds[1])
-        else:
-            self.conds = [min_liq - 0.1 * (max_liq - min_liq), max_liq]
-        
-        trange = self.conds[1] - self.conds[0]
-        yfactor = 0.36 if pred else 0.30
-        if lhs_tm < rhs_tm:
-            if lhs_tm + 0.3 * trange < self.conds[1]:  # higest temp at least 30% of range above lower tm
-                self.conds[1] += 0.1 * trange
-            else:
-                self.conds[1] = lhs_tm + yfactor * trange
-            legend = {'yanchor': 'top', 'y': 0.99, 'xanchor': 'left', 'x': 0.01, 'font': dict(size=15)}
-        else:
-            if rhs_tm + 0.3 * trange < self.conds[1]:  # higest temp at least 30% of range above lower tm
-                self.conds[1] += 0.1 * trange
-            else:
-                self.conds[1] = rhs_tm + yfactor * trange
-            legend = {'yanchor': 'top', 'y': 0.99, 'xanchor': 'right', 'x': 0.99, 'font': dict(size=15)}
-
-        fig = go.Figure()
-        if digitized_liquidus:
             fig.add_trace(
                 go.Scatter(x=[p[0] * 100 for p in digitized_liquidus], y=[p[1] - 273.15 for p in digitized_liquidus],
                             mode='lines', line=dict(color='#B82E2E', dash='dash')))
+        else: # expand temperature range to better accomodate the legend if there is no reference phase diagram
+            # highest temp at least 30% of range above lower tm
+            if max(lhs_tm, rhs_tm) + 0.3 * (self.conds[1] - self.conds[0]) < self.conds[1]:  
+                self.conds[1] += 0.1 * (self.conds[1] - self.conds[0])
+            else:
+                self.conds[1] = max(lhs_tm, rhs_tm) + 0.36 * (self.conds[1] - self.conds[0])
+
+        if max_liq > self.conds[1]:
+            self.conds[1] = max_liq + 0.1 * (self.conds[1] - self.conds[0])
+        if min_liq < self.conds[0]:
+            self.conds[0] = max(min_liq - 0.1 * (self.conds[1] - self.conds[0]), -273.15)
         
         solid_phases = [p for p in self.phases if p not in [self.comps[0], self.comps[1], 'L']]
         for phase in solid_phases:
@@ -364,10 +354,10 @@ class HSX:
                 continue
 
             phase_decomp_temp = phase_df['t'].max()
-            if phase_decomp_temp - 0.1 * trange < self.conds[0]:
-                if phase_decomp_temp - 0.1 * trange < -273.15:
+            if phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0]) < self.conds[0]:
+                if phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0]) < -273.15:
                     continue
-                self.conds[0] = phase_decomp_temp - 0.1 * trange
+                self.conds[0] = phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0])
 
         solid_comp_list = []
         idx_tracker = 0
@@ -419,20 +409,23 @@ class HSX:
         fig.update_traces(line=dict(width=4), showlegend=False)
         if digitized_liquidus:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='#B82E2E', dash='dash'),
-                                     name='Digitized Liquidus', showlegend=True))
+                                     name='Assessed Liquidus', showlegend=True))
         if pred:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='#117733'),
                                      name='Predicted Liquidus', showlegend=True))
         else:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='cornflowerblue'),
                                      name='Fitted Liquidus', showlegend=True))
-        if gas_temp and gas_temp - 273.15 < min(liq_df['t'].max(), self.conds[1]) and not digitized_liquidus:
-            fig.add_trace(go.Scatter(x=[0, 100], y=[gas_temp - 273.15, gas_temp - 273.15],
-                                     mode='lines', line=dict(color='#FFAE43', dash='dash'),
-                                     name='Gas Phase Forms', showlegend=True))
+        # if gas_temp and gas_temp - 273.15 < min(liq_df['t'].max(), self.conds[1]) and not digitized_liquidus:
+        #     fig.add_trace(go.Scatter(x=[0, 100], y=[gas_temp - 273.15, gas_temp - 273.15],
+        #                              mode='lines', line=dict(color='#FFAE43', dash='dash'),
+        #                              name='Gas Phase Forms', showlegend=True))
+        legend_params = {'yanchor': 'top', 'y': 0.99, 'xanchor': 'right', 'x': 0.99, 'font': dict(size=15)}
+        legend_params.update({'xanchor': 'left', 'x': 0.01} if lhs_tm < rhs_tm else {'xanchor': 'right', 'x': 0.99})
+
         fig.update_layout(
             title=dict(text=f'<b>{self.comps[0]}-{self.comps[1]} DFT-Referenced Phase Diagram</b>',
-                       x=0.5, xanchor='center', font=dict(size=18, color='black')),
+                   x=0.5, xanchor='center', font=dict(size=18, color='black'), yanchor='bottom'),
             xaxis=dict(range=[0, 100], title='Composition (at. %)'),
             yaxis=dict(range=[max(self.conds[0], -273), self.conds[1]], title='Temperature (°C)', ticksuffix=" "),
             width=750, # 960 for show()
@@ -440,10 +433,11 @@ class HSX:
             plot_bgcolor='white',
             font=dict(size=13, color='black'),
             showlegend=True,
-            legend=legend
+            legend=legend_params,
+            margin=dict(t=72, b=72, r=55)  # Also reduce top margin for tighter spacing
         )
         axes_params_dict = dict(
-            title_font=dict(size=13),
+            title_font=dict(size=16),
             title_standoff=8,  # Space between title and axis line
             mirror=True,        # Draws lines on all four sides
             showline=True,      # Shows the primary axis lines (bottom, left)
@@ -465,7 +459,7 @@ class HSX:
         )
         fig.add_annotation(
             x=50,
-            y=self.conds[1] - 0.08 * trange,
+            y=self.conds[1] - 0.08 * (self.conds[1] - self.conds[0]),
             text='L',
             showarrow=False,
             font=dict(
@@ -475,23 +469,23 @@ class HSX:
         )
         fig.add_annotation(
             x=-0.05,
-            y=-0.10,  # Position below the x-axis in paper coordinates
+            y=-0.086,  # Position below the x-axis in paper coordinates
             xref="paper",
             yref="paper",
             text=self.comps[0], # Use the component name from the data
             showarrow=False,
-            font=dict(color="black", size=13),
+            font=dict(color="black", size=13.5),
             xanchor='left',
             yanchor='middle'
         )
         fig.add_annotation(
             x=1.05,
-            y=-0.10, # Position below the x-axis in paper coordinates
+            y=-0.086, # Position below the x-axis in paper coordinates
             xref="paper",
             yref="paper",
             text=self.comps[1], # Use the component name from the data
             showarrow=False,
-            font=dict(color="black", size=13),
+            font=dict(color="black", size=13.5),
             xanchor='right',
             yanchor='middle'
         )

@@ -1,4 +1,4 @@
-from ternary_HSX import ternary_hsx_plotter, ternary_gtx_plotter
+from scripts.old.ternary_HSX_jw import ternary_hsx_plotter, ternary_gtx_plotter
 import plotly.offline as ploff
 import numpy as np
 import os
