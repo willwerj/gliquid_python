@@ -336,28 +336,26 @@ class HSX:
                 go.Scatter(x=[p[0] * 100 for p in digitized_liquidus], y=[p[1] - 273.15 for p in digitized_liquidus],
                             mode='lines', line=dict(color='#B82E2E', dash='dash')))
         else: # expand temperature range to better accomodate the legend if there is no reference phase diagram
-            # highest temp at least 30% of range above lower tm
-            if max(lhs_tm, rhs_tm) + 0.3 * (self.conds[1] - self.conds[0]) < self.conds[1]:  
-                self.conds[1] += 0.1 * (self.conds[1] - self.conds[0])
-            else:
-                self.conds[1] = max(lhs_tm, rhs_tm) + 0.36 * (self.conds[1] - self.conds[0])
+            # only if temp range maximum is less than 30% of temp range above highest elt melting point
+            if max(lhs_tm, rhs_tm) + 0.3 * (self.conds[1] - self.conds[0]) < self.conds[1]: 
+                self.conds[1] = max(lhs_tm, rhs_tm) + 0.3 * (self.conds[1] - self.conds[0]) 
 
+        # expand temperature range based on liquidus extremes
         if max_liq > self.conds[1]:
             self.conds[1] = max_liq + 0.1 * (self.conds[1] - self.conds[0])
         if min_liq < self.conds[0]:
-            self.conds[0] = max(min_liq - 0.1 * (self.conds[1] - self.conds[0]), -273.15)
+            self.conds[0] = max(-273.15, min_liq - 0.1 * (self.conds[1] - self.conds[0]))
         
         solid_phases = [p for p in self.phases if p not in [self.comps[0], self.comps[1], 'L']]
         for phase in solid_phases:
             phase_df = solid_df[solid_df['label'] == phase]
             if phase_df.empty:
                 continue
-
+            
+            # expand temperature range based on minimum decomposition temperatures of solid phases
             phase_decomp_temp = phase_df['t'].max()
             if phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0]) < self.conds[0]:
-                if phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0]) < -273.15:
-                    continue
-                self.conds[0] = phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0])
+                self.conds[0] = max(-273.15, phase_decomp_temp - 0.1 * (self.conds[1] - self.conds[0]))
 
         solid_comp_list = []
         idx_tracker = 0
@@ -427,7 +425,7 @@ class HSX:
             title=dict(text=f'<b>{self.comps[0]}-{self.comps[1]} DFT-Referenced Phase Diagram</b>',
                    x=0.5, xanchor='center', font=dict(size=18, color='black'), yanchor='bottom'),
             xaxis=dict(range=[0, 100], title='Composition (at. %)'),
-            yaxis=dict(range=[max(self.conds[0], -273), self.conds[1]], title='Temperature (°C)', ticksuffix=" "),
+            yaxis=dict(range=[self.conds[0], self.conds[1]], title='Temperature (°C)', ticksuffix=" "),
             width=750, # 960 for show()
             height=600, # 700 for show()
             plot_bgcolor='white',
