@@ -1,6 +1,6 @@
 """
 Author: Joshua Willwerth
-Last Modified: August 4, 2025
+Last Modified: February 24, 2026
 Description: This script provides functions to interface with the Materials Project (MP) APIs and locally cache DFT
 calculated phase data. Publicly-availble data from the Materials Platform for Data Science (MPDS) may be downloaded and
 processed using this script in order to autopopulate BinaryLiquid objects using the `from_cache` method.
@@ -27,16 +27,40 @@ from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
 import gliquid.config as config
 
-melt_enthalpies = json.load(open(config.fusion_enthalpies_file)) if os.path.exists(config.fusion_enthalpies_file) else {}
-melt_temps = json.load(open(config.fusion_temps_file)) if os.path.exists(config.fusion_temps_file) else {}
+# Load phase transitions database (replaces fusion_enthalpies, fusion_temperatures, vaporization_temperatures)
+_phase_transitions_raw = json.load(open(config.phase_transitions_file)) if os.path.exists(config.phase_transitions_file) else {}
+phase_transitions = _phase_transitions_raw.get('elements', {})
 
-missing_files = []
-if not melt_enthalpies:
-    missing_files.append("fusion_enthalpies.json")
-if not melt_temps:
-    missing_files.append("fusion_temperatures.json")
-if missing_files:
-    # Get the last two directories in the data_dir path
+# Derived convenience dicts from phase_transitions.json
+liquid_enthalpies = {}   # Cumulative H to liquid (J/mol), relative to DFT ground state
+liquid_entropies = {}    # Cumulative S to liquid (J/(mol·K)), relative to DFT ground state
+melt_temps = {}          # Melting temperature (K)
+boiling_temps = {}       # Boiling/vaporization temperature (K)
+element_polymorphs = {}  # List of solid polymorph phase dicts (excluding ground state)
+
+for _symbol, _elem_data in phase_transitions.items():
+    _solids = []
+    for _phase in _elem_data.get('phases', []):
+        if _phase['phase_type'] == 'solid':
+            if _phase['transition_temperature_K'] > 0:  # Exclude ground state
+                _solids.append(_phase)
+        elif _phase['phase_type'] == 'liquid':
+            _h = _phase.get('enthalpy_J_per_mol')
+            _s = _phase.get('entropy_J_per_mol_K')
+            _t = _phase.get('transition_temperature_K')
+            if _h is not None:
+                liquid_enthalpies[_symbol] = _h
+            if _s is not None:
+                liquid_entropies[_symbol] = _s
+            if _t is not None:
+                melt_temps[_symbol] = _t
+        elif _phase['phase_type'] == 'gas':
+            _t = _phase.get('transition_temperature_K')
+            if _t is not None:
+                boiling_temps[_symbol] = _t
+    element_polymorphs[_symbol] = _solids
+
+if not phase_transitions:
     data_dir_parts = os.path.normpath(config.data_dir).split(os.sep)
     last_two_dirs = os.sep.join(data_dir_parts[-2:]) if len(data_dir_parts) >= 2 else config.data_dir
     raise FileNotFoundError(
@@ -203,11 +227,18 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
     """
     components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
     component_data = {
-        comp: [melt_enthalpies.get(comp, 0), melt_temps.get(comp, 0)]
+        comp: {
+            'H_liq': liquid_enthalpies.get(comp, 0),
+            'S_liq': liquid_entropies.get(comp, 0),
+            'T_fusion': melt_temps.get(comp, 0),
+            'T_vaporization': boiling_temps.get(comp, 0),
+            'polymorphs': element_polymorphs.get(comp, [])
+        }
         for comp in components
     }
     for comp, data in component_data.items():
-        print(f"{comp}: H_fusion = {data[0]} J/mol, T_fusion = {data[1]} K")
+        print(f"{comp}: H_liq = {data['H_liq']} J/mol, S_liq = {data['S_liq']:.4f} J/(mol·K), "
+              f"T_fusion = {data['T_fusion']} K, polymorphs = {len(data['polymorphs'])}")
 
     if config.dir_structure == 'nested':
         sys_dir = os.path.join(config.data_dir, sys_name)
@@ -547,7 +578,7 @@ def get_hull_rel_enth_skew(dft_ch: PhaseDiagram) -> float:
     """
     Calculate the enthalpy skew of the DFT T=0K convex hull, relative to the ideal liquid enthalpy.
     """
-    hull_skew = (melt_enthalpies[str(dft_ch.elements[0])] - melt_enthalpies[str(dft_ch.elements[1])]) / 4.0
+    hull_skew = (liquid_enthalpies[str(dft_ch.elements[0])] - liquid_enthalpies[str(dft_ch.elements[1])]) / 4.0
     for e in dft_ch.stable_entries:
         xb_comp = e.composition.fractional_composition.as_dict().get(str(dft_ch.elements[1]), 0)
         form_energy_kj = dft_ch.get_form_energy_per_atom(e) * 96485
@@ -562,6 +593,6 @@ def get_hull_rel_mid_depth(dft_ch: PhaseDiagram) -> float:
     lhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[0]): 1}))
     rhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[1]): 1}))
     hull_mid_ref = dft_ch.get_hull_energy_per_atom(Composition({str(e): 0.5 for e in dft_ch.elements}))
-    e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[0])] + 
-                                    rhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[1])]) / 2 
+    e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + liquid_enthalpies[str(dft_ch.elements[0])] + 
+                                    rhs_ref * 96485 + liquid_enthalpies[str(dft_ch.elements[1])]) / 2 
     return float(e_depth)

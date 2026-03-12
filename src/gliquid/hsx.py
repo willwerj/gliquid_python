@@ -90,6 +90,19 @@ class HSX:
         inter_counts = np.sum(is_inter[real_simplices], axis=1)
         self.simplices = real_simplices[inter_counts < 3]
 
+
+        n_real = len(self.points)
+        all_simplices = new_hull.simplices
+
+        # Filter 1: discard simplices with any fictitious vertex (index >= n_real)
+        mask_no_fict = np.all(all_simplices < n_real, axis=1)
+        real_simplices = all_simplices[mask_no_fict]
+
+        # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
+        is_inter = (self.df['Phase'] != 'L').values
+        inter_counts = np.sum(is_inter[real_simplices], axis=1)
+        self.simplices = real_simplices[inter_counts < 3]
+
         return self.simplices
 
     def compute_tx(self) -> tuple[pd.DataFrame, list, np.ndarray, np.ndarray]:
@@ -99,8 +112,10 @@ class HSX:
         for simplex in self.simplices:
             A, B, C = self.points[simplex]
             n = np.cross(B - A, C - A).astype(float)
+            if n[2] == 0:
+                continue
             T = (-n[1] / n[2]) * self.scaler
-            if not np.isnan(T):
+            if np.isfinite(T):
                 temps.append(T)
                 valid_simplices.append(simplex)
                 new_phases.append([self.df.loc[simplex[i], 'Phase'] for i in range(3)])
@@ -296,8 +311,18 @@ class HSX:
 
         return inv_points, combined_list, count_dict
     
-    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None) -> go.Figure:
-        """Plots the binary phase diagram from computed phase boundaries and invariant points."""
+    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None, gas_temp: int | float = None,
+                polymorph_transitions: list[dict] | None = None) -> go.Figure:
+        """Plots the binary phase diagram from computed phase boundaries and invariant points.
+        
+        Args:
+            pred (bool): If True, use prediction color scheme for the liquidus.
+            digitized_liquidus (list): Digitized experimental liquidus data points.
+            gas_temp (int | float): Gas phase formation temperature (K).
+            polymorph_transitions (list[dict]): List of elemental polymorph transitions, each dict with keys:
+                'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float),
+                'ground_state_name' (str) for the phase below the transition.
+        """
         liq_inv = self.liquidus_invariants()
         inv_points, combined_list = liq_inv[:2]
         
@@ -369,6 +394,12 @@ class HSX:
 
         solid_comp_list = []
         idx_tracker = 0
+        # Collect polymorph phase names for separate labeling
+        polymorph_names = set()
+        if polymorph_transitions:
+            polymorph_names = {pt['name'] for pt in polymorph_transitions}
+            polymorph_names |= {pt.get('ground_state_name', '') for pt in polymorph_transitions}
+
         for phase in solid_phases:
             phase_df = solid_df[solid_df['label'] == phase]
             if phase_df.empty:
@@ -385,17 +416,20 @@ class HSX:
             line = px.line(phase_df, x='x', y='t', color='label', color_discrete_map=self.phase_color_remap)
 
             fig.add_trace(line.data[0])
-            x_offset = 1.5 if solid_comp < 5 or (idx_tracker > 0 and solid_comp_list[idx_tracker] - solid_comp_list[idx_tracker - 1] < 5) else -2.5
-            fig.add_annotation(
-                x=solid_comp + x_offset,
-                y=self.conds[0],
-                yanchor='bottom',
-                text=phase,
-                showarrow=False,
-                textangle=-90,
-                borderpad=5,
-                font=dict(size=12, color='black')
-            )
+
+            # Skip label here for polymorphs — they are labeled separately below
+            if phase not in polymorph_names:
+                x_offset = 1.5 if solid_comp < 5 or (idx_tracker > 0 and solid_comp_list[idx_tracker] - solid_comp_list[idx_tracker - 1] < 5) else -2.5
+                fig.add_annotation(
+                    x=solid_comp + x_offset,
+                    y=self.conds[0],
+                    yanchor='bottom',
+                    text=phase,
+                    showarrow=False,
+                    textangle=-90,
+                    borderpad=5,
+                    font=dict(size=12, color='black')
+                )
             idx_tracker += 1
 
         for key in inv_points.keys():
@@ -406,6 +440,119 @@ class HSX:
                     line = px.line(x=comps, y=temps)
                     line.update_traces(line=dict(color='Silver'))
                     fig.add_trace(line.data[0])
+
+        # --- Polymorph solid-solid transition tie lines and labels ---
+        if polymorph_transitions:
+            # Sort transitions per side so we can label non-overlapping regions
+            lhs_polys = sorted([pt for pt in polymorph_transitions if pt['comp_x_pct'] == 0],
+                               key=lambda p: p['transition_temp_C'])
+            rhs_polys = sorted([pt for pt in polymorph_transitions if pt['comp_x_pct'] == 100],
+                               key=lambda p: p['transition_temp_C'])
+
+            for side_polys in [lhs_polys, rhs_polys]:
+                for pt in side_polys:
+                    t_trans = pt['transition_temp_C']
+                    comp_pct = pt['comp_x_pct']
+
+                    # Find liquidus x at the transition temperature (interpolate from liq_df)
+                    if comp_pct == 0:
+                        liq_at_t = liq_df[liq_df['t'] >= t_trans - 1].sort_values('x')
+                        liq_x = liq_at_t.iloc[0]['x'] if not liq_at_t.empty else comp_pct
+                    else:
+                        liq_at_t = liq_df[liq_df['t'] >= t_trans - 1].sort_values('x', ascending=False)
+                        liq_x = liq_at_t.iloc[0]['x'] if not liq_at_t.empty else comp_pct
+
+                    # Draw tie line from elemental endpoint to liquidus at transition temperature
+                    tie_x = [comp_pct, float(liq_x)]
+                    tie_t = [t_trans, t_trans]
+                    tie_line = px.line(x=tie_x, y=tie_t)
+                    tie_line.update_traces(line=dict(color='Silver'))
+                    fig.add_trace(tie_line.data[0])
+
+            # --- Polymorph labels: place at midpoint of each polymorph's stability range ---
+            temp_range_span = self.conds[1] - self.conds[0]
+            used_label_positions = []  # (y_center, side) to avoid overlap
+
+            for side_polys, comp_pct in [(lhs_polys, 0), (rhs_polys, 100)]:
+                if not side_polys:
+                    continue
+
+                # Build ordered list of all transitions (ground state at bottom, polymorphs, liquid at top)
+                # Each region: [name, t_bottom, t_top]
+                regions = []
+                gs_name = side_polys[0].get('ground_state_name', self.comps[0] if comp_pct == 0 else self.comps[1])
+
+                # Ground state region: from plot bottom to first transition
+                regions.append({
+                    'name': gs_name,
+                    'is_ground_state': True,
+                    't_bottom': self.conds[0],
+                    't_top': side_polys[0]['transition_temp_C']
+                })
+                # Polymorph regions
+                for i, pt in enumerate(side_polys):
+                    t_top = side_polys[i + 1]['transition_temp_C'] if i + 1 < len(side_polys) else (
+                        lhs_tm if comp_pct == 0 else rhs_tm)
+                    regions.append({
+                        'name': pt['name'],
+                        'is_ground_state': False,
+                        't_bottom': pt['transition_temp_C'],
+                        't_top': t_top
+                    })
+
+                # Label placement for each region
+                for region in regions:
+                    if region['is_ground_state']:
+                        continue  # Ground state label is handled by the component annotation at bottom
+
+                    region_height = region['t_top'] - region['t_bottom']
+                    min_label_height = 0.04 * temp_range_span
+
+                    # Determine label position
+                    label_y = (region['t_bottom'] + region['t_top']) / 2
+
+                    # Check if there's enough vertical space for the label near the axis
+                    # Get liquidus temperature at this comp to see if label fits between axis and liquidus
+                    if comp_pct == 0:
+                        nearby_liq = liq_df[liq_df['x'] <= 10].copy()
+                    else:
+                        nearby_liq = liq_df[liq_df['x'] >= 90].copy()
+
+                    liq_t_at_label = None
+                    if not nearby_liq.empty:
+                        # Interpolate liquidus temperature at label_y
+                        above = nearby_liq[nearby_liq['t'] >= label_y]
+                        if not above.empty:
+                            liq_t_at_label = above.iloc[0]['t'] if comp_pct == 0 else above.iloc[-1]['t']
+
+                    # Check overlap with existing labels
+                    overlap = any(abs(label_y - used_y) < min_label_height and side == comp_pct
+                                  for used_y, side in used_label_positions)
+
+                    # If label region is too small or overlapping, place above the liquidus
+                    if region_height < min_label_height or overlap:
+                        if liq_t_at_label is not None:
+                            label_y = liq_t_at_label + 0.03 * temp_range_span
+                        else:
+                            label_y = region['t_top'] + 0.03 * temp_range_span
+
+                    used_label_positions.append((label_y, comp_pct))
+
+                    # x position: slightly inside from the axis
+                    x_pos = 3.5 if comp_pct == 0 else 96.5
+                    x_anchor = 'left' if comp_pct == 0 else 'right'
+
+                    fig.add_annotation(
+                        x=x_pos,
+                        y=label_y,
+                        text=region['name'],
+                        showarrow=False,
+                        textangle=-90,
+                        borderpad=3,
+                        font=dict(size=10, color='gray'),
+                        xanchor=x_anchor,
+                        yanchor='middle'
+                    )
         
         if pred:
             self.phase_color_remap['L'] = '#117733'
