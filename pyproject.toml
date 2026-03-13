@@ -4,12 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gliquid"
-version = "2025.06.30"
+version = "2026.03.13"
 dependencies = [
     "plotly>=5.18.0,<6.0.0",
     "nbformat>=4.2.0",
     "mp-api>=0.45.1",
-    "jupyter>=1.1.1"
+    "jupyter>=1.1.1",
+    "matplotlib>=3.8.0",
+    "sympy>=1.12",
+    "shap>=0.48.0",
+    "joblib>=1.3.0"
 ]
 requires-python = ">=3.10,<3.13"
 authors = [
@@ -38,6 +42,12 @@ classifiers = [
     "Programming Language :: Python"
 ]
 
+[project.optional-dependencies]
+mpds = [
+    "mpds-client"
+]
+
 [project.urls]
-Homepage = "https://viz.whsunresearch.group/gliquid/interactive_matrix.html"
+Homepage = "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
+Ternary Interpolation = "https://viz.whsunresearch.group/gliquid/ternary-interpolation/"
 Repository = "https://github.com/willwerj/gliquid_python"

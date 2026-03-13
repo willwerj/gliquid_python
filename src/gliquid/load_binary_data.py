@@ -15,7 +15,12 @@ import numpy as np
 
 from emmet.core.thermo import ThermoType
 from mp_api.client import MPRester as MPRester
-from mpds_client import MPDSDataRetrieval, MPDSDataTypes, APIError
+try:
+    from mpds_client import MPDSDataRetrieval, MPDSDataTypes, APIError
+except ImportError:
+    MPDSDataRetrieval = None
+    MPDSDataTypes = None
+    APIError = Exception
 from pymatgen.core import Composition, Element, Structure
 from pymatgen.entries.computed_entries import ComputedEntry
 from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
@@ -41,6 +46,14 @@ if missing_files:
         f"The following data files were not loaded correctly: {', '.join(missing_files)}. "
         f"Please ensure the files exist in the data directory '...{os.sep}{last_two_dirs}'."
     )
+
+
+def _require_mpds_client() -> None:
+    if MPDSDataRetrieval is None or MPDSDataTypes is None:
+        raise ImportError(
+            "mpds-client is required for live MPDS retrieval. "
+            "Install it with `pip install gliquid[mpds]` or `pip install mpds-client`."
+        )
 
 def validate_and_format_binary_system(input) -> tuple[list[str], str, bool]:
     """
@@ -228,6 +241,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
         if not mpds_api_key:
             print("MPDS_API_KEY not found in environment variables. Proceeding without binary phase data.")
             return mpds_json, component_data, (None, False)
+        _require_mpds_client()
         client = MPDSDataRetrieval(api_key=mpds_api_key)
         client.dtype = MPDSDataTypes.PEER_REVIEWED
         fields = {'C': ['chemical_elements', 'entry', 'comp_range', 'temp', 'labels', 'shapes', 'reference']}

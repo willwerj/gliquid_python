@@ -1,6 +1,6 @@
 """
 Authors: Abrar Rauf, Joshua Willwerth
-Last Modified: June 30, 2025
+Last Modified: March 13 2026
 Description: This script takes the phase energy data in the form of enthalpy (H), entropy (S) and composition (X)
 and performs transformations to composition-temperature (TX) phase diagrams with well-defined coexistence boundaries
 GitHub: https://github.com/AbrarRauf
@@ -54,11 +54,11 @@ class HSX:
     def hull(self) -> np.ndarray:
         """Computes the lower convex hull of an N-dimensional Xi-S-H space."""
         dim = self.points.shape[1]
-        
+
         # Initialize bounds for Xi
         x_list = [[1 if j == i - 1 else 0 for j in range(dim - 2)] for i in range(dim - 1)]
         x_list[0] = [0] * (dim - 2)
-        
+
         # Compute S and H bounds
         s_min, s_extr = np.min(self.points[:, -2]), np.max([self.liq_points[0, -2], self.liq_points[-1, -2]])
         h_max = np.max(self.points[:, -1])
@@ -68,26 +68,28 @@ class HSX:
         liq_fict_coords = np.column_stack((self.liq_points[:, 0], self.liq_points[:, 1],
                                             np.full(len(self.liq_points), upper_bound)))
         fict_coords = np.vstack([
-            np.append(x_list[i], [s_min, upper_bound]) for i in range(dim - 1)
-        ] + [
-            np.append(x_list[i], [s_extr, upper_bound]) for i in range(dim - 1)
-        ])
-        
+                                np.append(x_list[i], [s_min, upper_bound]) for i in range(dim - 1)
+                                ] + [
+                                np.append(x_list[i], [s_extr, upper_bound]) for i in range(dim - 1)
+                                ])
+
         fict_points = np.vstack((fict_coords, liq_fict_coords))
         new_points = np.vstack((self.points, fict_points))
         # Compute convex hull
         new_hull = ConvexHull(new_points, qhull_options="Qt i")
-        # new_hull = ConvexHull(new_points)
-        
-        def check_common_rows(arr1: np.ndarray, arr2: np.ndarray) -> bool:
-            """Checks if any row in arr1 exists in arr2."""
-            return any((arr1 == row).all(axis=1).any() for row in arr2)
-        
-        # Filter hull simplices
-        lower_hull_filter1 = [s for s in new_hull.simplices if not check_common_rows(new_points[s], fict_points)]
-        lower_hull_filter2 = [s for s in lower_hull_filter1 
-                              if sum((v == im).all() for v in self.points[s] for im in self.inter_points) < 3]
-        self.simplices = np.array(lower_hull_filter2)
+
+        n_real = len(self.points)
+        all_simplices = new_hull.simplices
+
+        # Filter 1: discard simplices with any fictitious vertex (index >= n_real)
+        mask_no_fict = np.all(all_simplices < n_real, axis=1)
+        real_simplices = all_simplices[mask_no_fict]
+
+        # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
+        is_inter = (self.df['Phase'] != 'L').values
+        inter_counts = np.sum(is_inter[real_simplices], axis=1)
+        self.simplices = real_simplices[inter_counts < 3]
+
         return self.simplices
 
     def compute_tx(self) -> tuple[pd.DataFrame, list, np.ndarray, np.ndarray]:
@@ -282,6 +284,14 @@ class HSX:
             grouped_data[entry[3][0]].append(entry)
 
         inv_points['Congruent Melting'] = [max(entries, key=lambda x: x[0]) for entries in grouped_data.values()]
+
+        # Normalize invariant-point numeric fields to built-in Python floats.
+        for inv_type, entries in inv_points.items():
+            inv_points[inv_type] = [
+                [float(temp), float(comp_mid), [float(c) for c in comp], [str(p) for p in phase]]
+                for temp, comp_mid, comp, phase in entries
+            ]
+
         count_dict = {key: len(value) for key, value in inv_points.items()}
 
         return inv_points, combined_list, count_dict
@@ -414,10 +424,6 @@ class HSX:
         else:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='cornflowerblue'),
                                      name='Fitted Liquidus', showlegend=True))
-        # if gas_temp and gas_temp - 273.15 < min(liq_df['t'].max(), self.conds[1]) and not digitized_liquidus:
-        #     fig.add_trace(go.Scatter(x=[0, 100], y=[gas_temp - 273.15, gas_temp - 273.15],
-        #                              mode='lines', line=dict(color='#FFAE43', dash='dash'),
-        #                              name='Gas Phase Forms', showlegend=True))
         legend_params = {'yanchor': 'top', 'y': 0.99, 'xanchor': 'right', 'x': 0.99, 'font': dict(size=15)}
         legend_params.update({'xanchor': 'left', 'x': 0.01} if lhs_tm < rhs_tm else {'xanchor': 'right', 'x': 0.99})
 
@@ -493,21 +499,10 @@ class HSX:
     def get_phase_points(self) -> dict:
         """Extracts phase boundary points from the HSX object and converts to a list of dictionaries for BinaryLiquid"""
 
-        def remove_duplicates(coordinates):
-            """Removes duplicate x-coordinates while preserving order."""
-            coordinates.sort(key=lambda x: (x[0], x[1]))
-            filtered_coordinates = []
-            current_x = None
-            for coord in coordinates:
-                if coord[0] != current_x:
-                    if coord[1] >= -273.15:
-                        filtered_coordinates.append(coord)
-                    current_x = coord[0]
-            
-            return filtered_coordinates
-        
-
         df_tx = self.compute_tx()[0]
         phase_points = {phase: df_tx[df_tx['label'] == phase][['x', 't']].values.tolist() for phase in self.phases}
-        phase_points['L'] = remove_duplicates(phase_points['L'])
+        liq_df = (df_tx[df_tx['label'] == 'L']
+                  .sort_values(['x', 't'])
+                  .drop_duplicates(subset='x', keep='first'))
+        phase_points['L'] = liq_df[liq_df['t'] >= -273.15][['x', 't']].values.tolist()
         return phase_points

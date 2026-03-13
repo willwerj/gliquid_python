@@ -1,4 +1,4 @@
-# <img src="figures/logo.png" width="300" height="300"> 
+# <img src="assets/gliq_logo_tall.png" width="300" height="430"> 
 # GLiquid: DFT-Referenced Thermodynamic Modeling
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -17,12 +17,13 @@ done through downloading the zip file and unpacking it to your local directory
 ```bash
 cd "some_local_directory"
 git clone https://github.com/willwerj/gliquid_python.git
+cd gliquid_python
 ```
 
 ### **2. Create an Environment**
 If you use a `conda` environment manager:
 ```bash
-conda create --name gliquid-env python==3.10  # Python 3.11 & 3.12 also supported
+conda create --name gliquid-env python=3.10  # Python 3.11 and 3.12 also supported
 conda activate gliquid-env
 ```
 or if using `venv`:
@@ -39,25 +40,88 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process # As needed
 gliquid-env\Scripts\Activate.ps1      
 ```                       
                                                           
-### **3. Install Dependencies**
-Then, install the gliquid dependencies. For now, this is done locally 
+### **3. Install GLiquid**
+Install the package from the repository root.
+
+Base installation:
 ```bash
-# Pip package installation
 pip install .
 ```
 
-### **4. Get your API Key**
-Visit the [Materials Project Website](https://next-gen.materialsproject.org/api) and create an account if you don't
-already have one. You will need to log in to receive an API key, which you will then need to copy and paste into the 
-first block of either jupyter notebook to use the Materials Project API.
-
-## Usage
-If using `jupyter`, you will first need to export your environment to the jupyter notebook kernel. Then, navigate 
-to the [notebooks](notebooks) directory and run. If your IDE supports jupyter notebooks, 
-configure and run in your IDE instead.
+If you want to retrieve **live MPDS phase-diagram data** instead of using only cached/local files, install the optional
+MPDS extra:
 
 ```bash
-# Run these only if using jupyter to host notebooks
+pip install .[mpds]
+```
+
+For development work, you may prefer an editable install:
+
+```bash
+pip install -e .
+```
+
+### **4. Configure API Keys**
+#### Materials Project
+Visit the [Materials Project Website](https://next-gen.materialsproject.org/api) and create an account if you don't
+already have one. You will need an API key for fetching DFT data that is not already cached locally.
+
+You can set it in Python:
+
+```python
+import os
+os.environ["NEW_MP_API_KEY"] = "YOUR_API_KEY_HERE"
+```
+
+#### MPDS (optional)
+MPDS access is only needed when you want to download live MPDS phase-diagram data. If you are working from cached
+JSON files, you do **not** need `mpds-client` or an MPDS key.
+
+If you install the optional extra, set:
+
+```python
+import os
+os.environ["MPDS_API_KEY"] = "YOUR_MPDS_API_KEY_HERE"
+```
+
+## Quick Start
+The example below mirrors the core workflow shown in the fitting demo notebook: load a cached binary system,
+fit liquid non-ideal mixing parameters, and visualize the resulting phase diagram.
+
+```python
+import os
+
+os.environ["NEW_MP_API_KEY"] = "YOUR_API_KEY_HERE"
+
+from gliquid.binary import BinaryLiquid, BLPlotter
+
+# Build a BinaryLiquid object from cached MPDS / DFT data
+bl = BinaryLiquid.from_cache("Cu-Mg", param_format="comb-exp")
+
+# Fit liquid non-ideal mixing parameters
+fit_results = bl.fit_parameters(verbose=True, n_opts=5)
+best_fit = min(fit_results, key=lambda result: result.get("mae", float("inf")), default={})
+
+print("Best-fit result:")
+for field, value in best_fit.items():
+    print(f"  {field}: {value}")
+
+# Visualize the fitted phase diagram and the DFT convex hull + liquid free energy
+plotter = BLPlotter(bl)
+plotter.show("fit+liq")
+plotter.show("ch+g")
+```
+
+For a more detailed walkthrough, including raw data inspection and batch fitting across multiple systems, see
+[notebooks/fitting_demo.ipynb](notebooks/fitting_demo.ipynb).
+
+## Usage
+If using `jupyter`, first register your environment as a notebook kernel. Then navigate
+to the [notebooks](notebooks) directory and launch Jupyter. If your IDE already supports notebooks,
+you can instead select the same environment directly in the editor.
+
+```bash
+# Run these only if using Jupyter notebooks
 python -m ipykernel install --user --name=gliquid-env
 cd notebooks
 jupyter notebook

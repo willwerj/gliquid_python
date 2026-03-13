@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import shap
 
-from scripts.shap_compat import apply_patches as apply_shap_patches
+from gliquid.shap_compat import apply_patches as apply_shap_patches
 apply_shap_patches()
 
 
@@ -31,7 +31,6 @@ class ProductionModelRunner:
     def __init__(self, bundle_dir: str):
         self.bundle_dir = Path(bundle_dir)
         self.model_dir = self.bundle_dir / "model"
-        self.data_dir = self.bundle_dir / "data"
 
         self.models: Dict[str, object] = {}
         self.feature_names: Dict[str, List[str]] = {}
@@ -51,8 +50,8 @@ class ProductionModelRunner:
             self.model_dir / "L1_a_model.joblib",
             self.model_dir / "feature_names_symm.joblib",
             self.model_dir / "feature_names_anti.joblib",
-            self.data_dir / "prediction_dataset_symmetric.xlsx",
-            self.data_dir / "prediction_dataset_antisymmetric.xlsx",
+            self.bundle_dir / "prediction_dataset_symmetric.xlsx",
+            self.bundle_dir / "prediction_dataset_antisymmetric.xlsx",
         ]
         missing = [str(p) for p in required if not p.exists()]
         if missing:
@@ -72,8 +71,8 @@ class ProductionModelRunner:
         tf_path = self.model_dir / "target_transformers.joblib"
         self.target_transformers = joblib.load(tf_path) if tf_path.exists() else {}
 
-        self.df_symm = pd.read_excel(self.data_dir / "prediction_dataset_symmetric.xlsx")
-        self.df_anti = pd.read_excel(self.data_dir / "prediction_dataset_antisymmetric.xlsx")
+        self.df_symm = pd.read_excel(self.bundle_dir / "prediction_dataset_symmetric.xlsx")
+        self.df_anti = pd.read_excel(self.bundle_dir / "prediction_dataset_antisymmetric.xlsx")
 
     @staticmethod
     def _mirror_system(system_name: str) -> Optional[str]:
@@ -289,10 +288,6 @@ class ProductionModelRunner:
         str
             Path to saved figure file
         """
-        print("\n" + "="*80)
-        print(f"CREATING COMPACT PREDICTION FIGURE: {system_name}")
-        print("="*80)
-
         # Fetch feature rows using the existing workflow
         symm_row, anti_row, _ = self.get_rows_for_system(system_name)
         l0_features_df = self._prepare_row(symm_row, mode="symmetric")
@@ -310,7 +305,7 @@ class ProductionModelRunner:
         params = ['L0_a', 'L0_b', 'L1_a']
         
         for idx, (param, ax) in enumerate(zip(params, axes)):
-            print(f"Creating waterfall plot for {param}...")
+            # print(f"Creating waterfall plot for {param}...")
             
             # Determine features based on parameter
             if param in ['L0_a', 'L0_b']:
@@ -332,7 +327,6 @@ class ProductionModelRunner:
             y_labels = ax.get_yticklabels()[:max_display_features]
             ax.set_yticks(ax.get_yticks()[:max_display_features])
             new_labels = []
-            # print("Original y_labels:", [label.get_text() for label in y_labels])
             
             for label in y_labels:
                 label_text = label.get_text()
@@ -424,9 +418,7 @@ class ProductionModelRunner:
                     tick_values = [int(x_min), 0, int(x_max)]
                 else:
                     tick_values = [int(x_min), int((x_min + x_max) / 2), int(x_max)]
-            
-            
-            # print("tick_values:", tick_values)
+
             x_min = x_max - x_range * 1.08
             ax.set_xlim(x_min, x_max)
             ax.set_xticks(tick_values)
@@ -450,10 +442,7 @@ class ProductionModelRunner:
         else:
             plt.savefig(output_file, format='svg', bbox_inches='tight', dpi=400)
             plt.close()
-        
-            print(f"[OK] Compact prediction figure saved: {output_file}")
-            print(f"{'='*80}\n")
-            
+
             return output_file
 
     def create_beeswarm_figures(
@@ -485,15 +474,11 @@ class ProductionModelRunner:
         list of str or None
             Paths to saved files, or ``None`` entries when shown interactively.
         """
-        print("\n" + "=" * 80)
-        print("CREATING BEESWARM FIGURES")
-        print("=" * 80)
-
         results: List[Optional[str]] = []
 
         for target in ["L0_a", "L0_b", "L1_a"]:
-            print(f"Computing beeswarm for {target} "
-                  f"(sample_fraction={sample_fraction:.0%})...")
+            # print(f"Computing beeswarm for {target} "
+            #       f"(sample_fraction={sample_fraction:.0%})...")
 
             # --- select the right dataset & feature set -----------------------
             mode = "antisymmetric" if target == "L1_a" else "symmetric"
@@ -543,10 +528,6 @@ class ProductionModelRunner:
                 ax.set_title("")
                 ax.set_xticklabels([])
                 ax.set_yticklabels([])
-                # ax.tick_params(
-                #     axis="both", which="both", length=0,
-                #     labelbottom=False, labelleft=False,
-                # )
 
                 # Clear colorbar / any other axes
                 for other_ax in fig.get_axes():
@@ -556,10 +537,6 @@ class ProductionModelRunner:
                         other_ax.set_title("")
                         other_ax.set_xticklabels([])
                         other_ax.set_yticklabels([])
-                        # other_ax.tick_params(
-                        #     axis="both", which="both", length=0,
-                        #     labelbottom=False, labelleft=False,
-                        # )
 
                 # Remove any standalone figure-level text
                 for txt in fig.texts:
@@ -572,40 +549,10 @@ class ProductionModelRunner:
                 plt.savefig(str(out_path), format="svg",
                             bbox_inches="tight", dpi=400)
                 plt.close()
-                print(f"  [OK] Saved: {out_path}")
+                # print(f"  [OK] Saved: {out_path}")
                 results.append(str(out_path))
             else:
                 plt.show()
                 results.append(None)
 
-        print("=" * 80 + "\n")
         return results
-
-
-if __name__ == "__main__":
-    # Minimal smoke-test style usage for the selected model bundle.
-    scripts_dir = Path(__file__).resolve().parent
-    bundle = scripts_dir / "bundle_20260217_135723"
-
-    runner = ProductionModelRunner(str(bundle))
-
-    # Example: pick first available system
-    example_system = str(runner.df_symm["system"].iloc[1])
-    preds = runner.predict_system(example_system)
-    print(f"System: {example_system}")
-    print(f"Predictions [L0_a, L0_b, L1_a]: {preds}")
-
-    fig_file = runner.create_compact_prediction_figure(
-        system_name=example_system,
-        output_file=str(bundle / "shap_output" / f"{example_system}_compact_prediction.svg"),
-        max_display_features=6,
-    )
-    print(f"Saved SHAP compact prediction figure: {fig_file}")
-
-    # Beeswarm test – 20% sample, default settings, saved to file
-    runner.create_beeswarm_figures(
-        output_dir=str(bundle / "shap_output/pub"),
-        max_display=6,
-        sample_fraction=1,
-        publication=True,
-    )
