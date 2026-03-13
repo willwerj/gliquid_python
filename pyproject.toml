@@ -8,12 +8,16 @@ version = "2026.03.13"
 dependencies = [
     "plotly>=5.18.0,<6.0.0",
     "nbformat>=4.2.0",
+    "emmet-core<0.86.0rc1",
     "mp-api>=0.45.1",
     "jupyter>=1.1.1",
     "matplotlib>=3.8.0",
     "sympy>=1.12",
+    "scikit-learn==1.7.1",
     "shap>=0.48.0",
-    "joblib>=1.3.0"
+    "joblib>=1.3.0",
+    "xgboost==3.1.3",
+    "openpyxl",
 ]
 requires-python = ">=3.10,<3.13"
 authors = [
@@ -49,5 +53,5 @@ mpds = [
 
 [project.urls]
 Homepage = "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
-Ternary Interpolation = "https://viz.whsunresearch.group/gliquid/ternary-interpolation/"
+TernaryInterpolation = "https://viz.whsunresearch.group/gliquid/ternary-interpolation/"
 Repository = "https://github.com/willwerj/gliquid_python"

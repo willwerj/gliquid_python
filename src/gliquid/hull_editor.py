@@ -44,7 +44,7 @@ from IPython.display import display
 import plotly.graph_objects as go
 
 from pymatgen.core import Composition, Element
-from gliquid.phase_diagram import PhaseDiagram, PDEntry
+from pymatgen.analysis.phase_diagram import PhaseDiagram, PDEntry
 
 if TYPE_CHECKING:
     pass
