@@ -1,6 +1,6 @@
 """
 Authors: Joshua Willwerth, Shibo Tan, Abrar Rauf
-Last Modified: March 13 2026
+Last Modified: March 16 2026
 Description: This script is designed for the thermodynamic modeling of two-component systems.
 It provides tools for fitting the non-ideal mixing parameters of the liquid phase from T=0K DFT-calculated phases and
 digitized equilibrium phase boundary data. The data stored and produced may be visualized using the BLPlotter class
@@ -1737,10 +1737,6 @@ class BLPlotter:
         # Determine if prediction is required
         pred_pd = bool(plot_type in ['pred', 'pred+liq'])
 
-        # If predicted phase diagram, calculate the minimum gas temperature as an advisory for liquidus accuracy
-        if pred_pd:
-            gas_temp = min([cd[2] for cd in self._bl.component_data.values()])
-
         # Ensure phase points are updated if not already done
         if self._bl.hsx is None:
             self._bl.update_phase_points()
@@ -1749,7 +1745,6 @@ class BLPlotter:
         fig = self._bl.hsx.plot_tx(
             digitized_liquidus=self._bl.digitized_liq if plot_type in ['fit+liq', 'pred+liq'] else None,
             pred=pred_pd,  # Determines generated liquidus color and temperature axis scaling
-            gas_temp=gas_temp  # Include gas temperature if applicable
         )
 
         return fig

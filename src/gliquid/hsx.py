@@ -1,6 +1,6 @@
 """
 Authors: Abrar Rauf, Joshua Willwerth
-Last Modified: March 13 2026
+Last Modified: March 16 2026
 Description: This script takes the phase energy data in the form of enthalpy (H), entropy (S) and composition (X)
 and performs transformations to composition-temperature (TX) phase diagrams with well-defined coexistence boundaries
 GitHub: https://github.com/AbrarRauf
@@ -296,7 +296,7 @@ class HSX:
 
         return inv_points, combined_list, count_dict
     
-    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None, gas_temp: int | float = None) -> go.Figure:
+    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None) -> go.Figure:
         """Plots the binary phase diagram from computed phase boundaries and invariant points."""
         liq_inv = self.liquidus_invariants()
         inv_points, combined_list = liq_inv[:2]

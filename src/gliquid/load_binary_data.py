@@ -29,15 +29,12 @@ import gliquid.config as config
 
 melt_enthalpies = json.load(open(config.fusion_enthalpies_file)) if os.path.exists(config.fusion_enthalpies_file) else {}
 melt_temps = json.load(open(config.fusion_temps_file)) if os.path.exists(config.fusion_temps_file) else {}
-boiling_temps = json.load(open(config.vaporization_temps_file)) if os.path.exists(config.vaporization_temps_file) else {}
 
 missing_files = []
 if not melt_enthalpies:
     missing_files.append("fusion_enthalpies.json")
 if not melt_temps:
     missing_files.append("fusion_temperatures.json")
-if not boiling_temps:
-    missing_files.append("vaporization_temperatures.json")
 if missing_files:
     # Get the last two directories in the data_dir path
     data_dir_parts = os.path.normpath(config.data_dir).split(os.sep)
@@ -206,11 +203,11 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
     """
     components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
     component_data = {
-        comp: [melt_enthalpies.get(comp, 0), melt_temps.get(comp, 0), boiling_temps.get(comp, 0)]
+        comp: [melt_enthalpies.get(comp, 0), melt_temps.get(comp, 0)]
         for comp in components
     }
     for comp, data in component_data.items():
-        print(f"{comp}: H_fusion = {data[0]} J/mol, T_fusion = {data[1]} K, T_vaporization = {data[2]} K")
+        print(f"{comp}: H_fusion = {data[0]} J/mol, T_fusion = {data[1]} K")
 
     if config.dir_structure == 'nested':
         sys_dir = os.path.join(config.data_dir, sys_name)
