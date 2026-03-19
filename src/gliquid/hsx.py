@@ -1,6 +1,6 @@
 """
 Authors: Abrar Rauf, Joshua Willwerth
-Last Modified: March 16 2026
+Last Modified: March 19 2026
 Description: This script takes the phase energy data in the form of enthalpy (H), entropy (S) and composition (X)
 and performs transformations to composition-temperature (TX) phase diagrams with well-defined coexistence boundaries
 GitHub: https://github.com/AbrarRauf
@@ -18,7 +18,7 @@ from collections import defaultdict
 class HSX:
     """Handles enthalpy (H), entropy (S), and composition (X) transformations for TX phase diagrams."""
 
-    def __init__(self, data_dict: dict, conds: list[float]):
+    def __init__(self, data_dict: dict, conds: list[float], use_filter_2=True):
         """Initializes the HSX instance with provided phase data and conditions."""
         self.phases = data_dict['phases']
         self.comps = data_dict['comps']
@@ -28,6 +28,7 @@ class HSX:
         self.simplices = []
         self.final_phases = []
         self.df_tx = pd.DataFrame()
+        self.use_filter_2 = use_filter_2
     
         # Data scaling
         s_scaler = 100
@@ -96,12 +97,13 @@ class HSX:
 
         # Filter 1: discard simplices with any fictitious vertex (index >= n_real)
         mask_no_fict = np.all(all_simplices < n_real, axis=1)
-        real_simplices = all_simplices[mask_no_fict]
+        self.simplices = all_simplices[mask_no_fict]
 
-        # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
-        is_inter = (self.df['Phase'] != 'L').values
-        inter_counts = np.sum(is_inter[real_simplices], axis=1)
-        self.simplices = real_simplices[inter_counts < 3]
+        if self.use_filter_2:
+            # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
+            is_inter = (self.df['Phase'] != 'L').values
+            inter_counts = np.sum(is_inter[self.simplices], axis=1)
+            self.simplices = real_simplices[inter_counts < 3]
 
         return self.simplices
 
@@ -311,14 +313,13 @@ class HSX:
 
         return inv_points, combined_list, count_dict
     
-    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None, gas_temp: int | float = None,
+    def plot_tx(self, pred: bool = False, digitized_liquidus: list = None,
                 polymorph_transitions: list[dict] | None = None) -> go.Figure:
         """Plots the binary phase diagram from computed phase boundaries and invariant points.
         
         Args:
             pred (bool): If True, use prediction color scheme for the liquidus.
             digitized_liquidus (list): Digitized experimental liquidus data points.
-            gas_temp (int | float): Gas phase formation temperature (K).
             polymorph_transitions (list[dict]): List of elemental polymorph transitions, each dict with keys:
                 'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float),
                 'ground_state_name' (str) for the phase below the transition.

@@ -385,7 +385,7 @@ class BinaryLiquid:
         """
         Converts phase data into HSX format for further calculations.
 
-        For temperature-dependent liquid models (comb-exp, combined, exponential),
+        For temperature-dependent liquid models (comb-exp, combined),
         the excess enthalpy decays toward zero as T → ∞ via the exp(−T/τ) envelope.
         This means:
           • Exothermic mixing (H_xs < 0): H is most negative at low T
@@ -418,29 +418,6 @@ class BinaryLiquid:
         # if self._param_format == 'linear':
         liq_h_vals = self.eqs['h_liq_lambdified'](x_inner, self.mean_elt_tm, *params).flatten().tolist()
         liq_s_vals = self.eqs['s_liq_lambdified'](x_inner, self.mean_elt_tm, *params).flatten().tolist()
-        # else:
-        #     # Temperature-dependent model (comb-exp / combined / exponential):
-        #     # Evaluate H at candidate temperatures spanning the physical range,
-        #     # then pick the T that gives the lowest H per composition.
-        #     T_lo = self.temp_range[0]       # lower bound (K)
-        #     T_hi = self.temp_range[1]       # upper bound (K)
-        #     T_mid = self.mean_elt_tm        # mean element melting point (K)
-        #     T_candidates = np.array([T_lo, T_mid, T_hi])
-
-        #     h_liq_fn = self.eqs['h_liq_lambdified']
-        #     s_liq_fn = self.eqs['s_liq_lambdified']
-
-        #     # shape (n_candidates, n_compositions)
-        #     h_evals = np.stack([h_liq_fn(x_inner, Tc, *params).flatten()
-        #                         for Tc in T_candidates])
-        #     s_evals = np.stack([s_liq_fn(x_inner, Tc, *params).flatten()
-        #                         for Tc in T_candidates])
-
-        #     # Per-composition: choose the T that minimises H (for the lower hull)
-        #     best = np.argmin(h_evals, axis=0)
-        #     idx = np.arange(len(x_inner))
-        #     liq_h_vals = h_evals[best, idx].tolist()
-        #     liq_s_vals = s_evals[best, idx].tolist()
 
         # Build output data
         data = self._build_hsx_data(h_a, h_b, s_a, s_b, liq_h_vals, liq_s_vals)
@@ -931,104 +908,56 @@ class BinaryLiquid:
             return float((calculate_penalty(h_l0, s_l0*hs_ratio, 'L0') + calculate_penalty(h_l1, s_l1*hs_ratio, 'L1'))/2.0)
         return 1.0
 
-    def param_deviation_penalty(self, ref_params: dict = None,
-                                params_to_penalize: list[str] = None,
-                                penalty_type: str = 'quadratic',
-                                width_fraction: float = 1.0) -> float:
+
+    def tau_line_penalty(self, penalty_cfg: dict | None = None) -> float:
         """
-        Computes a multiplicative penalty factor based on how far current parameter
-        values deviate from a set of reference values.
+        Computes a multiplicative distribution-aware penalty on L0_b/L1_b.
+
+        Each active term contributes to a shared factor of the form:
+
+            1 + w * [log(1 + |x - median| / MAD)]^exponent
+
+        The contributions are additive inside a single multiplicative factor:
+
+            penalty = 1 + term(L0_b) + term(L1_b)
+
+        By default, L1_b is not penalized for the ``comb-exp`` model because
+        that formalism does not use L1_b.
 
         Args:
-            ref_params (dict): Reference parameter values keyed by name (e.g. {'L0_a': -120000}).
-                If None, falls back to self._ref_params. Returns 1.0 if no reference is available.
-            params_to_penalize (list[str]): Which parameters to penalize.
-                Defaults to ['L0_a'] if None.
-            penalty_type (str): Shape of the penalty curve. Options:
-                - 'quadratic': 1 + (deviation / width)^2  — gentle near center, strong far away
-                - 'linear': 1 + |deviation / width|  — uniform growth
-                - 'power': 1 + |deviation / width|^1.5  — intermediate between linear and quadratic
-            width_fraction (float): Controls the width of the "no-penalty" zone as a fraction of
-                the absolute reference value. Larger values create a wider tolerance band.
+            penalty_cfg (dict | None): Dictionary with optional keys:
+                - 'l0': {'weight', 'median', 'mad', 'exponent'}
+                - 'l1': {'weight', 'median', 'mad', 'exponent'}
+                - 'apply_l1' (bool): Force-enable/disable L1 term.
 
         Returns:
             float: Multiplicative penalty factor >= 1.0.
         """
-        ref = ref_params if ref_params is not None else self._ref_params
-        if ref is None:
-            return 1.0
-        if params_to_penalize is None:
-            params_to_penalize = ['L0_a']
-
-        param_getters = {
-            'L0_a': self.get_L0_a, 'L0_b': self.get_L0_b,
-            'L1_a': self.get_L1_a, 'L1_b': self.get_L1_b
-        }
-
-        penalty = 1.0
-        for pname in params_to_penalize:
-            if pname not in ref or pname not in param_getters:
-                continue
-            ref_val = ref[pname]
-            current_val = param_getters[pname]()
-            # Width is proportional to the reference magnitude; floor prevents division by zero
-            width = max(abs(ref_val) * width_fraction, 1.0)
-            normed_dev = (current_val - ref_val) / width
-
-            if penalty_type == 'quadratic':
-                penalty *= 1.0 + normed_dev ** 2
-            elif penalty_type == 'linear':
-                penalty *= 1.0 + abs(normed_dev)
-            elif penalty_type == 'power':
-                penalty *= 1.0 + abs(normed_dev) ** 1.5
-            else:
-                raise ValueError(f"Unknown penalty_type '{penalty_type}'. Use 'quadratic', 'linear', or 'power'.")
-
-        return float(penalty)
-
-    def tau_line_penalty(self, strength: float = 0.1, scale: float = 3.0,
-                          exponent: float = 1.0) -> float:
-        """
-        Computes a multiplicative penalty on L0_b to keep fits near the
-        S_xs = H_xs / tau trendline.
-
-        For the combined model L0(T) = (a + b*T)*exp(-T/tau), the excess
-        entropy at T = 0 K evaluates to S_xs(0) = a/tau - b.  Therefore
-        S_xs = H_xs/tau exactly when b = 0, i.e. L0_b = 0 corresponds to
-        the 1/tau trendline in H_xs-vs-S_xs space.
-
-        Uses a squared-in-log formulation that has zero gradient at the
-        target (L0_b = 0), creating a smooth distribution rather than the
-        sharp spike produced by penalising |L0_b|:
-
-            penalty = 1 + strength * [log(1 + (L0_b / scale)^2)]^exponent
-
-        With exponent = 1 (default), the penalty grows logarithmically for
-        large |L0_b|.  Raising the exponent (e.g. 2) makes the penalty
-        accelerate for extreme outliers while remaining even gentler near
-        L0_b = 0, effectively acting as a stronger-than-Gaussian prior that
-        pulls in systems with very large |L0_b|.
-
-        Args:
-            strength (float): Overall penalty magnitude. 0 disables the penalty.
-                Default is 0.1.
-            scale (float): Characteristic scale of acceptable L0_b values. The
-                penalty is negligible when |L0_b| << scale and grows
-                logarithmically when |L0_b| >> scale. Default is 3.0.
-            exponent (float): Power to which the log term is raised. Higher
-                values penalise extreme L0_b values more aggressively while
-                being gentler near 0. Default is 1.0.
-
-        Returns:
-            float: Multiplicative penalty factor >= 1.0.
-        """
-        if strength <= 0:
+        if self._param_format == 'linear':
             return 1.0
 
-        L0_b = self.get_L0_b()
-        log_term = math.log(1.0 + (L0_b / scale) ** 2)
-        penalty = 1.0 + strength * log_term ** exponent
-        return float(penalty)
+        if not penalty_cfg:
+            return 1.0
+
+        def _term(x_val: float, cfg: dict | None) -> float:
+            if not cfg:
+                return 0.0
+            weight = float(cfg.get('weight', 0.0))
+            median = float(cfg.get('median', 0.0))
+            mad = float(cfg.get('mad', 0.0))
+            exponent = float(cfg.get('exponent', 1.0))
+            if weight <= 0 or mad <= 0:
+                return 0.0
+            log_term = math.log(1.0 + abs(x_val - median) / mad)
+            return weight * (log_term ** exponent)
+
+        use_l1_default = self._param_format != 'comb-exp'
+        use_l1 = bool(penalty_cfg.get('apply_l1', use_l1_default))
+
+        total = _term(self.get_L0_b(), penalty_cfg.get('l0'))
+        if use_l1:
+            total += _term(self.get_L1_b(), penalty_cfg.get('l1'))
+        return float(1.0 + total)
 
     def _stable_solid_gibbs_at_T(self, comp_x: float, temp_K: float) -> float:
         """
@@ -1189,12 +1118,6 @@ class BinaryLiquid:
         """
         verbose = kwargs.get('verbose', False)
         guess_dict = {symbol: guess for symbol, guess in zip(self.guess_symbols, guess)}
-        # Check if the parameter guesses are mathematically valid
-        if self._param_format == 'exponential':
-            if any(guess_dict.get(sym, 1) <= 0 for sym in [b_sym, d_sym]):
-                if verbose:
-                    print(f'Parameter sign constraint violated for params {self.get_params()}')
-                return float('inf')
             
         # Solve for non-guessed parameter values from constraints
         guess_dict = {symbol: guess for symbol, guess in zip(self.guess_symbols, guess)}            
@@ -1202,7 +1125,8 @@ class BinaryLiquid:
 
         # Check if the parameters are physically valid
         if self._param_format == 'linear' and kwargs.get('check_lupis_elliott', True) and not self.obeys_lupis_elliott():
-            # print(f'Lupis-Elliott sign constraint violated for params {self.get_params()}')
+            if verbose:
+                print(f'Lupis-Elliott sign constraint violated for params {self.get_params()}')
             return float('inf')
         
         if kwargs.get('check_h0_below_ch', True) and self.h0_below_ch():
@@ -1230,22 +1154,9 @@ class BinaryLiquid:
         obj_mae, obj_rmse, _, _ = self.calculate_deviation_metrics(**kwargs)
         f_val = obj_mae * self.lupis_elliott_factor() if kwargs.get('check_lupis_elliott', True) else obj_mae
 
-        # Apply soft parameter deviation penalty if enabled and reference params are available
-        # if kwargs.get('use_param_penalty', False):
-        #     f_val *= self.param_deviation_penalty(
-        #         ref_params=kwargs.get('penalty_ref_params', None),
-        #         params_to_penalize=kwargs.get('penalized_params', ['L0_a']),
-        #         penalty_type=kwargs.get('penalty_type', 'quadratic'),
-        #         width_fraction=kwargs.get('penalty_width_fraction', 1.0)
-        #     )
-
-        # Apply tau-line penalty: penalise L0_b away from 0 (the S_xs = H_xs/tau line)
+        # Apply tau-line penalty using distribution priors on L0_b/L1_b.
         if kwargs.get('use_tau_penalty', False):
-            f_val *= self.tau_line_penalty(
-                strength=kwargs.get('tau_penalty_strength', 0.1),
-                scale=kwargs.get('tau_penalty_scale', 3.0),
-                exponent=kwargs.get('tau_penalty_exponent', 1.0)
-            )
+            f_val *= self.tau_line_penalty(kwargs.get('tau_penalty_cfg'))
 
         return f_val
 
@@ -1398,13 +1309,13 @@ class BinaryLiquid:
                 - penalty_type (str): Penalty curve shape ('quadratic', 'linear', or 'power'). Default is 'quadratic'.
                 - penalty_width_fraction (float): Width of the tolerance band as a fraction of the reference
                   parameter magnitude. Default is 1.0.
-                - use_tau_penalty (bool): If True, applies the tau-line penalty that nudges
-                  L0_b toward 0, keeping fits near the S_xs = H_xs/tau trendline. Default is False.
-                - tau_penalty_strength (float): Strength of the tau-line penalty. Default is 0.1.
-                - tau_penalty_scale (float): Characteristic deviation scale for the tau-line penalty.
-                  Default is 3.0.
-                - tau_penalty_exponent (float): Power to which the log term is raised. Higher values
-                  penalise extreme L0_b outliers more aggressively. Default is 1.0.
+                                - use_tau_penalty (bool): If True, applies the distribution-aware tau penalty.
+                                    Default is False.
+                                - tau_penalty_cfg (dict): Distribution prior configuration dictionary.
+                                    Supported keys:
+                                        * 'l0': {'weight', 'median', 'mad', 'exponent'}
+                                        * 'l1': {'weight', 'median', 'mad', 'exponent'}
+                                        * 'apply_l1' (bool): force-enable/disable L1 term.
 
         Returns:
             list[dict]: Parameter fitting data containing results of all optimization attempts.
@@ -1578,7 +1489,7 @@ class BinaryLiquid:
                         nelder_mead_ics.append({'f': init_f, 'constrs': [eq, highest_tm_eq], 'init_tri': init_tri,
                                                 'use_param_penalty': kwargs.get('use_inv_param_penalty', False),
                                                 'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                                'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                                'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
                     elif self._param_format in one_constr_methods:
                         init_tri = [[self.get_L0_b(), self.get_L1_a()],
                                     [self.get_L0_b()*0.8, self.get_L1_a()],
@@ -1595,7 +1506,7 @@ class BinaryLiquid:
                         nelder_mead_ics.append({'f': init_f, 'constrs': [eq, no1S_constr], 'init_tri': init_tri,
                                                 'use_param_penalty': kwargs.get('use_inv_param_penalty', False),
                                                 'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                                'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                                'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
                 except RuntimeError as e:
                     print("Error while evaluting invariant constraints", e)
                     continue
@@ -1609,7 +1520,7 @@ class BinaryLiquid:
                                             'init_tri': min_f_ics['init_tri'],
                                             'use_param_penalty': kwargs.get('use_inv_param_penalty', False),
                                             'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                            'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                            'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
                 else: # If only a single constraint is available, use default init triangle and determine init mae
                     try:
                         self.constraints = sp.solve([sp.Eq(c_sym, lbd.get_hull_rel_enth_skew(self.dft_ch) * 5), highest_tm_eq[3], 
@@ -1623,7 +1534,7 @@ class BinaryLiquid:
                             nelder_mead_ics.append({'f': init_f, 'constrs': [highest_tm_eq, no1S_constr], 'init_tri': init_tri,
                                                     'use_param_penalty': kwargs.get('use_inv_param_penalty', False),
                                                     'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                                    'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                                    'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
                     except RuntimeError as e:
                         print("Error while evaluting invariant constraints", e)
 
@@ -1663,7 +1574,7 @@ class BinaryLiquid:
                                         'init_tri': init_tri,
                                         'use_param_penalty': kwargs.get('use_pseudo_param_penalty', True),
                                         'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                        'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                        'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
             elif self._param_format in one_constr_methods:
                 init_tri = [[self.get_L0_b(), self.get_L1_a()],
                             [self.get_L0_b()*0.8, self.get_L1_a()],
@@ -1673,7 +1584,7 @@ class BinaryLiquid:
                                         'init_tri': init_tri,
                                         'use_param_penalty': kwargs.get('use_pseudo_param_penalty', True),
                                         'use_tau_penalty': kwargs.get('use_tau_penalty', False),
-                                        'tau_penalty_strength': kwargs.get('tau_penalty_strength', 0.1)})
+                                        'tau_penalty_cfg': copy.deepcopy(kwargs.get('tau_penalty_cfg'))})
         except RuntimeError as e:
             print("Nelder-Mead process encountered a fatal error while deriving psuedo-constraints: ", e)
 
@@ -1710,7 +1621,7 @@ class BinaryLiquid:
             run_kwargs = dict(kwargs)
             run_kwargs['use_param_penalty'] = selected_ics.get('use_param_penalty', False)
             run_kwargs['use_tau_penalty'] = selected_ics.get('use_tau_penalty', False)
-            run_kwargs['tau_penalty_strength'] = selected_ics.get('tau_penalty_strength', kwargs.get('tau_penalty_strength', 0.1))
+            run_kwargs['tau_penalty_cfg'] = copy.deepcopy(selected_ics.get('tau_penalty_cfg', kwargs.get('tau_penalty_cfg')))
 
             if verbose:
                 print(f"--- Nelder-Mead ICs Attempt #{task_index + 1} (initial f = {round(selected_ics['f'], 2)}) ---")
@@ -2076,9 +1987,6 @@ class BLPlotter:
         Returns:
             go.Figure: The generated plot object.
         """
-
-        # Initialize variables for liquidus lines and gas temperature
-        gas_temp = None
 
         # Check if the plot type includes the MPDS liquidus
         if plot_type in ['fit+liq', 'pred+liq'] and not self._bl.digitized_liq:

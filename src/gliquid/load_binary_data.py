@@ -64,7 +64,7 @@ if not phase_transitions:
     data_dir_parts = os.path.normpath(config.data_dir).split(os.sep)
     last_two_dirs = os.sep.join(data_dir_parts[-2:]) if len(data_dir_parts) >= 2 else config.data_dir
     raise FileNotFoundError(
-        f"The following data files were not loaded correctly: {', '.join(missing_files)}. "
+        f"The following data files were not loaded correctly: {config.phase_transitions_file}. "
         f"Please ensure the files exist in the data directory '...{os.sep}{last_two_dirs}'."
     )
 
@@ -450,7 +450,7 @@ def get_low_temp_phase_data(
             (dft_phases, dft_phases_ebelow, min_form_e))
 
 
-def _get_dft_entries_from_components(components: list[str], dft_type: str) -> list[dict]:
+def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_data=False) -> list[dict]:
     """Fetches DFT entries for the specified components and DFT functional type."""
     entries = []
 
@@ -481,8 +481,9 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str) -> li
 
     # Filter out Mg149 phase and remove run data to reduce cache size
     computed_entry_dicts = [e for e in computed_entry_dicts if e['composition'].get('Mg', 0) != 149]
-    for e in computed_entry_dicts:
-        e.pop('data', None)
+    if not keep_data:
+        for e in computed_entry_dicts:
+            e.pop('data', None)
 
     return computed_entry_dicts
 
