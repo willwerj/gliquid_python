@@ -13,6 +13,8 @@ import copy
 import math
 import time
 import numbers
+import os
+import pickle
 import numpy as np
 import pandas as pd
 import sympy as sp
@@ -23,7 +25,7 @@ from matplotlib.colors import LogNorm
 from matplotlib.ticker import ScalarFormatter
 import plotly.graph_objects as go
 from itertools import combinations
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from io import StringIO
 from pymatgen.core import Composition
 from pymatgen.analysis.phase_diagram import PDPlotter, PhaseDiagram, PDEntry  # The PMG PDPlotter source code is modified here
@@ -164,29 +166,44 @@ def build_thermodynamic_expressions(param_format: str = 'linear',
     }
 
 
-def build_phases_from_chull(ch: PhaseDiagram, component_name: str) -> list[dict]:
+def build_phases_from_chull(ch: PhaseDiagram, components: list[str], component_data: dict[str, dict[str, any]]) -> list[dict]:
     """
     Updates the phase list with new phase data.
 
     Args:
         ch (PhaseDiagram): A pymatgen PhaseDiagram object containing stable entries.
-        component_name (str): The name of the second component in the binary system.
+        components (list): List of component names, used to determine the composition of each phase for the 'comp' key.
+        component_data (dict): A dictionary containing thermodynamic data for components, used to add polymorphs as explicit phases.
 
     Returns:
         list: Updated list of phase dictionaries.
     """
     phases = []
+    for i, comp in enumerate(components):
+        comp_x = float(i)  # 0 for component A, 1 for component B
+        for polymorph in component_data[comp]['polymorphs']:
+            phases.insert(-1, {
+                'name': polymorph['common_name'],
+                'comp': comp_x,
+                'enthalpy': polymorph['enthalpy_J_per_mol'],
+                'entropy': polymorph['entropy_J_per_mol_K'],
+                'is_solution': False,
+                'points': [],
+            })
     for entry in ch.stable_entries:
-        composition = entry.composition.fractional_composition.as_dict().get(component_name, 0)
-        phase = {
+        composition = entry.composition.fractional_composition.as_dict().get(components[1], 0)
+        if composition in [p['comp'] for p in phases]:  # Skip if a polymorph of the pure element is already added
+            continue
+        phases.insert(-1, {
             'name': entry.name,
             'comp': composition,
             'enthalpy': 96485 * ch.get_form_energy_per_atom(entry),
+            'entropy': 0, 
+            'is_solution': False,
             'points': [],
-        }
-        phases.append(phase)
+        })
     phases.sort(key=lambda x: x['comp'])
-    phases.append({'name': 'L', 'points': []})
+    phases.append({'name': 'L', 'is_solution': True, 'points': []})
     return phases
 
 
@@ -273,6 +290,42 @@ class BinaryLiquid:
     def __repr__(self):
         return (f"BinaryLiquid(sys_name='{self.sys_name}', components={self.components}, "
                 f"params={self._params}, param_format='{self._param_format}', dft_type='{self.dft_type}')")
+
+    def _rebuild_thermodynamic_expressions(self) -> None:
+        """Rebuild thermodynamic expressions and lambdified callables after unpickling."""
+        if self.component_data and self.components:
+            eqs = build_thermodynamic_expressions(
+                param_format=self._param_format,
+                ga_expr=self.component_data[self.components[0]]['H_liq'] -
+                t_sym * self.component_data[self.components[0]]['S_liq'],
+                gb_expr=self.component_data[self.components[1]]['H_liq'] -
+                t_sym * self.component_data[self.components[1]]['S_liq'])
+        else:
+            eqs = build_thermodynamic_expressions(self._param_format)
+
+        hull_points = np.array([[0, 0]] + [[p['comp'], p['enthalpy']] for p in self.phases if 'comp' in p] + [[1, 0]])
+        eqs['h_hull_interp'] = np.interp(_x_vals[1:-1], hull_points[:, 0], hull_points[:, 1])
+        self.eqs = eqs
+
+    def __getstate__(self):
+        """
+        Return a pickle-safe state for multiprocessing.
+
+        Lambdified callables and HSX state are intentionally dropped and rebuilt on load.
+        """
+        state = self.__dict__.copy()
+        state['hsx'] = None
+        state['eqs'] = {
+            key: value for key, value in state.get('eqs', {}).items()
+            if 'lambdified' not in key
+        }
+        return state
+
+    def __setstate__(self, state):
+        """Restore pickle state and regenerate thermodynamic callables."""
+        self.__dict__.update(state)
+        self.hsx = None
+        self._rebuild_thermodynamic_expressions()
     
     @classmethod
     def from_cache(cls, input, dft_type='GGA', pd_ind=None, params=[], param_format='linear',
@@ -298,21 +351,9 @@ class BinaryLiquid:
             params[2:] = [-1 * p for p in params[2:]] 
 
         ch, _ = lbd.get_dft_convexhull(components, dft_type)
-        phases = build_phases_from_chull(ch, components[1])
-
         mpds_json, component_data, (digitized_liq, is_partial) = lbd.load_mpds_data(components, pd_ind=pd_ind)
 
-        # Add elemental polymorphs as explicit phases (inserted before the 'L' phase)
-        for i, comp in enumerate(components):
-            comp_x = float(i)  # 0 for component A, 1 for component B
-            for polymorph in component_data[comp]['polymorphs']:
-                phases.insert(-1, {
-                    'name': polymorph['common_name'],
-                    'comp': comp_x,
-                    'enthalpy': polymorph['enthalpy_J_per_mol'],
-                    'entropy': polymorph['entropy_J_per_mol_K'],
-                    'points': [],
-                })
+        phases = build_phases_from_chull(ch, components, component_data)
 
         if 'temp' in mpds_json:
             temp_range = [mpds_json['temp'][0] + 273.15, mpds_json['temp'][1] + 273.15]
@@ -373,7 +414,7 @@ class BinaryLiquid:
             'Phase Name': ['L'] * len(_x_vals)
         }
         for phase in self.phases:
-            if phase['name'] == 'L':
+            if phase['is_solution']:
                 continue
             data['H'].append(phase['enthalpy'])
             data['S'].append(phase.get('entropy', 0))
@@ -982,7 +1023,7 @@ class BinaryLiquid:
         # Only apply polymorph correction for the pure-element endpoints
         if comp_x not in (0.0, 1.0):
             nearest = min(
-                (p for p in self.phases if p['name'] != 'L' and 'comp' in p),
+                (p for p in self.phases if not p['is_solution'] and 'comp' in p),
                 key=lambda p: abs(p['comp'] - comp_x),
                 default=None
             )
@@ -1301,21 +1342,18 @@ class BinaryLiquid:
                 - check_h0_below_ch (bool): If True, checks if the liquid enthalpy at T=0K is below the solid convex hull.
                 - check_liquidus_continuity (bool): If True, checks if the generated liquidus is continuous.
                 - params_init (list): Initial parameter guesses for the Nelder-Mead algorithm.
-                - use_pseudo_param_penalty (bool): If True (default), applies the parameter deviation penalty
-                  to pseudo-constraint NM runs, using the orthogonal pass reference values.
-                - use_inv_param_penalty (bool): If True, applies the parameter deviation penalty to
-                  invariant-derived constraint NM runs. Default is False.
-                - penalized_params (list[str]): Which parameters to penalize. Default is ['L0_a'].
-                - penalty_type (str): Penalty curve shape ('quadratic', 'linear', or 'power'). Default is 'quadratic'.
-                - penalty_width_fraction (float): Width of the tolerance band as a fraction of the reference
                   parameter magnitude. Default is 1.0.
-                                - use_tau_penalty (bool): If True, applies the distribution-aware tau penalty.
-                                    Default is False.
-                                - tau_penalty_cfg (dict): Distribution prior configuration dictionary.
-                                    Supported keys:
-                                        * 'l0': {'weight', 'median', 'mad', 'exponent'}
-                                        * 'l1': {'weight', 'median', 'mad', 'exponent'}
-                                        * 'apply_l1' (bool): force-enable/disable L1 term.
+                - use_tau_penalty (bool): If True, applies the distribution-aware tau penalty.
+                    Default is False.
+                - tau_penalty_cfg (dict): Distribution prior configuration dictionary.
+                    Supported keys:
+                        * 'l0': {'weight', 'median', 'mad', 'exponent'}
+                        * 'l1': {'weight', 'median', 'mad', 'exponent'}
+                        * 'apply_l1' (bool): force-enable/disable L1 term.
+                - use_process_pool (bool): If True, run multi-attempt optimization with ProcessPoolExecutor
+                    instead of ThreadPoolExecutor. Default is False.
+                - process_pool_workers (int | None): Number of process workers when use_process_pool=True.
+                    Default is half of available CPU cores.
 
         Returns:
             list[dict]: Parameter fitting data containing results of all optimization attempts.
@@ -1593,74 +1631,59 @@ class BinaryLiquid:
         self.guess_symbols = [b_sym, d_sym] if self._param_format not in one_constr_methods else [b_sym, c_sym]
         solve_symbols = [sym for sym in [a_sym, b_sym, c_sym, d_sym] if sym not in self.guess_symbols]
         fitting_data = []
+        use_process_pool = bool(kwargs.get('use_process_pool', False))
+        process_pool_workers = kwargs.get('process_pool_workers', None)
 
         # Prepare optimization tasks (up to n_opts, limited by available ICs)
         optimization_tasks = []
         for i in range(min(n_opts, len(nelder_mead_ics))):
             optimization_tasks.append((i, nelder_mead_ics[i]))
 
-        def _run_single_optimization(task_index, selected_ics, bl_template):
-            """
-            Runs a single Nelder-Mead optimization on a deep copy of the BinaryLiquid object.
-
-            Args:
-                task_index (int): Index of the optimization attempt.
-                selected_ics (dict): Initial conditions for this optimization attempt.
-                bl_template (BinaryLiquid): The BinaryLiquid object to deep copy for thread-safe execution.
-
-            Returns:
-                dict | None: Fitting result dictionary, or None if optimization failed.
-            """
-            bl_copy: BinaryLiquid = copy.deepcopy(bl_template)
-            bl_copy.guess_symbols = [b_sym, d_sym] if bl_copy._param_format not in one_constr_methods else [b_sym, c_sym]
-
-            constrs_str = '/'.join([c[0] for c in selected_ics['constrs']])
-            constr_algo = 'pseudo_constr' if constrs_str.startswith('pseudo') else 'inv_constr'
-
-            # Merge the per-IC penalty flags and strength into kwargs for this optimization run
-            run_kwargs = dict(kwargs)
-            run_kwargs['use_param_penalty'] = selected_ics.get('use_param_penalty', False)
-            run_kwargs['use_tau_penalty'] = selected_ics.get('use_tau_penalty', False)
-            run_kwargs['tau_penalty_cfg'] = copy.deepcopy(selected_ics.get('tau_penalty_cfg', kwargs.get('tau_penalty_cfg')))
-
-            if verbose:
-                print(f"--- Nelder-Mead ICs Attempt #{task_index + 1} (initial f = {round(selected_ics['f'], 2)}) ---")
-                for (source, order, temp, eq) in selected_ics['constrs']:
-                    print(f"Source: {source}, Order: {order}, Temperature: {round(temp, 1)}, Equation: {eq}")
-                print("Initial triangle:", selected_ics['init_tri'])
-
-            selected_eqs = [eq[3] for eq in selected_ics['constrs']]
-            bl_copy.constraints = sp.solve(selected_eqs, solve_symbols, rational=False, simplify=False)
-            convergence_tol = 5 if bl_copy._param_format == 'exponential' else 5E-3
-            try:
-                f, (mae, rmse, mape, rmspe), path = bl_copy.nelder_mead(
-                    verbose=verbose, tol=convergence_tol,
-                    initial_guesses=selected_ics['init_tri'], **run_kwargs)
-            except RuntimeError as e:
-                print("Nelder-Mead process encountered a fatal error: ", e)
-                return None
-            l0 = float(bl_copy.eqs['l0'].subs({t_sym: mean_liq_temp, a_sym: bl_copy.get_L0_a(), b_sym: bl_copy.get_L0_b()}))
-            l1 = float(bl_copy.eqs['l1'].subs({t_sym: mean_liq_temp, c_sym: bl_copy.get_L1_a(), d_sym: bl_copy.get_L1_b()}))
-            fit_invs = bl_copy.hsx.liquidus_invariants()[0]
-            return {'f': f, 'mae': mae, 'rmse': rmse, 'mape': mape, 'rmspe': rmspe,
-                    'constrs': constrs_str, 'algo': constr_algo, 'n_iters': path.shape[2], 'nmpath': path,
-                    'L0_a': bl_copy.get_L0_a(), 'L0_b': bl_copy.get_L0_b(), 'L1_a': bl_copy.get_L1_a(),
-                    'L1_b': bl_copy.get_L1_b(), 'L0': l0, 'L1': l1,
-                    'euts': fit_invs['Eutectics'], 'pers': fit_invs['Peritectics'],
-                    'cmps': fit_invs['Congruent Melting'], 'migs': fit_invs['Misc Gaps']}
+        if use_process_pool:
+            import __main__
+            if getattr(__main__, '__file__', None) is None:
+                raise RuntimeError(
+                    "ProcessPoolExecutor requires running from a script file. "
+                    "Protect your entry point with: if __name__ == '__main__':"
+                )
 
         if len(optimization_tasks) == 1:
-            # Single optimization: run directly without thread pool overhead
+            # Single optimization: run directly without executor overhead
             task_idx, task_ics = optimization_tasks[0]
-            result = _run_single_optimization(task_idx, task_ics, self)
+            result = _run_single_optimization_worker(
+                task_idx, task_ics, self, kwargs, verbose,
+                one_constr_methods, solve_symbols, mean_liq_temp)
             if result is not None:
                 fitting_data.append(result)
         elif optimization_tasks:
-            # Multiple optimizations: run in parallel using threads
-            max_workers = min(len(optimization_tasks), n_opts)
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            if use_process_pool:
+                default_workers = max(1, (os.cpu_count() or 1) // 2)
+                requested_workers = process_pool_workers if isinstance(process_pool_workers, int) and process_pool_workers > 0 else default_workers
+                max_workers = min(len(optimization_tasks), requested_workers)
+
+                # Validate picklability up front for Windows spawn mode.
+                test_payload = (
+                    optimization_tasks[0][0], optimization_tasks[0][1], self, kwargs,
+                    verbose, one_constr_methods, solve_symbols, mean_liq_temp
+                )
+                try:
+                    pickle.dumps(test_payload)
+                except Exception as e:
+                    raise RuntimeError(
+                        "Process-pool payload is not picklable. "
+                        "Use use_process_pool=False or remove non-picklable kwargs."
+                    ) from e
+                executor_cls = ProcessPoolExecutor
+            else:
+                max_workers = min(len(optimization_tasks), n_opts)
+                executor_cls = ThreadPoolExecutor
+
+            with executor_cls(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(_run_single_optimization, task_idx, task_ics, self): task_idx
+                    executor.submit(
+                        _run_single_optimization_worker,
+                        task_idx, task_ics, self, kwargs, verbose,
+                        one_constr_methods, solve_symbols, mean_liq_temp): task_idx
                     for task_idx, task_ics in optimization_tasks
                 }
                 for future in as_completed(futures):
@@ -1678,6 +1701,63 @@ class BinaryLiquid:
             self.nmpath = best_fit['nmpath']
             self.update_phase_points()
         return fitting_data
+
+
+def _run_single_optimization_worker(task_index, selected_ics, bl_template, run_kwargs_base,
+                                    verbose, one_constr_methods, solve_symbols, mean_liq_temp):
+    """
+    Module-level worker for thread/process executor compatibility on Windows spawn.
+
+    Args:
+        task_index (int): Index of the optimization attempt.
+        selected_ics (dict): Initial conditions for this optimization attempt.
+        bl_template (BinaryLiquid): Template BinaryLiquid object to copy.
+        run_kwargs_base (dict): Base kwargs forwarded to Nelder-Mead and objective function.
+        verbose (bool): Print progress information.
+        one_constr_methods (list[str]): Parameter formats with one free constraint symbol.
+        solve_symbols (list[sp.Symbol]): Symbols solved from constraints.
+        mean_liq_temp (float): Mean liquidus temperature for reporting L0/L1.
+
+    Returns:
+        dict | None: Fitting result dictionary, or None if optimization failed.
+    """
+    bl_copy: BinaryLiquid = copy.deepcopy(bl_template)
+    bl_copy.guess_symbols = [b_sym, d_sym] if bl_copy._param_format not in one_constr_methods else [b_sym, c_sym]
+
+    constrs_str = '/'.join([c[0] for c in selected_ics['constrs']])
+    constr_algo = 'pseudo_constr' if constrs_str.startswith('pseudo') else 'inv_constr'
+
+    run_kwargs = dict(run_kwargs_base)
+    run_kwargs['use_param_penalty'] = selected_ics.get('use_param_penalty', False)
+    run_kwargs['use_tau_penalty'] = selected_ics.get('use_tau_penalty', False)
+    run_kwargs['tau_penalty_cfg'] = copy.deepcopy(selected_ics.get('tau_penalty_cfg', run_kwargs_base.get('tau_penalty_cfg')))
+
+    if verbose:
+        print(f"--- Nelder-Mead ICs Attempt #{task_index + 1} (initial f = {round(selected_ics['f'], 2)}) ---")
+        for (source, order, temp, eq) in selected_ics['constrs']:
+            print(f"Source: {source}, Order: {order}, Temperature: {round(temp, 1)}, Equation: {eq}")
+        print("Initial triangle:", selected_ics['init_tri'])
+
+    selected_eqs = [eq[3] for eq in selected_ics['constrs']]
+    bl_copy.constraints = sp.solve(selected_eqs, solve_symbols, rational=False, simplify=False)
+    convergence_tol = 5 if bl_copy._param_format == 'exponential' else 5E-3
+    try:
+        f, (mae, rmse, mape, rmspe), path = bl_copy.nelder_mead(
+            verbose=verbose, tol=convergence_tol,
+            initial_guesses=selected_ics['init_tri'], **run_kwargs)
+    except RuntimeError as e:
+        print("Nelder-Mead process encountered a fatal error: ", e)
+        return None
+
+    l0 = float(bl_copy.eqs['l0'].subs({t_sym: mean_liq_temp, a_sym: bl_copy.get_L0_a(), b_sym: bl_copy.get_L0_b()}))
+    l1 = float(bl_copy.eqs['l1'].subs({t_sym: mean_liq_temp, c_sym: bl_copy.get_L1_a(), d_sym: bl_copy.get_L1_b()}))
+    fit_invs = bl_copy.hsx.liquidus_invariants()[0]
+    return {'f': f, 'mae': mae, 'rmse': rmse, 'mape': mape, 'rmspe': rmspe,
+            'constrs': constrs_str, 'algo': constr_algo, 'n_iters': path.shape[2], 'nmpath': path,
+            'L0_a': bl_copy.get_L0_a(), 'L0_b': bl_copy.get_L0_b(), 'L1_a': bl_copy.get_L1_a(),
+            'L1_b': bl_copy.get_L1_b(), 'L0': l0, 'L1': l1,
+            'euts': fit_invs['Eutectics'], 'pers': fit_invs['Peritectics'],
+            'cmps': fit_invs['Congruent Melting'], 'migs': fit_invs['Misc Gaps']}
     
 class BLPlotter:
     """

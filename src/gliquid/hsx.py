@@ -84,26 +84,13 @@ class HSX:
 
         # Filter 1: discard simplices with any fictitious vertex (index >= n_real)
         mask_no_fict = np.all(all_simplices < n_real, axis=1)
-        real_simplices = all_simplices[mask_no_fict]
-
-        # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
-        is_inter = (self.df['Phase'] != 'L').values
-        inter_counts = np.sum(is_inter[real_simplices], axis=1)
-        self.simplices = real_simplices[inter_counts < 3]
-
-
-        n_real = len(self.points)
-        all_simplices = new_hull.simplices
-
-        # Filter 1: discard simplices with any fictitious vertex (index >= n_real)
-        mask_no_fict = np.all(all_simplices < n_real, axis=1)
         self.simplices = all_simplices[mask_no_fict]
 
         if self.use_filter_2:
             # Filter 2: discard simplices where all 3 vertices are intermetallic (non-liquid) points
             is_inter = (self.df['Phase'] != 'L').values
             inter_counts = np.sum(is_inter[self.simplices], axis=1)
-            self.simplices = real_simplices[inter_counts < 3]
+            self.simplices = self.simplices[inter_counts < 3]
 
         return self.simplices
 
@@ -114,7 +101,8 @@ class HSX:
         for simplex in self.simplices:
             A, B, C = self.points[simplex]
             n = np.cross(B - A, C - A).astype(float)
-            if n[2] == 0:
+            # Degenerate / near-vertical facets yield n[2] ~ 0 and non-physical infinite temperatures.
+            if np.isclose(n[2], 0.0, atol=1e-12):
                 continue
             T = (-n[1] / n[2]) * self.scaler
             if np.isfinite(T):
@@ -138,6 +126,7 @@ class HSX:
             phase_remap[entry[2]].append([entry[0], entry[1]])
         self.phase_color_remap = dict(zip(self.df_tx['label'], self.df_tx['color']))
         return self.df_tx, self.final_phases, np.array(valid_simplices), temps
+
     
     def plot_tx_scatter(self):
         # self.df_tx = self.compute_tx()[0]   

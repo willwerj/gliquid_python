@@ -42,7 +42,7 @@ for _symbol, _elem_data in phase_transitions.items():
     _solids = []
     for _phase in _elem_data.get('phases', []):
         if _phase['phase_type'] == 'solid':
-            if _phase['transition_temperature_K'] > 0:  # Exclude ground state
+            if _phase['transition_temperature_K'] >= 0:  # Exclude ground state #TODO: verify that this works in main code
                 _solids.append(_phase)
         elif _phase['phase_type'] == 'liquid':
             _h = _phase.get('enthalpy_J_per_mol')
