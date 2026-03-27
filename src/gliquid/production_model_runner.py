@@ -22,6 +22,7 @@ import pandas as pd
 import shap
 
 from gliquid.shap_compat import apply_patches as apply_shap_patches
+from gliquid.config import find_model_bundle_dir
 apply_shap_patches()
 
 
@@ -41,6 +42,16 @@ class ProductionModelRunner:
         self.df_anti: Optional[pd.DataFrame] = None
 
         self._load_artifacts()
+
+    @classmethod
+    def from_data_dir(
+        cls,
+        data_dir: str | Path,
+        bundle_name: Optional[str] = None,
+    ) -> "ProductionModelRunner":
+        """Create a runner by auto-selecting a model bundle under a data directory."""
+        bundle_dir = find_model_bundle_dir(data_dir, bundle_name=bundle_name)
+        return cls(str(bundle_dir))
 
     def _load_artifacts(self) -> None:
         """Load model artifacts + prediction datasets from bundle."""
