@@ -1,3 +1,38 @@
+Metadata-Version: 2.4
+Name: gliquid
+Version: 2026.6.13
+Summary: A package for fitting DFT-referenced liquid free energies from digitized equilibrium phase boundaries
+Author-email: Joshua Willwerth <willwerj@umich.edu>, Abrar Rauf <arauf@umich.edu>, Shibo Tan <shibot@umich.edu>, Wenhao Sun <whsun@umich.edu>
+Maintainer-email: Joshua Willwerth <willwerj@umich.edu>
+License-Expression: MIT
+Project-URL: Homepage, https://viz.whsunresearch.group/gliquid/interactive-matrix.html
+Project-URL: TernaryInterpolation, https://viz.whsunresearch.group/gliquid/ternary-interpolation/
+Project-URL: Repository, https://github.com/willwerj/gliquid_python
+Keywords: Density Functional Theory (DFT),Thermodynamic Modeling,Equilibrium,Liquidus,Solution Phase,Intermetallic Phase,Materials Project (MP),Materials Platform for Data Science (MPDS)
+Classifier: Programming Language :: Python
+Requires-Python: <3.13,>=3.10
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: plotly<6.0.0,>=5.18.0
+Requires-Dist: nbformat>=4.2.0
+Requires-Dist: emmet-core<0.86.0rc1
+Requires-Dist: mp-api>=0.45.1
+Requires-Dist: matplotlib>=3.8.0
+Requires-Dist: sympy>=1.12
+Requires-Dist: scikit-learn==1.7.1
+Requires-Dist: shap>=0.48.0
+Requires-Dist: joblib>=1.3.0
+Requires-Dist: xgboost==3.1.3
+Requires-Dist: openpyxl
+Provides-Extra: mpds
+Requires-Dist: mpds-client; extra == "mpds"
+Provides-Extra: test
+Requires-Dist: pytest>=7.0; extra == "test"
+Provides-Extra: notebook
+Requires-Dist: jupyter>=1.1.1; extra == "notebook"
+Requires-Dist: ipykernel>=6.0; extra == "notebook"
+Dynamic: license-file
+
 # <img src="assets/gliq_logo_tall.png" width="300" height="430"> 
 # GLiquid: DFT-Referenced Thermodynamic Modeling
 
