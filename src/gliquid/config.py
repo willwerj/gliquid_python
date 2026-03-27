@@ -51,6 +51,8 @@ def find_project_root(dirname: str = "gliquid_python") -> Path:
     for candidate in [current, *current.parents]:
         if candidate.name == dirname:
             return candidate
+        # Fallback for environments where repository folder naming differs from
+        # "gliquid_python" but the project uses the standard src-layout.
         if (candidate / "pyproject.toml").exists() and (candidate / "src" / "gliquid").exists():
             return candidate
     return current
@@ -90,7 +92,7 @@ def find_model_bundle_dir(
     bundles = [p for p in base.iterdir() if _is_model_bundle_dir(p)]
     if not bundles:
         raise FileNotFoundError(f"No model bundle directories found in '{base}'.")
-    bundles.sort(key=lambda p: (p.name, p.stat().st_mtime), reverse=True)
+    bundles.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return bundles[0]
 
 
