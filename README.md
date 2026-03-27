@@ -3,6 +3,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/willwerj/gliquid_python/blob/main/notebooks/colab_demo.ipynb)
 
 ## Overview
 **GLiquid** is a Python-based tool designed for fitting **DFT-referenced liquid free energies** for the thermodynamic
@@ -61,6 +62,12 @@ For development work, you may prefer an editable install:
 pip install -e .
 ```
 
+> Note: Jupyter is not installed in the base package dependencies. If you want local notebook tooling outside Colab, install:
+>
+> ```bash
+> pip install .[notebook]
+> ```
+
 ### **4. Configure API Keys**
 #### Materials Project
 Visit the [Materials Project Website](https://next-gen.materialsproject.org/api) and create an account if you don't
@@ -114,6 +121,30 @@ plotter.show("ch+g")
 
 For a more detailed walkthrough, including raw data inspection and batch fitting across multiple systems, see
 [notebooks/fitting_demo.ipynb](notebooks/fitting_demo.ipynb).
+
+## Google Colab
+For a ready-to-run Colab workflow, use [notebooks/colab_demo.ipynb](notebooks/colab_demo.ipynb).
+
+Key points for Colab use:
+- `data/` remains external to the package and should be provided from a cloned repository (or your own mounted path).
+- Prefer setting the data path in Python with `cfg.set_data_dir(...)` (no `GLIQUID_DATA_DIR` required).
+- `scikit-learn` and `xgboost` remain pinned in package dependencies for compatibility with serialized production model artifacts.
+
+Typical Colab setup:
+
+```python
+!git clone https://github.com/willwerj/gliquid_python.git
+%cd /content/gliquid_python
+!pip install .
+```
+
+```python
+import os
+from pathlib import Path
+import gliquid.config as cfg
+os.environ["NEW_MP_API_KEY"] = "YOUR_API_KEY_HERE"
+cfg.set_data_dir(Path("/content/gliquid_python/data").resolve())
+```
 
 ## Usage
 If using `jupyter`, first register your environment as a notebook kernel. Then navigate
