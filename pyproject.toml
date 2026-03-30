@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "gliquid"
 version = "2026.06.30"
 dependencies = [
-    "plotly>=5.18.0,<6.0.0",
+    "plotly>=5.18.0,<7.0.0",
     "nbformat>=4.2.0",
     "emmet-core<0.86.0rc1",
     "mp-api>=0.45.1",
