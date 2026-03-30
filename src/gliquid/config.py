@@ -1,9 +1,7 @@
-import os
 from pathlib import Path
 from typing import Optional
 
 _DIR_STRUCT_OPTS = ["flat", "nested"]
-_DATA_DIR_ENV_VAR = "GLIQUID_DATA_DIR"
 _MODEL_BUNDLE_REQUIRED_FILES = [
     "prediction_dataset_symmetric.xlsx",
     "prediction_dataset_antisymmetric.xlsx",
@@ -59,10 +57,6 @@ def find_project_root(dirname: str = "gliquid_python") -> Path:
 
 
 def find_data_dir(project: Optional[Path] = None) -> Path:
-    env_path = os.getenv(_DATA_DIR_ENV_VAR)
-    if env_path:
-        return Path(env_path).expanduser().resolve()
-
     project = project or find_project_root()
     candidate = project / "data"
     if candidate.exists():
