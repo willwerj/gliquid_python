@@ -166,3 +166,8 @@ to discuss what you would like to change.
 ## License
 
 [MIT](LICENSE)
+
+
+## Acknowledgements
+
+This project is made possible by funding from the U.S. Department of Energy (DOE) Office of Science, Basic Energy Sciences Award No. DE-SC0021130 and the National Science Foundation (NSF) Award No. OAC-2209423.
