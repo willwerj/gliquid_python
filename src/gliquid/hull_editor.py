@@ -30,7 +30,7 @@ Usage
     # ... make changes via the GUI ...
     new_pd = editor.get_phase_diagram()
 
-Author: Joshua Willwerth (generated with assistance)
+Author: Joshua Willwerth (generated with assistance from Claude Opus 4.6)
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """
 Author: Joshua Willwerth
-Last Modified: August 4, 2025
+Last Modified: June 16, 2026
 Description: This script provides functions to interface with the Materials Project (MP) APIs and locally cache DFT
 calculated phase data. Publicly-availble data from the Materials Platform for Data Science (MPDS) may be downloaded and
 processed using this script in order to autopopulate BinaryLiquid objects using the `from_cache` method.
@@ -27,22 +27,64 @@ from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
 import gliquid.config as config
 
-melt_enthalpies = json.load(open(config.fusion_enthalpies_file)) if os.path.exists(config.fusion_enthalpies_file) else {}
-melt_temps = json.load(open(config.fusion_temps_file)) if os.path.exists(config.fusion_temps_file) else {}
+# Load phase transitions database (replaces fusion_enthalpies, fusion_temperatures, vaporization_temperatures)
+# Derived convenience dicts from phase_transitions.json (populated by reload_element_data()).
+phase_transitions = {}
+liquid_enthalpies = {}   # Cumulative H to liquid (J/mol), relative to DFT ground state
+liquid_entropies = {}    # Cumulative S to liquid (J/(mol·K)), relative to DFT ground state
+melt_temps = {}          # Melting temperature (K)
+boiling_temps = {}       # Boiling/vaporization temperature (K)
+element_polymorphs = {}  # List of solid polymorph phase dicts (excluding ground state)
 
-missing_files = []
-if not melt_enthalpies:
-    missing_files.append("fusion_enthalpies.json")
-if not melt_temps:
-    missing_files.append("fusion_temperatures.json")
-if missing_files:
-    # Get the last two directories in the data_dir path
-    data_dir_parts = os.path.normpath(config.data_dir).split(os.sep)
-    last_two_dirs = os.sep.join(data_dir_parts[-2:]) if len(data_dir_parts) >= 2 else config.data_dir
-    raise FileNotFoundError(
-        f"The following data files were not loaded correctly: {', '.join(missing_files)}. "
-        f"Please ensure the files exist in the data directory '...{os.sep}{last_two_dirs}'."
-    )
+
+def reload_element_data(require: bool = True) -> None:
+    """(Re)load elemental thermo/polymorph data from ``config.phase_transitions_file``.
+
+    Called once at import and again whenever ``config.set_data_dir`` is used to point at a
+    different cache (the module-level dicts are rebuilt in place so existing references stay
+    valid). Set ``require=False`` to tolerate a missing file (e.g. during a data-dir switch).
+    """
+    raw = (json.load(open(config.phase_transitions_file))
+           if os.path.exists(config.phase_transitions_file) else {})
+    new_transitions = raw.get('elements', {})
+
+    for _d in (liquid_enthalpies, liquid_entropies, melt_temps, boiling_temps, element_polymorphs):
+        _d.clear()
+    phase_transitions.clear()
+    phase_transitions.update(new_transitions)
+
+    for _symbol, _elem_data in new_transitions.items():
+        _solids = []
+        for _phase in _elem_data.get('phases', []):
+            if _phase['phase_type'] == 'solid':
+                if _phase['transition_temperature_K'] >= 0:  # Exclude ground state #TODO: verify that this works in main code
+                    _solids.append(_phase)
+            elif _phase['phase_type'] == 'liquid':
+                _h = _phase.get('enthalpy_J_per_mol')
+                _s = _phase.get('entropy_J_per_mol_K')
+                _t = _phase.get('transition_temperature_K')
+                if _h is not None:
+                    liquid_enthalpies[_symbol] = _h
+                if _s is not None:
+                    liquid_entropies[_symbol] = _s
+                if _t is not None:
+                    melt_temps[_symbol] = _t
+            elif _phase['phase_type'] == 'gas':
+                _t = _phase.get('transition_temperature_K')
+                if _t is not None:
+                    boiling_temps[_symbol] = _t
+        element_polymorphs[_symbol] = _solids
+
+    if require and not phase_transitions:
+        data_dir_parts = os.path.normpath(config.data_dir).split(os.sep)
+        last_two_dirs = os.sep.join(data_dir_parts[-2:]) if len(data_dir_parts) >= 2 else config.data_dir
+        raise FileNotFoundError(
+            f"The following data files were not loaded correctly: {config.phase_transitions_file}. "
+            f"Please ensure the files exist in the data directory '...{os.sep}{last_two_dirs}'."
+        )
+
+
+reload_element_data()
 
 
 def _require_mpds_client() -> None:
@@ -203,11 +245,18 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
     """
     components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
     component_data = {
-        comp: [melt_enthalpies.get(comp, 0), melt_temps.get(comp, 0)]
+        comp: {
+            'H_liq': liquid_enthalpies.get(comp, 0),
+            'S_liq': liquid_entropies.get(comp, 0),
+            'T_fusion': melt_temps.get(comp, 0),
+            'T_vaporization': boiling_temps.get(comp, 0),
+            'polymorphs': element_polymorphs.get(comp, [])
+        }
         for comp in components
     }
     for comp, data in component_data.items():
-        print(f"{comp}: H_fusion = {data[0]} J/mol, T_fusion = {data[1]} K")
+        print(f"{comp}: H_liq = {data['H_liq']} J/mol, S_liq = {data['S_liq']:.4f} J/(mol·K), "
+              f"T_fusion = {data['T_fusion']} K, polymorphs = {len(data['polymorphs'])}")
 
     if config.dir_structure == 'nested':
         sys_dir = os.path.join(config.data_dir, sys_name)
@@ -217,11 +266,14 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
     else:
         raise ValueError(f"Invalid dir_structure '{config.dir_structure}'. Must be 'nested' or 'flat'.")
     
+    sys_pd0_file = os.path.join(sys_dir, f"{sys_name}_MPDS_PD_0.json")
     if pd_ind is None:
         sys_file = os.path.join(sys_dir, f"{sys_name}.json")
+        if not os.path.exists(sys_file):
+            sys_file = sys_pd0_file
     elif isinstance(pd_ind, int):
         sys_file = os.path.join(sys_dir, f"{sys_name}_MPDS_PD_{pd_ind}.json")
-        if not os.path.exists(sys_file) and os.path.exists(os.path.join(sys_dir, f"{sys_name}_MPDS_PD_0.json")):
+        if not os.path.exists(sys_file) and os.path.exists(sys_pd0_file):
             raise ValueError(f"No matching json with pd_ind={pd_ind} found in cache!")
     else:
         raise ValueError("Input for pd_ind must be an integer or 'None'!")
@@ -419,7 +471,7 @@ def get_low_temp_phase_data(
             (dft_phases, dft_phases_ebelow, min_form_e))
 
 
-def _get_dft_entries_from_components(components: list[str], dft_type: str) -> list[dict]:
+def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_data=False) -> list[dict]:
     """Fetches DFT entries for the specified components and DFT functional type."""
     entries = []
 
@@ -450,8 +502,9 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str) -> li
 
     # Filter out Mg149 phase and remove run data to reduce cache size
     computed_entry_dicts = [e for e in computed_entry_dicts if e['composition'].get('Mg', 0) != 149]
-    for e in computed_entry_dicts:
-        e.pop('data', None)
+    if not keep_data:
+        for e in computed_entry_dicts:
+            e.pop('data', None)
 
     return computed_entry_dicts
 
@@ -547,7 +600,7 @@ def get_hull_rel_enth_skew(dft_ch: PhaseDiagram) -> float:
     """
     Calculate the enthalpy skew of the DFT T=0K convex hull, relative to the ideal liquid enthalpy.
     """
-    hull_skew = (melt_enthalpies[str(dft_ch.elements[0])] - melt_enthalpies[str(dft_ch.elements[1])]) / 4.0
+    hull_skew = (liquid_enthalpies[str(dft_ch.elements[0])] - liquid_enthalpies[str(dft_ch.elements[1])]) / 4.0
     for e in dft_ch.stable_entries:
         xb_comp = e.composition.fractional_composition.as_dict().get(str(dft_ch.elements[1]), 0)
         form_energy_kj = dft_ch.get_form_energy_per_atom(e) * 96485
@@ -562,6 +615,6 @@ def get_hull_rel_mid_depth(dft_ch: PhaseDiagram) -> float:
     lhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[0]): 1}))
     rhs_ref = dft_ch.get_hull_energy_per_atom(Composition({str(dft_ch.elements[1]): 1}))
     hull_mid_ref = dft_ch.get_hull_energy_per_atom(Composition({str(e): 0.5 for e in dft_ch.elements}))
-    e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[0])] + 
-                                    rhs_ref * 96485 + melt_enthalpies[str(dft_ch.elements[1])]) / 2 
+    e_depth = hull_mid_ref * 96485 - (lhs_ref * 96485 + liquid_enthalpies[str(dft_ch.elements[0])] + 
+                                    rhs_ref * 96485 + liquid_enthalpies[str(dft_ch.elements[1])]) / 2 
     return float(e_depth)

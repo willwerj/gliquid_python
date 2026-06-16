@@ -14,6 +14,7 @@ import pandas as pd
 import sympy as sp
 import plotly.graph_objects as go
 from tqdm import tqdm
+from pathlib import Path
 
 from typing import List
 from emmet.core.utils import jsanitize
@@ -26,6 +27,7 @@ from copy import deepcopy
 
 import gliquid.config as cfg 
 import gliquid.binary as binary
+import gliquid.load_binary_data as lbd
 from gliquid.binary import BinaryLiquid, linear_expr, combined_expr
 from gliquid.extensive_hull_main import gliq_lowerhull3
 
@@ -215,11 +217,10 @@ def generate_comp_grid(delta=0.025, atol=1e-6):
 
 
 class ternary_interpolation:
-    def __init__(self, tern_sys: List[str], **kwargs):
+    def __init__(self, tern_sys: List[str], data_dir: Path | str | None = None, **kwargs):
         self.tern_sys = sorted(tern_sys)
-        # print("initializing for: ", self.tern_sys)
         self.binary_sys = ordered_binary_systems(self.tern_sys)
-
+        self.data_dir = data_dir if data_dir is not None else cfg.data_dir
         self.delta = kwargs.get('delta', 0.025)  # default to 0.025
         self.tern_comp = generate_comp_grid(self.delta)
         self.interp_type = kwargs.get('interp_type', 'linear')  # default to linear interpolation
@@ -230,8 +231,8 @@ class ternary_interpolation:
     
     def init_ref_data(self):
         # initialize reference data for fusion enthalpies and entropies
-        fusion_enthalpy = pd.read_json(os.path.join(cfg.fusion_enthalpies_file), typ='series')
-        fusion_temp = pd.read_json(os.path.join(cfg.fusion_temps_file), typ='series')
+        fusion_enthalpy = pd.Series(lbd.liquid_enthalpies)
+        fusion_temp = pd.Series(lbd.melt_temps)
         tern_enthalpy = fusion_enthalpy[self.tern_sys].values
         tern_temp = fusion_temp[self.tern_sys]
         tern_entropy = tern_enthalpy/tern_temp
@@ -328,7 +329,7 @@ class ternary_interpolation:
   
     def get_phasedia_entries(self, sys):
 
-        json_path = os.path.join(cfg.data_dir, f"{'-'.join(sys)}_ENTRIES_MP_GGA.json")
+        json_path = os.path.join(self.data_dir, f"{'-'.join(sys)}_ENTRIES_MP_GGA.json")
         if os.path.exists(json_path):
             print("Loading cached ternary DFT entry data")
             with open(json_path, 'r') as f:
@@ -429,14 +430,15 @@ class ternary_interpolation:
 
 
 class ternary_gtx_plotter(ternary_interpolation):
-    def __init__(self, tern_sys: List[str], **kwargs):
+    def __init__(self, tern_sys: List[str], data_dir: Path | str | None = None, **kwargs):
         delta = kwargs.get('delta', 0.025)
         interp_type = kwargs.get('interp_type', 'linear')
         param_format = kwargs.get('param_format', 'linear')
         L_tern = kwargs.get('L_tern', [0, 0])  # ternary interaction parameters (H, S)
         L_dict = kwargs.get('L_dict', {})  # binary interaction parameters
         fit_or_pred = kwargs.get('fit_or_pred', {})  # dict of 'fit' or 'pred' for each binary system
-        super().__init__(tern_sys, interp_type=interp_type, param_format=param_format, delta=delta, L_tern=L_tern, L_dict=L_dict, fit_or_pred=fit_or_pred)
+        super().__init__(tern_sys, data_dir, interp_type=interp_type, param_format=param_format, delta=delta,
+                         L_tern=L_tern, L_dict=L_dict, fit_or_pred=fit_or_pred)
         self.temp_slider = kwargs.get('temp_slider', [0, 0])  # temperature slider for the plot
         self.T_incr = kwargs.get('T_incr', 10)  # temperature increment for the grid
 
@@ -453,7 +455,7 @@ class ternary_gtx_plotter(ternary_interpolation):
         self.color_map = dict(zip(solid_phases, color_array))
         self.color_map['L'] = 'cornflowerblue'
 
-        fusion_temp = pd.read_json(os.path.join(cfg.fusion_temps_file), typ='series')
+        fusion_temp = pd.Series(lbd.melt_temps)
         tern_temp = fusion_temp[self.tern_sys].values 
         max_temp = round(np.max(tern_temp) + 500)
         min_temp = round(np.min(tern_temp))
@@ -823,4 +825,25 @@ class ternary_gtx_plotter(ternary_interpolation):
         )
 
         return fig
+    
+    def get_inter_melting_temps(self, interphases_for_melting: List[str]):
+        if not hasattr(self, 'equil_df_list'):
+            raise Exception("You must run the interpolate() and process_data() methods before getting melting temperatures.")
 
+        self.plotting_df = self.plotting_df.sort_index().reset_index(drop=True)
+        df_list = self.equil_df_list
+        concat_df = pd.concat(df_list, ignore_index=True)
+        melting_temps = {}
+        for phase in interphases_for_melting:
+            if phase not in self.phases:
+                raise ValueError(f"Phase '{phase}' not found in the system phases: {self.phases}")
+            sub_df = concat_df[concat_df['Phase'] == phase]
+            if sub_df.empty:
+                print(f"No data found for phase '{phase}'. Skipping.")
+                continue
+            sub_df = sub_df.sort_values(by='T', ascending=False)
+            sub_df = sub_df.iloc[0]
+            temp = sub_df['T'] 
+            melting_temps[phase] = temp
+
+        return melting_temps
