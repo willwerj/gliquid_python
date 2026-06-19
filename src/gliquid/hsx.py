@@ -953,7 +953,8 @@ class HSX:
         return {'xanchor': xanchor, 'yanchor': 'top', 'x': xp, 'y': 0.99, 'font': dict(size=15)}
 
     def plot_tx(self, pred: bool = False, digitized_liquidus: list = None,
-                polymorph_transitions: list[dict] | None = None) -> go.Figure:
+                polymorph_transitions: list[dict] | None = None,
+                ternary_color_map: dict | None = None) -> go.Figure:
         """Plots the binary phase diagram from computed phase boundaries and invariant points.
         
         Args:
@@ -962,9 +963,12 @@ class HSX:
             polymorph_transitions (list[dict]): List of elemental polymorph transitions, each dict with keys:
                 'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float),
                 'ground_state_name' (str) for the phase below the transition.
+            ternary_color_map (dict): Optional phase-to-color mapping from ternary plots.
         """
         liq_inv = self.liquidus_invariants()
         inv_points, combined_list = liq_inv[:2]
+        if ternary_color_map:
+            self.phase_color_remap.update(ternary_color_map)
         
         new_tx = []
         for comb in combined_list:
