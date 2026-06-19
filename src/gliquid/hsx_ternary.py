@@ -7,11 +7,12 @@ ORCID: https://orcid.org/0000-0001-5205-0075
 """
 import os
 import time
-import random
 import json
+import itertools
 import numpy as np
 import pandas as pd
 import sympy as sp
+import plotly.express as px
 import plotly.graph_objects as go
 from tqdm import tqdm
 from pathlib import Path
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import List
 from emmet.core.utils import jsanitize
 from mp_api.client import MPRester
+from mp_api.client.mprester import DEFAULT_THERMOTYPE_CRITERIA
 from pymatgen.analysis.phase_diagram import PhaseDiagram
 from pymatgen.core.composition import Element, Composition
 from pymatgen.entries.computed_entries import ComputedStructureEntry
@@ -34,7 +36,10 @@ from gliquid.extensive_hull_main import gliq_lowerhull3
 new_mp_api_key = os.getenv('NEW_MP_API_KEY')
 if not new_mp_api_key:
     raise ValueError("NEW_MP_API_KEY not found in environment variables!")
-mpr = MPRester(new_mp_api_key)
+try:
+    mpr = MPRester(new_mp_api_key, monty_decode=False, use_document_model=False)
+except TypeError:
+    mpr = MPRester(new_mp_api_key)
 
 # Define all required symbols
 R = 8.314  # J/(mol*K), universal gas constant
@@ -42,6 +47,48 @@ x1_sym, x2_sym, t_sym, w12_sym, w23_sym, w31_sym, a_sym, b_sym = sp.symbols('x1 
 
 _L_LINEAR_EXPR = linear_expr(a_sym, b_sym)
 _L_LIN_EXP_EXPR = combined_expr(a_sym, b_sym, binary.tau)
+
+_LEGACY_MONTY_MODULES = {
+    "pymatgen.core.entries": "pymatgen.entries.computed_entries",
+    "pymatgen.analysis.compatibility": "pymatgen.entries.compatibility",
+}
+
+
+def _normalize_entry_dict(entry):
+    if isinstance(entry, dict):
+        return {
+            key: _LEGACY_MONTY_MODULES.get(value, value)
+            if key == "@module" else _normalize_entry_dict(value)
+            for key, value in entry.items()
+        }
+    if isinstance(entry, list):
+        return [_normalize_entry_dict(value) for value in entry]
+    return entry
+
+
+def _get_entries_in_chemsys_dicts(mpr_client, elements):
+    elements_set = set(elements if not isinstance(elements, str) else elements.split("-"))
+    all_chemsyses = [
+        "-".join(sorted(els))
+        for i in range(len(elements_set))
+        for els in itertools.combinations(elements_set, i + 1)
+    ]
+    docs = mpr_client.materials.thermo.search(
+        chemsys=all_chemsyses,
+        all_fields=False,
+        fields=["entries", "thermo_type"],
+        **DEFAULT_THERMOTYPE_CRITERIA
+    )
+
+    entry_dicts = {}
+    for doc in docs:
+        for entry in doc["entries"].values():
+            entry_dict = _normalize_entry_dict(entry if isinstance(entry, dict) else entry.as_dict())
+            entry_id = entry_dict.get("entry_id") or entry_dict.get("composition", {})
+            if not isinstance(entry_id, (str, int, float, tuple)):
+                entry_id = json.dumps(entry_id, sort_keys=True)
+            entry_dicts[entry_id] = entry_dict
+    return list(entry_dicts.values())
 
 def build_ternary_thermodynamic_expressions(
     x1=x1_sym, x2=x2_sym, t=t_sym,
@@ -55,7 +102,10 @@ def build_ternary_thermodynamic_expressions(
     l1_bc_expr: sp.Expr = _L_LINEAR_EXPR,
     l0_ca_expr: sp.Expr = _L_LINEAR_EXPR,
     l1_ca_expr: sp.Expr = _L_LINEAR_EXPR,
-    l0_abc_expr: sp.Expr = 0
+    l0_abc_expr: sp.Expr = 0,
+    ab_diff_expr: sp.Expr = None,
+    bc_diff_expr: sp.Expr = None,
+    ca_diff_expr: sp.Expr = None
 ) -> dict[str, sp.Expr]:
     """
     Builds a dictionary of thermodynamic Sympy expressions for a ternary system.
@@ -70,6 +120,7 @@ def build_ternary_thermodynamic_expressions(
         l0_bc_expr, l1_bc_expr: Sympy expressions for BC binary Redlich-Kister parameters.
         l0_ca_expr, l1_ca_expr: Sympy expressions for CA binary Redlich-Kister parameters.
         l0_abc_expr: Optional ternary interaction parameter (default 0).
+        ab_diff_expr, bc_diff_expr, ca_diff_expr: Optional projected binary composition differences.
 
     Returns:
         dict[str, sp.Expr]: A dictionary mapping equation names to their Sympy expressions.
@@ -90,10 +141,17 @@ def build_ternary_thermodynamic_expressions(
         (R * t * (x_a * sp.log(x_a) + x_b * sp.log(x_b) + x_c * sp.log(x_c)), True),  # All present
     )
 
+    if ab_diff_expr is None:
+        ab_diff_expr = x_a - x_b
+    if bc_diff_expr is None:
+        bc_diff_expr = x_b - x_c
+    if ca_diff_expr is None:
+        ca_diff_expr = x_c - x_a
+
     # Excess Gibbs energy (Redlich-Kister for each binary, plus optional ternary term)
-    g_xs_ab = x_a * x_b * w12 * (l0_ab_expr + l1_ab_expr * (x_a - x_b))
-    g_xs_bc = x_b * x_c * w23 * (l0_bc_expr + l1_bc_expr * (x_b - x_c))
-    g_xs_ca = x_c * x_a * w31 * (l0_ca_expr + l1_ca_expr * (x_c - x_a))
+    g_xs_ab = x_a * x_b * w12 * (l0_ab_expr + l1_ab_expr * ab_diff_expr)
+    g_xs_bc = x_b * x_c * w23 * (l0_bc_expr + l1_bc_expr * bc_diff_expr)
+    g_xs_ca = x_c * x_a * w31 * (l0_ca_expr + l1_ca_expr * ca_diff_expr)
     g_xs_tern = l0_abc_expr * x_a * x_b * x_c
 
     g_xs = g_xs_ab + g_xs_bc + g_xs_ca + g_xs_tern
@@ -228,14 +286,13 @@ class ternary_interpolation:
         self.fit_or_pred = kwargs.get('fit_or_pred', {})  # dict of 'fit' or 'pred' for each binary system
         self.L_dict = kwargs.get('L_dict', {}) # adding functionality to pass in a dict of L parameters on construction
         self.L_tern = kwargs.get('L_tern', [0, 0])  # ternary interaction parameters (H, S)
+        self.ternary_meta = {}
     
     def init_ref_data(self):
         # initialize reference data for fusion enthalpies and entropies
-        fusion_enthalpy = pd.Series(lbd.liquid_enthalpies)
-        fusion_temp = pd.Series(lbd.melt_temps)
-        tern_enthalpy = fusion_enthalpy[self.tern_sys].values
-        tern_temp = fusion_temp[self.tern_sys]
-        tern_entropy = tern_enthalpy/tern_temp
+        tern_enthalpy = np.array([lbd.liquid_enthalpies.get(el, 0) for el in self.tern_sys])
+        tern_entropy = np.array([lbd.liquid_entropies.get(el, 0) for el in self.tern_sys])
+        tern_temp = np.array([lbd.melt_temps.get(el, 0) for el in self.tern_sys])
         self.ref_data = {'H': tern_enthalpy, 'S': tern_entropy, 'T': tern_temp}
 
     def retrieve_system_parameters(self, fitted, df_fitted, df_predicted):
@@ -279,11 +336,43 @@ class ternary_interpolation:
 
         if not all(sys in self.L_dict.keys() for sys in self.binary_sys): # only do this if L_dict is not already populated
             raise ValueError("L parameters for binary systems not found in L_dict. Please provide complete L_dict")
-        
-        if self.interp_type == 'linear':
+
+        interp_scheme = str(self.interp_type).lower()
+        xA_expr = 1 - x1_sym - x2_sym
+        xB_expr = x1_sym
+        xC_expr = x2_sym
+        if interp_scheme == 'linear':
             wAB, wBC, wCA = 1, 1, 1
+            ab_diff_expr = xA_expr - xB_expr
+            bc_diff_expr = xB_expr - xC_expr
+            ca_diff_expr = xC_expr - xA_expr
+        elif interp_scheme == 'muggianu':
+            xA_eff_AB = xA_expr + xC_expr / 2
+            xB_eff_AB = xB_expr + xC_expr / 2
+            xB_eff_BC = xB_expr + xA_expr / 2
+            xC_eff_BC = xC_expr + xA_expr / 2
+            xC_eff_CA = xC_expr + xB_expr / 2
+            xA_eff_CA = xA_expr + xB_expr / 2
+            wAB, wBC, wCA = 1, 1, 1
+            ab_diff_expr = xA_eff_AB - xB_eff_AB
+            bc_diff_expr = xB_eff_BC - xC_eff_BC
+            ca_diff_expr = xC_eff_CA - xA_eff_CA
+        elif interp_scheme == 'kohler':
+            sum_AB = xA_expr + xB_expr
+            sum_BC = xB_expr + xC_expr
+            sum_CA = xC_expr + xA_expr
+            xA_eff_AB = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_AB, 0)), (xA_expr / sum_AB, True))
+            xB_eff_AB = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_AB, 0)), (xB_expr / sum_AB, True))
+            xB_eff_BC = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_BC, 0)), (xB_expr / sum_BC, True))
+            xC_eff_BC = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_BC, 0)), (xC_expr / sum_BC, True))
+            xC_eff_CA = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_CA, 0)), (xC_expr / sum_CA, True))
+            xA_eff_CA = sp.Piecewise((sp.Rational(1, 2), sp.Eq(sum_CA, 0)), (xA_expr / sum_CA, True))
+            wAB, wBC, wCA = 1, 1, 1
+            ab_diff_expr = xA_eff_AB - xB_eff_AB
+            bc_diff_expr = xB_eff_BC - xC_eff_BC
+            ca_diff_expr = xC_eff_CA - xA_eff_CA
         else:
-            raise Exception("Only linear interpolation for binary params is currently supported")
+            raise ValueError(f"Unsupported interp_type '{self.interp_type}'. Supported: linear, muggianu, kohler")
 
         if self.param_format == 'linear':
             l_expr = _L_LINEAR_EXPR
@@ -304,7 +393,10 @@ class ternary_interpolation:
             l1_bc_expr=l_expr.subs({a_sym: L_array[1][2], b_sym: L_array[1][3]}),
             l0_ca_expr=l_expr.subs({a_sym: L_array[2][0], b_sym: L_array[2][1]}),
             l1_ca_expr=l_expr.subs({a_sym: L_array[2][2], b_sym: L_array[2][3]}),
-            l0_abc_expr=self.L_tern[0] if self.L_tern[0] != 0 else 0
+            l0_abc_expr=self.L_tern[0] if self.L_tern[0] != 0 else 0,
+            ab_diff_expr=ab_diff_expr,
+            bc_diff_expr=bc_diff_expr,
+            ca_diff_expr=ca_diff_expr
         )
 
         tm_mean = np.mean(self.ref_data['T']) # mean melting point in ternary - used for t-dependent H and S forms
@@ -333,13 +425,12 @@ class ternary_interpolation:
         if os.path.exists(json_path):
             print("Loading cached ternary DFT entry data")
             with open(json_path, 'r') as f:
-                entry_dicts = json.load(f)
+                entry_dicts = [_normalize_entry_dict(e) for e in json.load(f)]
         else:
-            entries = mpr.get_entries_in_chemsys(sys)
-            entry_dicts = [e.as_dict() for e in entries]
+            entry_dicts = jsanitize(_get_entries_in_chemsys_dicts(mpr, sys))
 
             # Filter out Mg149 phase and remove run data to reduce cache size
-            entry_dicts = [e for e in entry_dicts if e['composition'].get('Mg', 0) != 149]
+            entry_dicts = [e for e in entry_dicts if e.get('composition', {}).get('Mg', 0) != 149]
             for e in entry_dicts:
                 e.pop('data', None)
 
@@ -358,8 +449,13 @@ class ternary_interpolation:
             sys_eles.append(el)
         entries_init = self.get_phasedia_entries(sys)
         entries = [ComputedStructureEntry.from_dict(e) for e in entries_init]
+        if "Mg" in sys:
+            entries = [e for e in entries if e.composition.get("Mg", 0) != 149]
         
         pdia = PhaseDiagram(entries)
+        self.ternary_meta['n_ternary_compounds'] = sum(
+            1 for e in pdia.stable_entries if len(e.composition.elements) == 3
+        )
         entries = pdia.stable_entries
         all_atm_fracs = []
         all_form_ens = []
@@ -385,6 +481,7 @@ class ternary_interpolation:
         for i, arr in enumerate(all_atm_fracs_arr.T):
             tern_mp_dict[f'x{i}'] = arr
 
+        self.ternary_meta['deepest_formation_energy'] = min(all_form_ens)
         tern_mp_dict['H'] = all_form_ens
         tern_mp_dict['Phase Name'] = phases
 
@@ -397,18 +494,52 @@ class ternary_interpolation:
 
         return tern_mp_df
 
-    def add_binary_data(self):
+    def add_binary_data(self, ternary_color_map=None):
         # add binary data to the ternary data and plot the binaries (optional)
         bin_fig_list = []
+
+        def build_polymorph_transitions(sys_obj):
+            transitions = []
+            for i, comp in enumerate(sys_obj.components):
+                polymorphs = sys_obj.component_data.get(comp, {}).get('polymorphs', [])
+                if not polymorphs:
+                    continue
+                ground_state_name = comp
+                for phase in sys_obj.phases:
+                    if phase['name'] != 'L' and 'comp' in phase and phase['comp'] == float(i):
+                        if phase.get('enthalpy', 1) == 0:
+                            ground_state_name = phase['name']
+                            break
+                for poly in polymorphs:
+                    transitions.append({
+                        'name': poly['common_name'],
+                        'comp_x_pct': float(i) * 100,
+                        'transition_temp_C': poly['transition_temperature_K'] - 273.15,
+                        'ground_state_name': ground_state_name,
+                    })
+            return transitions
+
         def process_system(sys_name):
-            params = self.L_dict[sys_name]
-            sys = BinaryLiquid.from_cache("-".join(sorted(sys_name.split('-'))), params=params, param_format=self.param_format, pd_ind=0)
-            data = sys.update_phase_points()
-            fit_type = self.fit_or_pred[sys_name] 
+            params = list(np.array(self.L_dict[sys_name], dtype=float).copy())
+            alphabetical_order = "-".join(sorted(sys_name.split('-')))
+            if sys_name != alphabetical_order:
+                params[2:] = [-p for p in params[2:]]
+            sys = BinaryLiquid.from_cache(alphabetical_order, params=params, param_format=self.param_format, pd_ind=0)
+            sys.update_phase_points()
+            fit_type = self.fit_or_pred.get(sys_name, 'pred')
+            polymorph_transitions = build_polymorph_transitions(sys)
             if fit_type == 'fit':
-                figr = sys.hsx.plot_tx(digitized_liquidus=sys.digitized_liq)
+                figr = sys.hsx.plot_tx(
+                    digitized_liquidus=sys.digitized_liq,
+                    polymorph_transitions=polymorph_transitions,
+                    ternary_color_map=ternary_color_map
+                )
             else:
-                figr = sys.hsx.plot_tx(pred=True)
+                figr = sys.hsx.plot_tx(
+                    pred=True,
+                    polymorph_transitions=polymorph_transitions,
+                    ternary_color_map=ternary_color_map
+                )
             bin_fig_list.append(figr)
             
 
@@ -448,18 +579,16 @@ class ternary_gtx_plotter(ternary_interpolation):
 
         solid_phases = self.phases.copy()
         solid_phases.remove('L')
-        # Generate a random color array with at least 100 options
-        def random_color():
-            return f"#{random.randint(0, 0xFFFFFF):06x}"
-        color_array = [random_color() for _ in range(100)]
+
+        color_array = px.colors.qualitative.Dark24_r
+        color_array *= len(solid_phases) // len(color_array) + 1
         self.color_map = dict(zip(solid_phases, color_array))
         self.color_map['L'] = 'cornflowerblue'
 
-        fusion_temp = pd.Series(lbd.melt_temps)
-        tern_temp = fusion_temp[self.tern_sys].values 
-        max_temp = round(np.max(tern_temp) + 500)
+        tern_temp = self.ref_data['T']
+        max_temp = round(np.max(tern_temp) + 200)
         min_temp = round(np.min(tern_temp))
-        self.conds = [np.min(np.array([0, min_temp - 200])), max_temp + self.temp_slider[1]]
+        self.conds = [np.min(np.array([0, min_temp - 200])) - self.temp_slider[0], max_temp + self.temp_slider[1]]
         self.T_grid = np.arange(self.conds[0], self.conds[1] + self.T_incr, self.T_incr)
         self.hsx_df['x0'] = self.hsx_df['x0'].round(4)
         self.hsx_df['x1'] = self.hsx_df['x1'].round(4)
@@ -470,19 +599,24 @@ class ternary_gtx_plotter(ternary_interpolation):
         for T in self.T_grid:
             self.hsx_df['G'] = self.hsx_df['H'] - T*self.hsx_df['S']
             self.df_Tgroups[T] = self.hsx_df[['x0', 'x1', 'G', 'Phase', 'Colors']].copy()
+
+        self.bin_fig_list = (
+            self.add_binary_data(ternary_color_map=self.color_map)
+            if self.fit_or_pred and self.L_dict else []
+        )
         
         print('Initialization complete')
 
     def process_data(self):
         self.init_sys()
-        # start_time = time.time()
+        start_time = time.time()
         self.equil_df_list = []
         shifter = 0
         for T in tqdm(self.T_grid, desc="Evaluating lower hull over temperature intervals"):
             if T < self.conds[0]:
                 continue  
             points = np.array(self.df_Tgroups[T][['x0', 'x1', 'G']])
-            simplices = gliq_lowerhull3(points, vertical_simplices=True)
+            simplices = gliq_lowerhull3(points, vertical_simplices=False)
             simplex_vertices = []
             for simplex in simplices:
                 simplex_vertices.append(points[simplex])
@@ -530,8 +664,139 @@ class ternary_gtx_plotter(ternary_interpolation):
 
             self.equil_df_list.append(temp_df)
 
-        # end_time = time.time()
-        # print(f"Lower hull evaluation and post processing time:: {end_time - start_time} seconds for temperature increment of {self.T_incr}")
+        end_time = time.time()
+        print(f"Lower hull evaluation and post processing time:: {end_time - start_time} seconds for temperature increment of {self.T_incr}")
+
+    def extract_single_hull_at_T(self, T_celsius: float):
+        """
+        Extract a single G-x0-x1 lower convex hull slice for diagnostics.
+        """
+        if not hasattr(self, 'df_Tgroups') or not hasattr(self, 'T_grid'):
+            self.init_sys()
+
+        T_kelvin_request = float(T_celsius) + 273.15
+        if len(self.T_grid) == 0:
+            raise ValueError("Temperature grid is empty. Run initialization before extracting a hull slice.")
+
+        nearest_index = int(np.argmin(np.abs(self.T_grid - T_kelvin_request)))
+        T_kelvin = float(self.T_grid[nearest_index])
+        T_celsius_exact = T_kelvin - 273.15
+
+        slice_df = self.df_Tgroups[T_kelvin].copy().reset_index(drop=True)
+        points = np.array(slice_df[['x0', 'x1', 'G']])
+        simplices = np.asarray(gliq_lowerhull3(points, vertical_simplices=False))
+
+        if simplices.size == 0:
+            raise ValueError(f"No lower-hull simplices found at T={T_celsius_exact:.6g} C.")
+
+        simplex_rows = []
+        for simplex_id, simplex in enumerate(simplices):
+            for vertex in simplex:
+                label = slice_df.loc[vertex, 'Phase']
+                simplex_rows.append([
+                    points[vertex][0],
+                    points[vertex][1],
+                    points[vertex][2],
+                    label,
+                    self.color_map[label],
+                    simplex_id,
+                ])
+
+        simplex_df = pd.DataFrame(
+            simplex_rows,
+            columns=['x0', 'x1', 'G', 'Phase', 'Colors', 'simplex_id']
+        )
+        simplex_df['x0_orig'] = simplex_df['x0'].copy()
+        simplex_df['x1_orig'] = simplex_df['x1'].copy()
+        simplex_df = cartesian_to_ternary(simplex_df)
+
+        transformed_points_df = slice_df[['x0', 'x1']].copy()
+        transformed_points_df['x0_orig'] = transformed_points_df['x0'].copy()
+        transformed_points_df['x1_orig'] = transformed_points_df['x1'].copy()
+        transformed_points_df = cartesian_to_ternary(transformed_points_df)
+
+        fig = go.Figure()
+        fig.add_trace(go.Mesh3d(
+            x=transformed_points_df['x0'],
+            y=transformed_points_df['x1'],
+            z=points[:, 2],
+            i=simplices[:, 0],
+            j=simplices[:, 1],
+            k=simplices[:, 2],
+            opacity=0.55,
+            colorscale='Viridis',
+            intensity=points[:, 2],
+            showscale=True,
+            colorbar=dict(title='G'),
+            customdata=np.column_stack((slice_df['x0'], slice_df['x1'], slice_df['Phase'])),
+            hovertemplate=(
+                f'x_{self.tern_sys[1]}: %{{customdata[0]:.3f}}<br>' +
+                f'x_{self.tern_sys[2]}: %{{customdata[1]:.3f}}<br>' +
+                'Phase: %{customdata[2]}<br>' +
+                'G: %{z:.4f}<extra></extra>'
+            )
+        ))
+
+        for phase, group in slice_df.groupby('Phase'):
+            phase_points = transformed_points_df.loc[group.index]
+            fig.add_trace(go.Scatter3d(
+                x=phase_points['x0'],
+                y=phase_points['x1'],
+                z=points[group.index, 2],
+                mode='markers',
+                marker=dict(
+                    size=4,
+                    color=group['Colors'].iloc[0],
+                    opacity=0.95,
+                    line=dict(color='black', width=0.4)
+                ),
+                name=phase,
+                customdata=np.column_stack((group['x0'], group['x1'], group['G'])),
+                hovertemplate=(
+                    f'<b>{phase}</b><br>' +
+                    f'x_{self.tern_sys[1]}: %{{customdata[0]:.3f}}<br>' +
+                    f'x_{self.tern_sys[2]}: %{{customdata[1]:.3f}}<br>' +
+                    'G: %{customdata[2]:.4f}<extra></extra>'
+                )
+            ))
+
+        g_floor = float(np.min(points[:, 2]))
+        fig.add_trace(go.Scatter3d(
+            x=[0, 0.5, 1, 0],
+            y=[0, np.sqrt(3)/2, 0, 0],
+            z=[g_floor, g_floor, g_floor, g_floor],
+            mode='lines',
+            line=dict(color='black', width=5),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+        fig.update_layout(
+            title=f"Single-slice lower hull at T = {T_celsius_exact:.2f} C",
+            scene=dict(
+                xaxis=dict(title=' ', showticklabels=False, showaxeslabels=False, showgrid=False),
+                yaxis=dict(title=' ', showticklabels=False, showaxeslabels=False, showgrid=False),
+                zaxis=dict(title='G'),
+                bgcolor='white',
+                camera=dict(projection=dict(type='orthographic')),
+            ),
+            margin=dict(l=40, r=40, b=40, t=60),
+            legend=dict(x=0.95, y=0.95, xanchor='left', yanchor='top')
+        )
+
+        return {
+            'requested_temperature_c': float(T_celsius),
+            'requested_temperature_k': T_kelvin_request,
+            'temperature_c': T_celsius_exact,
+            'temperature_k': T_kelvin,
+            'temperature_offset_c': T_celsius_exact - float(T_celsius),
+            'raw_slice_df': slice_df,
+            'hull_points': points,
+            'hull_simplices': simplices,
+            'transformed_points_df': transformed_points_df,
+            'simplex_df': simplex_df,
+            'figure': fig,
+        }
 
     def _add_isothermal_lines(self, fig, liq_points, triangles):
         """
@@ -690,6 +955,9 @@ class ternary_gtx_plotter(ternary_interpolation):
         liq_simplex_df = liq_simplex_df.sort_values('T').drop_duplicates(subset=['x0', 'x1'], keep='first')
         simplex_df = pd.concat([solid_simplex_df, liq_simplex_df])
         
+        id_counts = simplex_df["simplex_id"].value_counts()
+        valid_ids = id_counts[id_counts == 3].index
+        simplex_df = simplex_df[simplex_df['simplex_id'].isin(valid_ids)].copy()
         simplex_df = simplex_df.sort_values(by='simplex_id').reset_index(drop=True)
 
         self.liq_plotting_df = self.plotting_df[self.plotting_df['Phase'] == 'L']
@@ -741,8 +1009,7 @@ class ternary_gtx_plotter(ternary_interpolation):
                 mode = 'lines', line = dict(color = group['Colors'], width = 10),
                 showlegend = False, opacity = 1,
                 hovertemplate = f'<b>Phase: {label}</b><br>' +
-                              '<extra></extra>',
-                customdata = np.column_stack((group['x0_orig'], group['x1_orig']))
+                              '<extra></extra>'
             ))
 
         fig.add_trace(go.Mesh3d(

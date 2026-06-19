@@ -954,7 +954,8 @@ class HSX:
 
     def plot_tx(self, pred: bool = False, digitized_liquidus: list = None,
                 polymorph_transitions: list[dict] | None = None,
-                imputed_phases: set | None = None) -> go.Figure:
+                imputed_phases: set | None = None,
+                ternary_color_map: dict | None = None) -> go.Figure:
         """Plots the binary phase diagram from computed phase boundaries and invariant points.
 
         Args:
@@ -965,10 +966,13 @@ class HSX:
                 'ground_state_name' (str) for the phase below the transition.
             imputed_phases (set): Names of phases imputed by phase-energy imputation; their
                 solid boundary lines are drawn dashed and given a single legend entry.
+            ternary_color_map (dict): Optional phase-to-color mapping from ternary plots.
         """
         imputed_phases = imputed_phases or set()
         liq_inv = self.liquidus_invariants()
         inv_points, combined_list = liq_inv[:2]
+        if ternary_color_map:
+            self.phase_color_remap.update(ternary_color_map)
         
         new_tx = []
         for comb in combined_list:

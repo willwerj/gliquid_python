@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import json
+import itertools
 import numpy as np
 
 from emmet.core.thermo import ThermoType
@@ -22,10 +23,67 @@ except ImportError:
     MPDSDataTypes = None
     APIError = Exception
 from pymatgen.core import Composition, DummySpecies, Element, Structure
-from pymatgen.entries.computed_entries import ComputedEntry
+from pymatgen.entries.computed_entries import ComputedEntry, ComputedStructureEntry
 from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
 import gliquid.config as config
+
+_LEGACY_MONTY_MODULES = {
+    "pymatgen.core.entries": "pymatgen.entries.computed_entries",
+    "pymatgen.analysis.compatibility": "pymatgen.entries.compatibility",
+}
+
+
+def _normalize_entry_dict(entry):
+    if isinstance(entry, dict):
+        return {
+            key: _LEGACY_MONTY_MODULES.get(value, value)
+            if key == "@module" else _normalize_entry_dict(value)
+            for key, value in entry.items()
+        }
+    if isinstance(entry, list):
+        return [_normalize_entry_dict(value) for value in entry]
+    return entry
+
+
+def _computed_entry_from_dict(entry: dict):
+    entry = _normalize_entry_dict(entry)
+    if entry.get("@class") == "ComputedStructureEntry" or "structure" in entry:
+        return ComputedStructureEntry.from_dict(entry)
+    return ComputedEntry.from_dict(entry)
+
+
+def _mp_rester(api_key: str):
+    try:
+        return MPRester(api_key, monty_decode=False, use_document_model=False)
+    except TypeError:
+        return MPRester(api_key)
+
+
+def _get_entries_in_chemsys(client, components: list[str], thermo_type=None):
+    elements_set = set(components)
+    all_chemsyses = [
+        "-".join(sorted(els))
+        for i in range(len(elements_set))
+        for els in itertools.combinations(elements_set, i + 1)
+    ]
+    criteria = {'thermo_types': [thermo_type]} if thermo_type else {}
+    docs = client.materials.thermo.search(
+        chemsys=all_chemsyses,
+        all_fields=False,
+        fields=["entries", "thermo_type"],
+        **criteria
+    )
+
+    entry_dicts = {}
+    for doc in docs:
+        for entry in doc["entries"].values():
+            entry_dict = _normalize_entry_dict(entry if isinstance(entry, dict) else entry.as_dict())
+            entry_id = entry_dict.get("entry_id") or entry_dict.get("composition", {})
+            if not isinstance(entry_id, (str, int, float, tuple)):
+                entry_id = json.dumps(entry_id, sort_keys=True)
+            entry_dicts[entry_id] = entry_dict
+    return [_computed_entry_from_dict(e) for e in entry_dicts.values()]
 
 # Load phase transitions database (replaces fusion_enthalpies, fusion_temperatures, vaporization_temperatures)
 # Derived convenience dicts from phase_transitions.json (populated by reload_element_data()).
@@ -498,9 +556,9 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_
     scan_entries, ggau_entries = [], []
 
     if dft_type in ['R2SCAN', 'MIXED']:
-        scan_entries = fetch_entries(new_mp_api_key, MPRester, ThermoType.R2SCAN)
+        scan_entries = fetch_entries(new_mp_api_key, _mp_rester, ThermoType.R2SCAN)
     if dft_type in ['GGA', 'MIXED']:
-        ggau_entries = fetch_entries(new_mp_api_key, MPRester, ThermoType.GGA_GGA_U)
+        ggau_entries = fetch_entries(new_mp_api_key, _mp_rester, ThermoType.GGA_GGA_U)
 
     if dft_type == 'MIXED':
         entries = MaterialsProjectDFTMixingScheme().process_entries(scan_entries + ggau_entries, verbose=False)
@@ -622,7 +680,7 @@ def get_dft_convexhull(input, dft_type='GGA',
 
     if os.path.exists(dft_entries_file):
         with open(dft_entries_file, "r") as f:
-            computed_entry_dicts = json.load(f)
+            computed_entry_dicts = [_normalize_entry_dict(e) for e in json.load(f)]
         if verbose:
             print("Loading cached DFT entry data.")
     else:
@@ -638,12 +696,12 @@ def get_dft_convexhull(input, dft_type='GGA',
     if any(len(Composition(c).elements) > 1 for c in components):
         dft_ch = CompoundPhaseDiagram(
             terminal_compositions=[Composition(c) for c in components],
-            entries=[ComputedEntry.from_dict(e) for e in computed_entry_dicts],
+            entries=[_computed_entry_from_dict(e) for e in computed_entry_dicts],
         )
     else:
         dft_ch = PhaseDiagram(
             elements=[Element(c) for c in components],
-            entries=[ComputedEntry.from_dict(e) for e in computed_entry_dicts],
+            entries=[_computed_entry_from_dict(e) for e in computed_entry_dicts],
         )
     if verbose:
         print(f"{len(dft_ch.stable_entries) - 2} stable line compound(s) on the DFT convex hull.")
