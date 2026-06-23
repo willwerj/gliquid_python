@@ -275,7 +275,7 @@ class BinaryLiquid:
         self._param_format = kwargs.get('param_format', 'linear')
         self.init_triangle = kwargs.get('init_triangle', build_init_triangle(self._param_format, self.dft_ch))
         self.eqs = kwargs.get('eqs', build_thermodynamic_expressions(self._param_format))
-        self.invariants = None
+        self.invariants = kwargs.get('invariants', None)
         self.low_t_exp_phases = None
         self.guess_symbols = None
         self.constraints = None
@@ -1013,63 +1013,6 @@ class BinaryLiquid:
             total += _term(self.get_L1_b(), penalty_cfg.get('l1'))
         return float(1.0 + total)
 
-    def fim_tikhonov_penalty(self, penalty_cfg: dict | None = None) -> float:
-        """
-        Multiplicative Tikhonov / Fisher-information prior on the free liquid parameters.
-
-        Anchors the free parameters at a reference vector using a supplied precision
-        matrix -- typically the baseline Fisher Information Matrix ``J^T J / sigma^2`` in
-        the free subspace, normalized per measurement point. Parameter directions the
-        liquidus identifies well (large FIM eigenvalues) are held close to the reference;
-        poorly-identified directions -- exactly those prone to overfitting when a DFT
-        phase is missing -- are left comparatively free. This is the genuine FIM/Tikhonov
-        prior that the baseline-anchored ``lxb`` approximation could not express.
-
-            delta   = theta_free - ref_free
-            maha    = delta^T @ P @ delta            (squared Mahalanobis distance)
-            penalty = 1 + weight * maha ** exponent
-
-        With ``P`` normalized per measurement point, ``maha`` is the mean squared
-        standardized liquidus shift induced by moving away from the reference (in units
-        of sigma^2), so ``weight`` is portable across systems. ``exponent == 1`` is the
-        principled Gaussian/Tikhonov shape (penalty linear in the quadratic form).
-
-        Args:
-            penalty_cfg (dict | None): Configuration with keys:
-                - 'precision': (k, k) array or length-k diagonal -- the precision metric P.
-                - 'ref_params': length-4 reference params [L0_a, L0_b, L1_a, L1_b].
-                - 'free_indices': param indices P / ref correspond to. Default [0, 2].
-                - 'weight': multiplier on the quadratic form. Default 0.5.
-                - 'exponent': power on ``maha``. Default 1.0.
-
-        Returns:
-            float: A multiplicative penalty factor >= 1.0 (1.0 when the config is missing
-            or degenerate).
-        """
-        if not penalty_cfg:
-            return 1.0
-        precision = penalty_cfg.get('precision')
-        ref = penalty_cfg.get('ref_params')
-        if precision is None or ref is None:
-            return 1.0
-        weight = float(penalty_cfg.get('weight', 0.5))
-        if weight <= 0:
-            return 1.0
-        exponent = float(penalty_cfg.get('exponent', 1.0))
-        free_indices = penalty_cfg.get('free_indices', [0, 2])
-
-        P = np.asarray(precision, dtype=float)
-        if P.ndim == 1:
-            P = np.diag(P)
-        params = self.get_params()
-        delta = np.array([params[i] - ref[i] for i in free_indices], dtype=float)
-        if P.shape != (delta.size, delta.size):
-            return 1.0
-        maha = float(delta @ P @ delta)
-        if not np.isfinite(maha) or maha <= 0:
-            return 1.0
-        return float(1.0 + weight * maha ** exponent)
-
     def _stable_solid_gibbs_at_T(self, comp_x: float, temp_K: float) -> float:
         """
         Returns the Gibbs energy of the thermodynamically stable solid polymorph
@@ -1231,7 +1174,7 @@ class BinaryLiquid:
         guess_dict = {symbol: guess for symbol, guess in zip(self.guess_symbols, guess)}          
         self.solve_params_from_constraints(guess_dict) 
         
-        if kwargs.get('check_h0_below_ch', True) and self.h0_below_ch():
+        if self.h0_below_ch():
             if verbose:
                 print(f'T=0K enthalpy constraint violated for params {self.get_params()}')
             return float('inf')
@@ -1244,7 +1187,7 @@ class BinaryLiquid:
             return float('inf')
         
         # Check if generated liquidus is continuous
-        if kwargs.get('check_liquidus_continuity', True) and not self.liquidus_is_continuous():
+        if not self.liquidus_is_continuous():
             if verbose:
                 print(f'Liquidus continuity constraint violated for guess {self.get_params()}')
             return float('inf')
@@ -1257,10 +1200,6 @@ class BinaryLiquid:
         # Apply lxb penalty using distribution priors on L0_b/L1_b.
         if kwargs.get('use_lxb_penalty', self._param_format == 'comb-exp'):
             f_val *= self.lxb_penalty(kwargs.get('lxb_penalty_cfg'))
-
-        # Apply Tikhonov/Fisher-information prior anchoring free params at a reference.
-        if kwargs.get('use_fim_prior', False):
-            f_val *= self.fim_tikhonov_penalty(kwargs.get('fim_prior_cfg'))
 
         return f_val
 
@@ -1380,34 +1319,16 @@ class BinaryLiquid:
             **kwargs: Additional keyword arguments for fitting options or arguments passed to nelder-mead.
                 - max_iter (int): Maximum number of iterations for the Nelder-Mead algorithm. Default is 64.
                 - disable_inv_constrs (bool): If True, does not use invariant points as constraints.
-                - conservative_masking (bool): If True, auto-detected ignored ranges around
-                    missing/solid-solution phases are (a) bounded by the nearest flanking invariant
-                    -- where the missing phase's liquidus field actually ends -- instead of spanning
-                    to the compound stoichiometry or a pure-element endpoint (avoids over-trimming
-                    peritectic compounds, e.g. Gd-Re), (b) suppressed entirely where a stable DFT
-                    compound covers the region (see dft_cover_tol, e.g. Au-Ca), and (c) flagged
-                    (init_error) and skipped if the masked liquidus fraction exceeds
-                    mask_fraction_cap. Default True; set False for legacy endpoint-spanning behavior.
-                - mask_fraction_cap (float): Maximum fraction of the digitized liquidus span that
-                    conservative_masking may mask before flagging and skipping. Default 0.60.
-                - dft_cover_tol (float): Under conservative_masking, a missing experimental phase is
-                    treated as adequately represented (and its region left unmasked) if a stable
-                    interior DFT compound lies within this composition tolerance of it. Default 0.10.
                 - ignored_ranges (bool): If True, ignores the composition ranges specified in self.ignored_comp_ranges.
-                - allow_sparse_data (bool): If True, allows for small composition ranges in the generated points.
                 - check_full_ss (bool): If True, checks if the full solid solution is present in the system.
                 - check_phase_mismatch (bool): If True, checks phase mismatch between invariant points and self.phases.
-                - check_lupis_elliott (bool): If True, checks Lupis-Elliott sign constraints.
+                - check_lupis_elliott (bool): If True, applies Lupis-Elliott sign constraints as a penalty.
                 - lupis_elliott_cfg (dict): Optional Lupis-Elliott penalty config.
                     Supported keys:
                         * 'strength' (float): global default penalty strength. Default: 7.5E-3.
                         * 'l0' (dict): optional per-term override with {'strength'}.
                         * 'l1' (dict): optional per-term override with {'strength'}.
                           L1 is not penalized unless this key is explicitly provided.
-                - check_h0_below_ch (bool): If True, checks if the liquid enthalpy at T=0K is below the solid convex hull.
-                - check_liquidus_continuity (bool): If True, checks if the generated liquidus is continuous.
-                - params_init (list): Initial parameter guesses for the Nelder-Mead algorithm.
-                  parameter magnitude. Default is 1.0.
                 - use_lxb_penalty (bool): If True, applies the distribution-aware lxb penalty.
                     Defaults to True for 'comb-exp' models, False for 'combined'/'linear'.
                 - lxb_penalty_cfg (dict): Distribution prior configuration dictionary.
@@ -1417,14 +1338,6 @@ class BinaryLiquid:
                         * 'l1': {'weight', 'median', 'mad', 'exponent'}
                           Not applied by default; use 'apply_l1': True to enable.
                         * 'apply_l1' (bool): force-enable/disable L1 term. Default: False.
-                - use_fim_prior (bool): If True, applies a Tikhonov/Fisher-information
-                    prior anchoring the free parameters at a reference. Default False.
-                - fim_prior_cfg (dict): Config for the FIM prior. Supported keys:
-                        * 'precision': (k, k) array or length-k diagonal precision metric.
-                        * 'ref_params': length-4 reference [L0_a, L0_b, L1_a, L1_b].
-                        * 'free_indices': param indices for precision/ref. Default [0, 2].
-                        * 'weight': multiplier on the quadratic form. Default 0.5.
-                        * 'exponent': power on the Mahalanobis distance. Default 1.0.
 
         Returns:
             list[dict]: Parameter fitting data containing results of all optimization attempts.
@@ -1489,9 +1402,8 @@ class BinaryLiquid:
         # Conservative masking: bound auto-detected ignored ranges to the local missing-phase
         # field (nearest flanking invariant) instead of spanning to a pure-element endpoint, and
         # flag-and-skip if the un-modellable masked fraction of the liquidus exceeds a cap.
-        conservative_masking = kwargs.get('conservative_masking', True)
-        mask_fraction_cap = kwargs.get('mask_fraction_cap', 0.60)
-        dft_cover_tol = kwargs.get('dft_cover_tol', 0.10)
+        mask_fraction_cap = 0.60
+        dft_cover_tol = 0.10
         _inv_comps = sorted(iv['comp'] for iv in (self.invariants or []) if 'comp' in iv)
         _dft_comps = [p['comp'] for p in self.phases
                       if not p.get('is_solution') and 0.0 < round(p['comp'], 6) < 1.0]
@@ -1527,12 +1439,12 @@ class BinaryLiquid:
 
                 if inv['type'] == 'cmp':
                     if '(' in inv['phases'][0] and auto_ignored_ranges:
-                        if not (conservative_masking and dft_covers(inv['comp'])):
+                        if not dft_covers(inv['comp']):
                             if inv['comp'] < 0.5:
-                                lo = nearest_inv_left(inv['comp']) if conservative_masking else 0
+                                lo = nearest_inv_left(inv['comp'])
                                 self.ignored_comp_ranges.append([lo, inv['comp']])
                             elif inv['comp'] > 0.5:
-                                hi = nearest_inv_right(inv['comp']) if conservative_masking else 1
+                                hi = nearest_inv_right(inv['comp'])
                                 self.ignored_comp_ranges.append([inv['comp'], hi])
                         continue
 
@@ -1546,12 +1458,12 @@ class BinaryLiquid:
 
                 if inv['type'] == 'per':
                     if '(' in inv['phases'][0] and auto_ignored_ranges:
-                        if not (conservative_masking and dft_covers(inv['comp'])):
+                        if not dft_covers(inv['comp']):
                             if inv['phase_comps'][0] < inv['comp']:
-                                lo = nearest_inv_left(inv['comp']) if conservative_masking else 0
+                                lo = nearest_inv_left(inv['comp'])
                                 self.ignored_comp_ranges.append([lo, inv['comp']])
                             elif inv['phase_comps'][0] > inv['comp']:
-                                hi = nearest_inv_right(inv['comp']) if conservative_masking else 1
+                                hi = nearest_inv_right(inv['comp'])
                                 self.ignored_comp_ranges.append([inv['comp'], hi])
                         continue
 
@@ -1583,18 +1495,15 @@ class BinaryLiquid:
 
                     invalid_eut = False
                     if not lhs_phase or lhs_phase['comp'] > inv['comp']:
-                        if auto_ignored_ranges and not (conservative_masking and dft_covers(inv['phase_comps'][0])):
-                            # Conservative: clamp the outer edge to the nearest flanking invariant
-                            # (where the missing phase's liquidus field actually ends) instead of
-                            # the compound stoichiometry, which over-trims for peritectic compounds.
-                            lo = nearest_inv_left(inv['comp']) if conservative_masking else inv['phase_comps'][0]
+                        if auto_ignored_ranges and not dft_covers(inv['phase_comps'][0]):
+                            lo = nearest_inv_left(inv['comp'])
                             self.ignored_comp_ranges.append([lo, inv['comp']])
                         invalid_eut = True
                     elif '(' in inv['phases'][0] and inv['phase_comps'][0] > 0.05:
                         invalid_eut = True
                     if not rhs_phase or rhs_phase['comp'] < inv['comp']:
-                        if auto_ignored_ranges and not (conservative_masking and dft_covers(inv['phase_comps'][1])):
-                            hi = nearest_inv_right(inv['comp']) if conservative_masking else inv['phase_comps'][1]
+                        if auto_ignored_ranges and not dft_covers(inv['phase_comps'][1]):
+                            hi = nearest_inv_right(inv['comp'])
                             self.ignored_comp_ranges.append([inv['comp'], hi])
                         invalid_eut = True
                     elif '(' in inv['phases'][1] and inv['phase_comps'][1] < 0.95:
@@ -1623,7 +1532,7 @@ class BinaryLiquid:
         # Conservative masking: merge the auto-detected ignored ranges and, if the
         # un-modellable (masked) fraction of the digitized liquidus exceeds the cap, flag the
         # system as unreliable and skip it rather than fitting a data-starved liquidus.
-        if conservative_masking and auto_ignored_ranges and self.ignored_comp_ranges:
+        if auto_ignored_ranges and self.ignored_comp_ranges:
             self.ignored_comp_ranges = merge_comp_ranges(self.ignored_comp_ranges)
             liq_lo, liq_hi = self.digitized_liq[0][0], self.digitized_liq[-1][0]
             span = max(liq_hi - liq_lo, 1e-9)
@@ -1631,7 +1540,7 @@ class BinaryLiquid:
                          if min(hi, liq_hi) > max(lo, liq_lo))
             if masked / span > mask_fraction_cap:
                 if verbose:
-                    print(f"Conservative masking: {masked / span:.0%} of the liquidus would be "
+                    print(f"{masked / span:.0%} of the liquidus would be "
                           f"masked (> {mask_fraction_cap:.0%} cap); flagging system as unreliable "
                           f"(DFT too incomplete) and skipping.")
                 self.init_error = True
@@ -1675,7 +1584,7 @@ class BinaryLiquid:
         try:
             no_L0Sxs_eq = sp.Eq(sp.diff(self.eqs['l0'], t_sym).subs({t_sym: 0}), 0) # enforce S0xs @0K = 0 -> L0_b != 0 (comb)
             no_L1Sxs_eq = sp.Eq(sp.diff(self.eqs['l1'], t_sym).subs({t_sym: 0}), 0) # enforce S1xs @0K = 0 -> L1_b != 0 (comb)
-            self.update_params(kwargs.get('params_init', [])) # Restore parameter defaults
+            self.update_params([]) # Restore parameter defaults
 
             self.guess_symbols = [a_sym, c_sym]
             self.constraints = sp.solve([no_L0Sxs_eq, no_L1Sxs_eq], (b_sym, d_sym), rational=False, simplify=False)
@@ -1804,8 +1713,6 @@ def _run_single_optimization_worker(task_index, selected_ics, bl_template, run_k
     run_kwargs['use_lxb_penalty'] = run_kwargs_base.get('use_lxb_penalty', bl_template._param_format == 'comb-exp')
     run_kwargs['lxb_penalty_cfg'] = copy.deepcopy(run_kwargs_base.get('lxb_penalty_cfg'))
     run_kwargs['lupis_elliott_cfg'] = copy.deepcopy(run_kwargs_base.get('lupis_elliott_cfg'))
-    run_kwargs['use_fim_prior'] = run_kwargs_base.get('use_fim_prior', False)
-    run_kwargs['fim_prior_cfg'] = copy.deepcopy(run_kwargs_base.get('fim_prior_cfg'))
 
     if verbose:
         print(f"--- Nelder-Mead ICs Attempt #{task_index + 1} (initial f = {round(selected_ics['f'], 2)}) ---")
