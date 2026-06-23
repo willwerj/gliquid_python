@@ -1,6 +1,6 @@
 """
 Authors: Abrar Rauf, Joshua Willwerth
-Last Modified: June 16 2026
+Last Modified: June 23 2026
 Description: This script takes the phase energy data in the form of enthalpy (H), entropy (S) and composition (X)
 and performs transformations to composition-temperature (TX) phase diagrams with well-defined coexistence boundaries
 GitHub: https://github.com/AbrarRauf
@@ -211,7 +211,7 @@ class HSX:
         # Color Mapping
         color_array = px.colors.qualitative.Pastel
         inter_phases = [p for p in self.phases if p != 'L']
-        self.color_map = {phase: color for phase, color in zip(inter_phases, color_array)}
+        self.color_map = {phase: color_array[i % len(color_array)] for i, phase in enumerate(inter_phases)}
         self.color_map['L'] = 'cornflowerblue'
         self.df['Colors'] = self.df['Phase'].map(self.color_map)
 

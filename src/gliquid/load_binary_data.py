@@ -57,7 +57,7 @@ def reload_element_data(require: bool = True) -> None:
         _solids = []
         for _phase in _elem_data.get('phases', []):
             if _phase['phase_type'] == 'solid':
-                if _phase['transition_temperature_K'] >= 0:  # Exclude ground state #TODO: verify that this works in main code
+                if _phase['transition_temperature_K'] >= 0:  # Exclude ground state
                     _solids.append(_phase)
             elif _phase['phase_type'] == 'liquid':
                 _h = _phase.get('enthalpy_J_per_mol')
@@ -243,7 +243,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
         data, and digitized liquidus curve that is properly formatted for fitting purposes. Note that the MPDS json in 
         the specified cache directory must follow the alphabetized, hyphenated naming convention (e.g. 'A-B.json')
     """
-    components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
+    components, sys_name, _ = validate_and_format_binary_system(input) 
     component_data = {
         comp: {
             'H_liq': liquid_enthalpies.get(comp, 0),
@@ -584,7 +584,7 @@ def get_dft_convexhull(input, dft_type='GGA',
     Returns:
         A tuple of the phase diagram and a dictionary of stable entry atomic volumes.
     """
-    components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
+    components, sys_name, _ = validate_and_format_binary_system(input)
 
     supp_dft_types = ["GGA", "R2SCAN", "MIXED"]
     if dft_type not in supp_dft_types:

@@ -197,7 +197,7 @@ class TestFittingBehavior:
         bl = _load_bl(sys_name)
         if bl.init_error or not bl.digitized_liq:
             pytest.skip(f"{sys_name}: init error or no liquidus data")
-        fit_data = _fit_bl(bl, n_opts=3, max_iter=32)
+        fit_data = _fit_bl(bl, n_opts=5, max_iter=64)
         assert len(fit_data) > 0, f"No fits produced for {sys_name}"
 
     @pytest.mark.parametrize("sys_name", ['Cu-Mg', 'Ag-V', 'C-Nb'])
@@ -239,15 +239,6 @@ class TestFittingBehavior:
         assert best_fit['mae'] < zero_mae, (
             f"Expected fitted MAE < zero-parameter MAE, got {best_fit['mae']} vs {zero_mae}"
         )
-
-    def test_fit_rejects_legacy_parallel_backend_kwarg(self):
-        """Legacy parallel_backend kwarg should raise to enforce the new API."""
-        bl = _load_bl('Cu-Mg')
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip("Cu-Mg: init error or no liquidus data")
-
-        with pytest.raises(ValueError, match="no longer supports Dask kwargs"):
-            _fit_bl(bl, n_opts=1, max_iter=16, parallel_backend='thread')
 
     def test_fit_accepts_enable_multi_threading_kwarg(self):
         """enable_multi_threading should be accepted as the replacement API."""

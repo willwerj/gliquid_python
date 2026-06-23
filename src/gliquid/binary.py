@@ -2302,7 +2302,7 @@ class BLPlotter:
             tdev_range = [tdev_range[0] - eps, tdev_range[1] + eps]
 
         # Triangle color mapping (iteration-based)
-        sm1 = cm.ScalarMappable(cmap=cm.get_cmap('winter'), norm=LogNorm(vmin=1, vmax=total_iters_for_scale))
+        sm1 = cm.ScalarMappable(cmap='winter', norm=LogNorm(vmin=1, vmax=total_iters_for_scale))
         triangle_colors = sm1.to_rgba(np.arange(1, num_iters + 1, 1))
         max_tick_exp = int(math.floor(np.log2(total_iters_for_scale)))
         ticks = [2 ** exp for exp in range(max_tick_exp + 1)]
@@ -2319,7 +2319,7 @@ class BLPlotter:
         cbar1.set_label('Nelder-Mead Iteration', style='italic', labelpad=8, fontsize=12)
 
         # Marker color mapping (temperature deviation-based)
-        sm2 = cm.ScalarMappable(cmap=cm.get_cmap('autumn'), norm=plt.Normalize(tdev_range[0], tdev_range[1]))
+        sm2 = cm.ScalarMappable(cmap='autumn', norm=plt.Normalize(tdev_range[0], tdev_range[1]))
         cbar2 = fig.colorbar(sm2, ax=ax, aspect=14)
         cbar2.set_label(
             f"Objective Function Value",
