@@ -57,7 +57,7 @@ def reload_element_data(require: bool = True) -> None:
         _solids = []
         for _phase in _elem_data.get('phases', []):
             if _phase['phase_type'] == 'solid':
-                if _phase['transition_temperature_K'] >= 0:  # Exclude ground state #TODO: verify that this works in main code
+                if _phase['transition_temperature_K'] >= 0:  # Exclude ground state
                     _solids.append(_phase)
             elif _phase['phase_type'] == 'liquid':
                 _h = _phase.get('enthalpy_J_per_mol')
@@ -243,7 +243,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, dict, tuple[list[list] | N
         data, and digitized liquidus curve that is properly formatted for fitting purposes. Note that the MPDS json in 
         the specified cache directory must follow the alphabetized, hyphenated naming convention (e.g. 'A-B.json')
     """
-    components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
+    components, sys_name, _ = validate_and_format_binary_system(input) 
     component_data = {
         comp: {
             'H_liq': liquid_enthalpies.get(comp, 0),
@@ -509,8 +509,66 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_
     return computed_entry_dicts
 
 
+def _resolve_sys_dir(sys_name: str) -> str:
+    """Return the cache directory for ``sys_name`` per the configured directory structure."""
+    if config.dir_structure == 'nested':
+        sys_dir = os.path.join(config.data_dir, sys_name)
+        os.makedirs(sys_dir, exist_ok=True)
+        return sys_dir
+    if config.dir_structure == 'flat':
+        return config.data_dir
+    raise ValueError(f"Invalid dir_structure '{config.dir_structure}'. Must be 'nested' or 'flat'.")
+
+
+def _is_imputed_entry_dict(entry_dict: dict) -> bool:
+    """True if a cached ComputedEntry dict was synthesized by phase-energy imputation.
+
+    Imputed entries are tagged on write with an ``entry_id`` of the form ``"imputed:..."``
+    and ``data={'imputed': True}`` (see ``phase_imputation``); either marker is sufficient.
+    """
+    if str(entry_dict.get('entry_id', '')).startswith('imputed:'):
+        return True
+    data = entry_dict.get('data') or {}
+    return bool(isinstance(data, dict) and data.get('imputed'))
+
+
+def cache_imputed_entries(input, imputed_entry_dicts: list[dict], dft_type='GGA') -> str:
+    """Append imputed ComputedEntry dicts to the shared DFT entries cache.
+
+    Imputed entries live in the same ``<sys>_ENTRIES_MP_<type>.json`` as the real DFT
+    entries but are tagged, so ``get_dft_convexhull(..., include_imputed=False)`` (the
+    default) ignores them and the canonical DFT-only hull is unchanged. Re-running is
+    idempotent: an existing imputed entry with the same ``entry_id`` is replaced.
+
+    Args:
+        input (str or list): System specification (e.g., 'A-B' or ['A', 'B']).
+        imputed_entry_dicts (list[dict]): Tagged ``ComputedEntry.as_dict()`` payloads.
+        dft_type (str): Functional type, selecting the cache file.
+
+    Returns:
+        str: Path to the cache file written.
+    """
+    components, sys_name, _ = validate_and_format_binary_system(input)
+    sys_dir = _resolve_sys_dir(sys_name)
+    dft_entries_file = os.path.join(sys_dir, f"{sys_name}_ENTRIES_MP_{dft_type}.json")
+
+    if os.path.exists(dft_entries_file):
+        with open(dft_entries_file, "r") as f:
+            existing = json.load(f)
+    else:
+        existing = _get_dft_entries_from_components(components, dft_type)
+
+    new_ids = {e.get('entry_id') for e in imputed_entry_dicts}
+    existing = [e for e in existing if e.get('entry_id') not in new_ids]
+    existing.extend(imputed_entry_dicts)
+    with open(dft_entries_file, "w") as f:
+        json.dump(existing, f)
+    return dft_entries_file
+
+
 def get_dft_convexhull(input, dft_type='GGA',
-                       inc_structure_data=False, verbose=False) -> tuple[PhaseDiagram, dict]:
+                       inc_structure_data=False, verbose=False,
+                       include_imputed=False) -> tuple[PhaseDiagram, dict]:
     """
     Returns the DFT convex hull of a given system with specified functionals.
 
@@ -519,11 +577,14 @@ def get_dft_convexhull(input, dft_type='GGA',
         dft_type (str): Functional type, e.g., 'GGA', 'GGA/GGA+U', etc.
         inc_structure_data (bool): Whether to include structural data.
         verbose (bool): Whether to print detailed output.
+        include_imputed (bool): If False (default), imputed entries cached by
+            ``cache_imputed_entries`` are filtered out so the hull is DFT-only. Set True to
+            include them (phase-energy imputation workflow).
 
     Returns:
         A tuple of the phase diagram and a dictionary of stable entry atomic volumes.
     """
-    components, sys_name, _ = validate_and_format_binary_system(input) # TODO: determine if data should be flipped
+    components, sys_name, _ = validate_and_format_binary_system(input)
 
     supp_dft_types = ["GGA", "R2SCAN", "MIXED"]
     if dft_type not in supp_dft_types:
@@ -534,14 +595,8 @@ def get_dft_convexhull(input, dft_type='GGA',
     if verbose:
         print(f"Using DFT entries solved with {dft_type} functionals.")
 
-    if config.dir_structure == 'nested':
-        sys_dir = os.path.join(config.data_dir, sys_name)
-        os.makedirs(sys_dir, exist_ok=True)
-    elif config.dir_structure == 'flat':
-        sys_dir = config.data_dir
-    else:
-        raise ValueError(f"Invalid dir_structure '{config.dir_structure}'. Must be 'nested' or 'flat'.")
-    
+    sys_dir = _resolve_sys_dir(sys_name)
+
     dft_entries_file = os.path.join(sys_dir, f"{sys_name}_ENTRIES_MP_{dft_type}.json")
 
     # Yb-containing structures are only available with R2SCAN functional
@@ -563,6 +618,9 @@ def get_dft_convexhull(input, dft_type='GGA',
             print(f"Caching DFT entry data as {dft_entries_file}...")
         with open(dft_entries_file, "w") as f:
             json.dump(computed_entry_dicts, f)
+
+    if not include_imputed:
+        computed_entry_dicts = [e for e in computed_entry_dicts if not _is_imputed_entry_dict(e)]
 
     if any(len(Composition(c).elements) > 1 for c in components):
         dft_ch = CompoundPhaseDiagram(

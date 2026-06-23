@@ -190,12 +190,15 @@ def build_phases_from_chull(ch: PhaseDiagram, components: list[str], component_d
         composition = entry.composition.fractional_composition.as_dict().get(components[1], 0)
         if composition in [p['comp'] for p in phases]:  # Skip if a polymorph of the pure element is already added
             continue
+        entry_data = getattr(entry, 'data', None) or {}
+        is_imputed = bool(entry_data.get('imputed'))
         phases.insert(-1, {
-            'name': entry.name,
+            'name': entry_data.get('label', entry.name) if is_imputed else entry.name,
             'comp': composition,
             'enthalpy': 96485 * ch.get_form_energy_per_atom(entry),
-            'entropy': 0, 
+            'entropy': 0,
             'is_solution': False,
+            'imputed': is_imputed,
             'points': [],
         })
     phases.sort(key=lambda x: x['comp'])
@@ -272,7 +275,7 @@ class BinaryLiquid:
         self._param_format = kwargs.get('param_format', 'linear')
         self.init_triangle = kwargs.get('init_triangle', build_init_triangle(self._param_format, self.dft_ch))
         self.eqs = kwargs.get('eqs', build_thermodynamic_expressions(self._param_format))
-        self.invariants = None
+        self.invariants = kwargs.get('invariants', None)
         self.low_t_exp_phases = None
         self.guess_symbols = None
         self.constraints = None
@@ -325,7 +328,7 @@ class BinaryLiquid:
     
     @classmethod
     def from_cache(cls, input, dft_type='GGA', pd_ind=None, params=[], param_format='linear',
-                   comp_range_fit_lim=0.7, **kwargs) -> BinaryLiquid:
+                   comp_range_fit_lim=0.7, include_imputed=False, **kwargs) -> BinaryLiquid:
         """
         Initializes a BinaryLiquid object from cached data.
 
@@ -346,7 +349,7 @@ class BinaryLiquid:
         if order_changed: # Flip L1 parameters if the order of components has been changed and parameters were input
             params[2:] = [-1 * p for p in params[2:]] 
 
-        ch, _ = lbd.get_dft_convexhull(components, dft_type)
+        ch, _ = lbd.get_dft_convexhull(components, dft_type, include_imputed=include_imputed)
         mpds_json, component_data, (digitized_liq, is_partial) = lbd.load_mpds_data(components, pd_ind=pd_ind)
 
         phases = build_phases_from_chull(ch, components, component_data)
@@ -1171,7 +1174,7 @@ class BinaryLiquid:
         guess_dict = {symbol: guess for symbol, guess in zip(self.guess_symbols, guess)}          
         self.solve_params_from_constraints(guess_dict) 
         
-        if kwargs.get('check_h0_below_ch', True) and self.h0_below_ch():
+        if self.h0_below_ch():
             if verbose:
                 print(f'T=0K enthalpy constraint violated for params {self.get_params()}')
             return float('inf')
@@ -1184,7 +1187,7 @@ class BinaryLiquid:
             return float('inf')
         
         # Check if generated liquidus is continuous
-        if kwargs.get('check_liquidus_continuity', True) and not self.liquidus_is_continuous():
+        if not self.liquidus_is_continuous():
             if verbose:
                 print(f'Liquidus continuity constraint violated for guess {self.get_params()}')
             return float('inf')
@@ -1317,20 +1320,15 @@ class BinaryLiquid:
                 - max_iter (int): Maximum number of iterations for the Nelder-Mead algorithm. Default is 64.
                 - disable_inv_constrs (bool): If True, does not use invariant points as constraints.
                 - ignored_ranges (bool): If True, ignores the composition ranges specified in self.ignored_comp_ranges.
-                - allow_sparse_data (bool): If True, allows for small composition ranges in the generated points.
                 - check_full_ss (bool): If True, checks if the full solid solution is present in the system.
                 - check_phase_mismatch (bool): If True, checks phase mismatch between invariant points and self.phases.
-                - check_lupis_elliott (bool): If True, checks Lupis-Elliott sign constraints.
+                - check_lupis_elliott (bool): If True, applies Lupis-Elliott sign constraints as a penalty.
                 - lupis_elliott_cfg (dict): Optional Lupis-Elliott penalty config.
                     Supported keys:
                         * 'strength' (float): global default penalty strength. Default: 7.5E-3.
                         * 'l0' (dict): optional per-term override with {'strength'}.
                         * 'l1' (dict): optional per-term override with {'strength'}.
                           L1 is not penalized unless this key is explicitly provided.
-                - check_h0_below_ch (bool): If True, checks if the liquid enthalpy at T=0K is below the solid convex hull.
-                - check_liquidus_continuity (bool): If True, checks if the generated liquidus is continuous.
-                - params_init (list): Initial parameter guesses for the Nelder-Mead algorithm.
-                  parameter magnitude. Default is 1.0.
                 - use_lxb_penalty (bool): If True, applies the distribution-aware lxb penalty.
                     Defaults to True for 'comb-exp' models, False for 'combined'/'linear'.
                 - lxb_penalty_cfg (dict): Distribution prior configuration dictionary.
@@ -1366,6 +1364,19 @@ class BinaryLiquid:
                 elif self.digitized_liq[i][0] < phase['tbounds'][1][0] < self.digitized_liq[i + 1][0]:
                     return abs((self.digitized_liq[i][1] + self.digitized_liq[i + 1][1]) / 2 - phase['tbounds'][1][1]) < tol
 
+        def merge_comp_ranges(ranges):
+            """Merge overlapping/adjacent [lo, hi] composition ranges into a minimal set."""
+            if not ranges:
+                return []
+            ordered = sorted([sorted(r) for r in ranges])
+            merged = [list(ordered[0])]
+            for lo, hi in ordered[1:]:
+                if lo <= merged[-1][1] + 1e-9:
+                    merged[-1][1] = max(merged[-1][1], hi)
+                else:
+                    merged.append([lo, hi])
+            return merged
+
         # Find invariant points, can set self.init_error to True if system is identified to be isomorphous
         if self.invariants is None and self.low_t_exp_phases is None and not kwargs.get('disable_inv_constrs', False):
             self.invariants, self.low_t_exp_phases = self.find_invariant_points(
@@ -1387,6 +1398,32 @@ class BinaryLiquid:
         # Compare invariant points to self.phases to assess solving conditions
         eqs = []
         auto_ignored_ranges = not bool(self.ignored_comp_ranges)
+
+        # Conservative masking: bound auto-detected ignored ranges to the local missing-phase
+        # field (nearest flanking invariant) instead of spanning to a pure-element endpoint, and
+        # flag-and-skip if the un-modellable masked fraction of the liquidus exceeds a cap.
+        mask_fraction_cap = 0.60
+        dft_cover_tol = 0.10
+        _inv_comps = sorted(iv['comp'] for iv in (self.invariants or []) if 'comp' in iv)
+        _dft_comps = [p['comp'] for p in self.phases
+                      if not p.get('is_solution') and 0.0 < round(p['comp'], 6) < 1.0]
+
+        def nearest_inv_left(comp, floor=0):
+            cands = [x for x in _inv_comps if x < comp - 1e-6]
+            return max(cands) if cands else floor
+
+        def nearest_inv_right(comp, ceil=1):
+            cands = [x for x in _inv_comps if x > comp + 1e-6]
+            return min(cands) if cands else ceil
+
+        def dft_covers(comp):
+            """True if a stable interior DFT compound sits within dft_cover_tol of `comp`.
+            When DFT has a (possibly off-stoichiometry) compound near a missing experimental
+            phase, the convex hull still provides a valid solid reference for the liquidus
+            there, so masking that region is unwarranted (e.g. Au-Ca: DFT compounds are
+            shifted from the measured ones but coverage is adequate)."""
+            return any(abs(c - comp) <= dft_cover_tol for c in _dft_comps)
+
         if not kwargs.get('disable_inv_constrs', False):
             for inv in self.invariants:
                 if inv['type'] == 'mig':
@@ -1402,10 +1439,13 @@ class BinaryLiquid:
 
                 if inv['type'] == 'cmp':
                     if '(' in inv['phases'][0] and auto_ignored_ranges:
-                        if inv['comp'] < 0.5:
-                            self.ignored_comp_ranges.append([0, inv['comp']])
-                        elif inv['comp'] > 0.5:
-                            self.ignored_comp_ranges.append([inv['comp'], 1])
+                        if not dft_covers(inv['comp']):
+                            if inv['comp'] < 0.5:
+                                lo = nearest_inv_left(inv['comp'])
+                                self.ignored_comp_ranges.append([lo, inv['comp']])
+                            elif inv['comp'] > 0.5:
+                                hi = nearest_inv_right(inv['comp'])
+                                self.ignored_comp_ranges.append([inv['comp'], hi])
                         continue
 
                     nearest_phase, _ = find_nearest_phase(inv['comp'])
@@ -1418,10 +1458,13 @@ class BinaryLiquid:
 
                 if inv['type'] == 'per':
                     if '(' in inv['phases'][0] and auto_ignored_ranges:
-                        if inv['phase_comps'][0] < inv['comp']:
-                            self.ignored_comp_ranges.append([0, inv['comp']])
-                        elif inv['phase_comps'][0] > inv['comp']:
-                            self.ignored_comp_ranges.append([inv['comp'], 1])
+                        if not dft_covers(inv['comp']):
+                            if inv['phase_comps'][0] < inv['comp']:
+                                lo = nearest_inv_left(inv['comp'])
+                                self.ignored_comp_ranges.append([lo, inv['comp']])
+                            elif inv['phase_comps'][0] > inv['comp']:
+                                hi = nearest_inv_right(inv['comp'])
+                                self.ignored_comp_ranges.append([inv['comp'], hi])
                         continue
 
                     per_phase, _ = find_nearest_phase(inv['phase_comps'][0], tol=0.04)
@@ -1452,14 +1495,16 @@ class BinaryLiquid:
 
                     invalid_eut = False
                     if not lhs_phase or lhs_phase['comp'] > inv['comp']:
-                        if auto_ignored_ranges:
-                            self.ignored_comp_ranges.append([inv['phase_comps'][0], inv['comp']])
+                        if auto_ignored_ranges and not dft_covers(inv['phase_comps'][0]):
+                            lo = nearest_inv_left(inv['comp'])
+                            self.ignored_comp_ranges.append([lo, inv['comp']])
                         invalid_eut = True
                     elif '(' in inv['phases'][0] and inv['phase_comps'][0] > 0.05:
                         invalid_eut = True
                     if not rhs_phase or rhs_phase['comp'] < inv['comp']:
-                        if auto_ignored_ranges:
-                            self.ignored_comp_ranges.append([inv['comp'], inv['phase_comps'][1]])
+                        if auto_ignored_ranges and not dft_covers(inv['phase_comps'][1]):
+                            hi = nearest_inv_right(inv['comp'])
+                            self.ignored_comp_ranges.append([inv['comp'], hi])
                         invalid_eut = True
                     elif '(' in inv['phases'][1] and inv['phase_comps'][1] < 0.95:
                         invalid_eut = True
@@ -1483,6 +1528,23 @@ class BinaryLiquid:
                         eqs.append([f'eut - {round(x2, 2)} 0th', '0th order lhs', t2, eqn2])
                     else:
                         eqs.append([f'eut - {round(x2, 2)} 0th', '0th order rhs', t2, eqn3])
+
+        # Conservative masking: merge the auto-detected ignored ranges and, if the
+        # un-modellable (masked) fraction of the digitized liquidus exceeds the cap, flag the
+        # system as unreliable and skip it rather than fitting a data-starved liquidus.
+        if auto_ignored_ranges and self.ignored_comp_ranges:
+            self.ignored_comp_ranges = merge_comp_ranges(self.ignored_comp_ranges)
+            liq_lo, liq_hi = self.digitized_liq[0][0], self.digitized_liq[-1][0]
+            span = max(liq_hi - liq_lo, 1e-9)
+            masked = sum(min(hi, liq_hi) - max(lo, liq_lo) for lo, hi in self.ignored_comp_ranges
+                         if min(hi, liq_hi) > max(lo, liq_lo))
+            if masked / span > mask_fraction_cap:
+                if verbose:
+                    print(f"{masked / span:.0%} of the liquidus would be "
+                          f"masked (> {mask_fraction_cap:.0%} cap); flagging system as unreliable "
+                          f"(DFT too incomplete) and skipping.")
+                self.init_error = True
+                return []
 
         # Test invariant-derived equations for validity as constraints
         two_constr_methods = ['combined', 'linear']
@@ -1522,7 +1584,7 @@ class BinaryLiquid:
         try:
             no_L0Sxs_eq = sp.Eq(sp.diff(self.eqs['l0'], t_sym).subs({t_sym: 0}), 0) # enforce S0xs @0K = 0 -> L0_b != 0 (comb)
             no_L1Sxs_eq = sp.Eq(sp.diff(self.eqs['l1'], t_sym).subs({t_sym: 0}), 0) # enforce S1xs @0K = 0 -> L1_b != 0 (comb)
-            self.update_params(kwargs.get('params_init', [])) # Restore parameter defaults
+            self.update_params([]) # Restore parameter defaults
 
             self.guess_symbols = [a_sym, c_sym]
             self.constraints = sp.solve([no_L0Sxs_eq, no_L1Sxs_eq], (b_sym, d_sym), rational=False, simplify=False)
@@ -2085,11 +2147,15 @@ class BLPlotter:
                     'ground_state_name': ground_state_name,
                 })
 
+        # Imputed (phase-energy-imputation) phases are rendered with dashed lines.
+        imputed_phases = {p['name'] for p in self._bl.phases if p.get('imputed')}
+
         # Generate the plot using the HSX plot method
         fig = self._bl.hsx.plot_tx(
             digitized_liquidus=self._bl.digitized_liq if plot_type in ['fit+liq', 'pred+liq'] else None,
             pred=pred_pd,  # Determines generated liquidus color and temperature axis scaling
             polymorph_transitions=polymorph_transitions,
+            imputed_phases=imputed_phases,
         )
 
         return fig
@@ -2143,7 +2209,7 @@ class BLPlotter:
             tdev_range = [tdev_range[0] - eps, tdev_range[1] + eps]
 
         # Triangle color mapping (iteration-based)
-        sm1 = cm.ScalarMappable(cmap=cm.get_cmap('winter'), norm=LogNorm(vmin=1, vmax=total_iters_for_scale))
+        sm1 = cm.ScalarMappable(cmap='winter', norm=LogNorm(vmin=1, vmax=total_iters_for_scale))
         triangle_colors = sm1.to_rgba(np.arange(1, num_iters + 1, 1))
         max_tick_exp = int(math.floor(np.log2(total_iters_for_scale)))
         ticks = [2 ** exp for exp in range(max_tick_exp + 1)]
@@ -2160,7 +2226,7 @@ class BLPlotter:
         cbar1.set_label('Nelder-Mead Iteration', style='italic', labelpad=8, fontsize=12)
 
         # Marker color mapping (temperature deviation-based)
-        sm2 = cm.ScalarMappable(cmap=cm.get_cmap('autumn'), norm=plt.Normalize(tdev_range[0], tdev_range[1]))
+        sm2 = cm.ScalarMappable(cmap='autumn', norm=plt.Normalize(tdev_range[0], tdev_range[1]))
         cbar2 = fig.colorbar(sm2, ax=ax, aspect=14)
         cbar2.set_label(
             f"Objective Function Value",

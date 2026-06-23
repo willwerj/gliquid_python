@@ -1,6 +1,6 @@
 """
 Authors: Abrar Rauf, Joshua Willwerth
-Last Modified: June 16 2026
+Last Modified: June 23 2026
 Description: This script takes the phase energy data in the form of enthalpy (H), entropy (S) and composition (X)
 and performs transformations to composition-temperature (TX) phase diagrams with well-defined coexistence boundaries
 GitHub: https://github.com/AbrarRauf
@@ -211,7 +211,7 @@ class HSX:
         # Color Mapping
         color_array = px.colors.qualitative.Pastel
         inter_phases = [p for p in self.phases if p != 'L']
-        self.color_map = {phase: color for phase, color in zip(inter_phases, color_array)}
+        self.color_map = {phase: color_array[i % len(color_array)] for i, phase in enumerate(inter_phases)}
         self.color_map['L'] = 'cornflowerblue'
         self.df['Colors'] = self.df['Phase'].map(self.color_map)
 
@@ -953,16 +953,20 @@ class HSX:
         return {'xanchor': xanchor, 'yanchor': 'top', 'x': xp, 'y': 0.99, 'font': dict(size=15)}
 
     def plot_tx(self, pred: bool = False, digitized_liquidus: list = None,
-                polymorph_transitions: list[dict] | None = None) -> go.Figure:
+                polymorph_transitions: list[dict] | None = None,
+                imputed_phases: set | None = None) -> go.Figure:
         """Plots the binary phase diagram from computed phase boundaries and invariant points.
-        
+
         Args:
             pred (bool): If True, use prediction color scheme for the liquidus.
             digitized_liquidus (list): Digitized experimental liquidus data points.
             polymorph_transitions (list[dict]): List of elemental polymorph transitions, each dict with keys:
                 'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float),
                 'ground_state_name' (str) for the phase below the transition.
+            imputed_phases (set): Names of phases imputed by phase-energy imputation; their
+                solid boundary lines are drawn dashed and given a single legend entry.
         """
+        imputed_phases = imputed_phases or set()
         liq_inv = self.liquidus_invariants()
         inv_points, combined_list = liq_inv[:2]
         
@@ -1113,7 +1117,12 @@ class HSX:
             phase_df = pd.concat([phase_df, new_row_df], ignore_index=True)
             line = px.line(phase_df, x='x', y='t', color='label', color_discrete_map=self.phase_color_remap)
 
-            fig.add_trace(line.data[0])
+            trace = line.data[0]
+            if phase in imputed_phases:
+                existing_line = trace.line.to_plotly_json() if trace.line is not None else {}
+                existing_line['dash'] = 'dash'
+                trace.line = existing_line
+            fig.add_trace(trace)
 
             # Skip label here for polymorphs — they are labeled separately below
             if phase not in polymorph_names:
@@ -1509,6 +1518,9 @@ class HSX:
         if digitized_liquidus:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='#B82E2E', dash='dash'),
                                      name='Assessed Liquidus', showlegend=True))
+        if imputed_phases:
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color='gray', dash='dash'),
+                                     name='Imputed Phase', showlegend=True))
         if pred:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='#117733'),
                                      name='Predicted Liquidus', showlegend=True))

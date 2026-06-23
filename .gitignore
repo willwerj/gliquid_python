@@ -1,0 +1,28 @@
+notebooks/constraint_comparison.ipynb
+notebooks/_executed/
+
+# tox / compat testing
+.tox/
+compat-test-phase1.log
+
+# Python build / cache / packaging artifacts
+__pycache__/
+*.py[cod]
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# Reagent knowledge-graph database (local only)
+.reagent/
+
+# Generated data & local config (kept untracked on main)
+.claude/
+requirements/
+tox.ini
+CONTEXT.md
+data/*_ENTRIES_MP_GGA.json
+data/fit_results_cache_*
+figures/benchmark_*/
+
