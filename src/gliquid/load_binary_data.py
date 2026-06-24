@@ -479,7 +479,7 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_
         """Helper function to fetch entries from API."""
         if not api_key:
             raise ValueError("NEW_MP_API_KEY not found in environment variables!")
-        with client_class(api_key) as MPR:
+        with client_class(api_key, monty_decode=False, use_document_model=False) as MPR:
             criteria = {'thermo_types': [thermo_type]} if thermo_type else {}
             return MPR.get_entries_in_chemsys(components, additional_criteria=criteria)
 
@@ -498,7 +498,9 @@ def _get_dft_entries_from_components(components: list[str], dft_type: str, keep_
     elif dft_type == 'R2SCAN':
         entries = scan_entries
 
-    computed_entry_dicts = [e.as_dict() for e in entries]
+    # With monty_decode=False the client may return raw dicts instead of ComputedEntry
+    # objects; accept either so the cache format is unchanged.
+    computed_entry_dicts = [e.as_dict() if hasattr(e, "as_dict") else e for e in entries]
 
     # Filter out Mg149 phase and remove run data to reduce cache size
     computed_entry_dicts = [e for e in computed_entry_dicts if e['composition'].get('Mg', 0) != 149]

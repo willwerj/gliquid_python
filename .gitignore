@@ -26,3 +26,7 @@ data/*_ENTRIES_MP_GGA.json
 data/fit_results_cache_*
 figures/benchmark_*/
 
+# Local secrets (API keys) - never commit
+.env
+.env.*
+
