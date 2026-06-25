@@ -1134,7 +1134,7 @@ class BinaryLiquid:
         x_min = max(_x_step, digitized_liq_lims[0], ignored_comp_lims[0])
         x_max = min(1 - _x_step, digitized_liq_lims[1], ignored_comp_lims[1])
         if x_max - x_min < self.comp_range_fit_lim:
-            print(f"Error: Large composition range not considered (remaining range = {[float(x_min), float(x_max)]})")
+            print(f"Error: Large composition range not considered [{self.sys_name}] (remaining range = {[float(x_min), float(x_max)]})")
             return (float('inf'),) * 4
 
         x_mesh = np.linspace(x_min, x_max, num_points)
@@ -1148,7 +1148,7 @@ class BinaryLiquid:
             x_mesh = np.array([pt[0] for pt in digitized])
 
         if not kwargs.get('allow_sparse_data', False) and len(x_mesh) < 10:
-                print("Error: Not enough comparison points for accurate deviation metrics calculation.")
+                print(f"Error: Not enough comparison points for accurate deviation metrics calculation [{self.sys_name}].")
                 return (float('inf'),) * 4
         
         # Find closest temperature values for each evaluation point
@@ -1572,7 +1572,7 @@ class BinaryLiquid:
                             continue
                         nelder_mead_ics.append({'f': init_f, 'constrs': [eq, no1S_constr], 'init_tri': self.init_triangle})
                 except RuntimeError as e:
-                    print("Error while evaluting invariant constraints", e)
+                    print(f"Error while evaluating invariant constraints [{self.sys_name}]: ", e)
                     continue
 
         # Derive H-S partition constraints using Nelder-Mead for the enthalpy of mixing
@@ -1624,7 +1624,7 @@ class BinaryLiquid:
                                         'constrs': [['hs_partition', '0th order', mean_liq_temp, eq1], no1S_constr],
                                         'init_tri': init_tri})
         except RuntimeError as e:
-            print("Nelder-Mead process encountered a fatal error while deriving H-S partition constraints: ", e)
+            print(f"Nelder-Mead process encountered a fatal error while deriving H-S partition constraints [{self.sys_name}]: ", e)
 
         # Sort by ascending initial MAE such that the 'best' constraints are used first (if limited on number of attempts)
         nelder_mead_ics.sort(key=lambda x: x['f']) 
@@ -1664,7 +1664,7 @@ class BinaryLiquid:
                             if result is not None:
                                 fitting_data.append(result)
                         except Exception as e:
-                            print(f"Optimization attempt #{task_idx + 1} failed with exception: {e}")
+                            print(f"Optimization attempt #{task_idx + 1} failed with exception [{self.sys_name}]: {e}")
             else:
                 for task_idx, task_ics in optimization_tasks:
                     try:
@@ -1674,7 +1674,7 @@ class BinaryLiquid:
                         if result is not None:
                             fitting_data.append(result)
                     except Exception as e:
-                        print(f"Optimization attempt #{task_idx + 1} failed with exception: {e}")
+                        print(f"Optimization attempt #{task_idx + 1} failed with exception [{self.sys_name}]: {e}")
 
         if fitting_data:
             best_fit = min(fitting_data, key=lambda x: x['f'])
@@ -1727,7 +1727,7 @@ def _run_single_optimization_worker(task_index, selected_ics, bl_template, run_k
             verbose=verbose, tol=5,
             initial_guesses=selected_ics['init_tri'], **run_kwargs)
     except RuntimeError as e:
-        print("Nelder-Mead process encountered a fatal error: ", e)
+        print(f"Nelder-Mead process encountered a fatal error [{bl_copy.sys_name}]: ", e)
         return None
 
     l0 = float(bl_copy.eqs['l0'].subs({t_sym: mean_liq_temp, a_sym: bl_copy.get_L0_a(), b_sym: bl_copy.get_L0_b()}))

@@ -21,7 +21,7 @@ except ImportError:
     MPDSDataRetrieval = None
     MPDSDataTypes = None
     APIError = Exception
-from pymatgen.core import Composition, Element, Structure
+from pymatgen.core import Composition, DummySpecies, Element, Structure
 from pymatgen.entries.computed_entries import ComputedEntry
 from pymatgen.analysis.phase_diagram import PhaseDiagram, CompoundPhaseDiagram
 from pymatgen.entries.mixing_scheme import MaterialsProjectDFTMixingScheme
@@ -111,8 +111,19 @@ def validate_and_format_binary_system(input) -> tuple[list[str], str, bool]:
     else:
         raise ValueError("Input must be a hyphenated string or list of two components.")
 
-    # Validate components as valid composition objects
-    [Composition(c) for c in components]
+    # Validate each component as a formula of real periodic-table elements.
+    # Compound formulas (e.g. 'CuMg') are accepted; DummySpecies ('A', 'Xx', etc.) are rejected.
+    for c in components:
+        try:
+            comp = Composition(c)
+        except Exception:
+            raise ValueError(f"'{c}' is not a valid composition formula.")
+        dummy = [str(el) for el in comp.elements if isinstance(el, DummySpecies)]
+        if dummy:
+            raise ValueError(
+                f"Component '{c}' contains non-element species {dummy}. "
+                "Each component must be a real element or a compound of real elements."
+            )
     return components, '-'.join(components), components_sorted != components
 
 

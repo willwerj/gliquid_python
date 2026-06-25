@@ -22,7 +22,6 @@ build/
 requirements/
 tox.ini
 CONTEXT.md
-data/*_ENTRIES_MP_GGA.json
 data/fit_results_cache_*
 figures/benchmark_*/
 
