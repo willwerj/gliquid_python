@@ -29,3 +29,5 @@ figures/benchmark_*/
 .env
 .env.*
 
+scripts/build_branch_feature_cache.py
+tests/test_branch_feature_cache.py
