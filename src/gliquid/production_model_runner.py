@@ -48,6 +48,7 @@ class ProductionModelRunner:
             self.model_dir / "L0_a_model.joblib",
             self.model_dir / "L0_b_model.joblib",
             self.model_dir / "L1_a_model.joblib",
+            self.model_dir / "target_transformers.joblib",
             self.model_dir / "feature_names_symm.joblib",
             self.model_dir / "feature_names_anti.joblib",
             self.bundle_dir / "prediction_dataset_symmetric.xlsx",
@@ -204,18 +205,74 @@ class ProductionModelRunner:
         tree_model = self._get_tree_model(self.models[target])
         self.explainers[target] = shap.TreeExplainer(tree_model)
 
+    def _target_inverse_affine(self, target: str) -> Optional[Tuple[float, float]]:
+        """Return ``(intercept, slope)`` of the target's inverse transform.
+
+        A target transformer maps physical units ``y`` → model space ``z``.
+        SHAP values are computed in ``z`` space; to express them in physical
+        units we need the inverse map ``z → y``.  When that inverse is *affine*
+        (``y = intercept + slope · z`` with a constant slope) SHAP additivity is
+        preserved: every value scales by ``slope`` and the base value maps to
+        ``intercept + slope · base``.
+
+        Rather than reach into scaler-specific attributes (``mean_``,
+        ``center_``, ``min_``, …) we recover the two coefficients by probing
+        ``inverse_transform`` at ``z = 0, 1, 2``.  This transparently supports
+        any affine target transform (``StandardScaler``, ``RobustScaler``,
+        ``MinMaxScaler``, ``MaxAbsScaler``, …) regardless of its internal
+        parameter names or ``with_centering`` / ``with_scaling`` flags.
+
+        Returns
+        -------
+        (intercept, slope) : tuple of float
+            If *target* has an affine transformer.
+        None
+            If *target* has no transformer (SHAP already in physical units).
+
+        Raises
+        ------
+        NotImplementedError
+            If the transformer is **non-affine** (e.g. ``QuantileTransformer``,
+            ``PowerTransformer``).  SHAP values cannot be linearly rescaled
+            through a nonlinear inverse without breaking additivity, so we fail
+            loudly instead of silently mislabelling z-scores as physical units.
+        """
+        if target not in self.target_transformers:
+            return None
+
+        transformer = self.target_transformers[target]
+        probe = np.array([[0.0], [1.0], [2.0]])
+        y = np.asarray(transformer.inverse_transform(probe), dtype=float).ravel()
+
+        intercept = float(y[0])
+        slope = float(y[1] - y[0])
+
+        # Affine <=> equally spaced outputs: y(2) must equal intercept + 2·slope.
+        if not np.isclose(y[2], intercept + 2.0 * slope, rtol=1e-6, atol=1e-8):
+            raise NotImplementedError(
+                f"Target transformer for {target!r} "
+                f"({type(transformer).__name__}) is non-affine; SHAP values "
+                f"cannot be linearly inverse-scaled to physical units. Only "
+                f"affine target transforms (StandardScaler, RobustScaler, "
+                f"MinMaxScaler, …) are supported."
+            )
+        return intercept, slope
+
     def get_shap_explanation(
         self, target: str, features_df: pd.DataFrame
     ) -> shap.Explanation:
         """Compute a SHAP Explanation for *target* in original parameter space.
 
-        If a ``StandardScaler`` was used on the target during training the
-        SHAP values and base value live in z-score space.  This helper
-        inverse-transforms them so the explanation is directly interpretable
-        in physical units:
+        If an affine transform was applied to the target during training the
+        SHAP values and base value live in scaled (e.g. z-score) space.  This
+        method inverse-scales them via :meth:`_target_inverse_affine` so the
+        explanation is directly interpretable in physical units:
 
-        * ``values``      → multiplied by σ  (scaler.scale_)
-        * ``base_values``  → μ + σ · E[z]   (scaler.mean_ + scaler.scale_ · base)
+        * ``values``      → multiplied by ``slope``
+        * ``base_values``  → ``intercept + slope · base``
+
+        Non-affine target transforms (e.g. ``QuantileTransformer``) raise
+        ``NotImplementedError`` rather than return misleading values.
 
         Parameters
         ----------
@@ -247,13 +304,12 @@ class ProductionModelRunner:
 
         values = np.array(sv[0], dtype=float)
 
-        # Inverse-transform if a StandardScaler was applied to this target
-        if target in self.target_transformers:
-            scaler = self.target_transformers[target]
-            sigma = float(scaler.scale_[0])
-            mu = float(scaler.mean_[0])
-            values = values * sigma
-            base = mu + sigma * base
+        # Inverse-scale into physical units if an affine target transform exists
+        scaling = self._target_inverse_affine(target)
+        if scaling is not None:
+            intercept, slope = scaling
+            values = values * slope
+            base = intercept + slope * base
 
         return shap.Explanation(
             values=values,
@@ -502,12 +558,11 @@ class ProductionModelRunner:
             base = float(explainer.expected_value)
             values = np.array(sv, dtype=float)
 
-            if target in self.target_transformers:
-                scaler = self.target_transformers[target]
-                sigma = float(scaler.scale_[0])
-                mu = float(scaler.mean_[0])
-                values = values * sigma
-                base = mu + sigma * base
+            scaling = self._target_inverse_affine(target)
+            if scaling is not None:
+                intercept, slope = scaling
+                values = values * slope
+                base = intercept + slope * base
 
             explanation = shap.Explanation(
                 values=values,
