@@ -1,0 +1,128 @@
+name: Release
+
+# Tagging IS the release. hatch-vcs derives the distribution version from the tag, so there
+# is no version literal to bump in src/ -- see the release checklist in CONTRIBUTING.md.
+on:
+  push:
+    tags: ['v*']
+
+# No API token appears anywhere in this file, by design. Both publish jobs use PyPI Trusted
+# Publishing (OIDC): GitHub mints a short-lived identity token at job runtime from
+# `permissions: id-token: write`, and the index trusts this repository + workflow + GitHub
+# environment. The token-based alternative (a stored __token__ password) is deliberately not
+# used -- a leaked long-lived token is exactly what Trusted Publishing removes.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist and wheel
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # NOT optional, and the single most dangerous thing to get wrong in this file.
+          # hatch-vcs reads the version from git tags; the default shallow clone has none.
+          # The build would NOT fail -- it would silently emit the pyproject
+          # fallback-version (0.0.0) and publish it. That fallback is 0.0.0 rather than the
+          # release version precisely so this failure is visible in the artifact name.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build
+        run: python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
+
+      - name: Show built version
+        # Cheap tripwire for the fetch-depth failure above: a 0.0.0 filename here means the
+        # tag was not visible to hatch-vcs, and nothing downstream should be released.
+        run: ls -l dist/
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  testpypi:
+    name: Publish to TestPyPI
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write  # OIDC identity for Trusted Publishing; see the note at the top
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: Publish to PyPI
+    needs: [testpypi]
+    runs-on: ubuntu-latest
+
+    # LOAD-BEARING, NOT DECORATION. The `pypi` GitHub environment carries a
+    # required-reviewer protection rule, configured in the repository settings UI and not
+    # expressible in this file. That rule is the entire reason "TestPyPI first, then PyPI"
+    # is real rather than aspirational: the run pauses here until a maintainer has looked at
+    # what TestPyPI accepted and approves the deployment. Removing this line -- or deleting
+    # the environment because it "looks empty" -- turns an irreversible publish into an
+    # unattended one. PyPI cannot un-publish a version.
+    environment: pypi
+    permissions:
+      id-token: write  # OIDC identity for Trusted Publishing; see the note at the top
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Create GitHub release
+    needs: [pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to create the release
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # see the note on the build job
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create release and attach artifacts
+        env:
+          # The automatic, job-scoped GitHub Actions token -- not a stored credential.
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

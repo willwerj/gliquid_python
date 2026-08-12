@@ -1,0 +1,453 @@
+{
+ "pin1": {
+  "x": [
+   0.0,
+   0.25,
+   0.5,
+   0.75,
+   1.0
+  ],
+  "BCC_h": [
+   2000.0,
+   4375.0,
+   5500.0,
+   5375.0,
+   4000.0
+  ],
+  "BCC_s": [
+   0.5,
+   5.300254392360772,
+   6.512825659175385,
+   5.550254392360772,
+   1.0
+  ],
+  "BCC_g_1500K": [
+   1250.0,
+   -3575.3815885411577,
+   -4269.238488763078,
+   -2950.3815885411586,
+   2500.0
+  ],
+  "HCP_h": [
+   0.0,
+   -687.5,
+   -750.0,
+   -187.5,
+   1000.0
+  ],
+  "HCP_s": [
+   0.0,
+   4.737754392360772,
+   5.887825659175385,
+   4.862754392360772,
+   0.25
+  ]
+ },
+ "pin2": {
+  "n_x_vals": 101,
+  "phase_order": [
+   "BCC",
+   "HCP",
+   "L"
+  ],
+  "phase_names_tail": [
+   "BCC",
+   "BCC",
+   "BCC",
+   "HCP",
+   "HCP",
+   "HCP"
+  ],
+  "total_rows": 303,
+  "bcc_first_h": 2000.0,
+  "bcc_mid_h": 5500.0,
+  "hcp_last_s": 0.25,
+  "x_tail_equals_grid": true
+ },
+ "pin3": {
+  "omegas-legacy": {
+   "models": {
+    "BCC": {
+     "refs": {
+      "Hf": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -9.955582425,
+       "material_id": "legacy",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": -9.77702008,
+       "delta_h_jmol": 17228.587857324957,
+       "delta_s_jmol_k": 8.545926516530237
+      },
+      "Zr": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -8.5475523,
+       "material_id": "legacy",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": -8.46672894,
+       "delta_h_jmol": 7798.241889600012,
+       "delta_s_jmol_k": 6.864649550704236
+      }
+     },
+     "ref_mode": "omegas-legacy",
+     "omega_jmol": -14721.750769199614,
+     "deltaH_a_jmol": 17228.587857324957,
+     "deltaH_b_jmol": 7798.241889600012,
+     "deltaS_a_jmol_k": 8.545926516530237,
+     "deltaS_b_jmol_k": 6.864649550704236
+    },
+    "FCC": {
+     "refs": {
+      "Hf": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -9.955582425,
+       "material_id": "legacy",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -9.88467491,
+       "delta_h_jmol": 6841.511584775003,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -8.5475523,
+       "material_id": "legacy",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -8.50764845,
+       "delta_h_jmol": 3850.1229672499962,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "omegas-legacy",
+     "omega_jmol": -104.07921374380798,
+     "deltaH_a_jmol": 6841.511584775003,
+     "deltaH_b_jmol": 3850.1229672499962,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    },
+    "HCP": {
+     "refs": {
+      "Hf": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -9.955582425,
+       "material_id": "legacy",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": -9.955582425,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "omegas-legacy",
+       "ground_material_id": "legacy",
+       "ground_spacegroup": -1,
+       "ground_symbol": "legacy",
+       "ground_energy_ev_per_atom": -8.5475523,
+       "material_id": "legacy",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": -8.5475523,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "omegas-legacy",
+     "omega_jmol": 311.27146456200086,
+     "deltaH_a_jmol": 0.0,
+     "deltaH_b_jmol": 0.0,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    }
+   },
+   "reconciled": {
+    "Hf": {
+     "H_liq": 44428.58785732496,
+     "S_liq": 19.399877035285225
+    },
+    "Zr": {
+     "H_liq": 28798.241889600013,
+     "S_liq": 16.737710199505365
+    }
+   }
+  },
+  "element-db": {
+   "models": {
+    "BCC": {
+     "refs": {
+      "Hf": {
+       "source": "element-db",
+       "ground_material_id": "mp-103",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "mp-100",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": 0.061107944240037314,
+       "delta_h_jmol": 5896,
+       "delta_s_jmol_k": 2.9246
+      },
+      "Zr": {
+       "source": "element-db",
+       "ground_material_id": "mp-131",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "mp-41",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": 0.043074052961600245,
+       "delta_h_jmol": 4156,
+       "delta_s_jmol_k": 3.6585
+      }
+     },
+     "ref_mode": "element-db",
+     "omega_jmol": -14721.750769199614,
+     "deltaH_a_jmol": 5896.0,
+     "deltaH_b_jmol": 4156.0,
+     "deltaS_a_jmol_k": 2.9246,
+     "deltaS_b_jmol_k": 3.6585
+    },
+    "HCP": {
+     "refs": {
+      "Hf": {
+       "source": "element-db",
+       "ground_material_id": "mp-103",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "mp-103",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": 0.0,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "element-db",
+       "ground_material_id": "mp-131",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "mp-131",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": 0.0,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "element-db",
+     "omega_jmol": 311.27146456200086,
+     "deltaH_a_jmol": 0.0,
+     "deltaH_b_jmol": 0.0,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    },
+    "FCC": {
+     "refs": {
+      "Hf": {
+       "source": "from_unary_db+omegas_fallback (anchored on HCP)",
+       "ground_material_id": "mp-103",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "omegas_fallback",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -9.88467491,
+       "delta_h_jmol": 6841.51158477494,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "from_unary_db+omegas_fallback (anchored on HCP)",
+       "ground_material_id": "mp-131",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": 0.0,
+       "material_id": "omegas_fallback",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -8.50764845,
+       "delta_h_jmol": 3850.1229672499467,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "element-db",
+     "omega_jmol": -104.07921374380798,
+     "deltaH_a_jmol": 6841.51158477494,
+     "deltaH_b_jmol": 3850.1229672499467,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    }
+   },
+   "reconciled": {
+    "Hf": {
+     "H_liq": 33096.0,
+     "S_liq": 13.7786
+    },
+    "Zr": {
+     "H_liq": 25156.0,
+     "S_liq": 13.5315
+    }
+   }
+  },
+  "binary-cache": {
+   "models": {
+    "BCC": {
+     "refs": {
+      "Hf": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-103-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -9.95718903,
+       "material_id": "mp-100-GGA",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": -9.78103403,
+       "delta_h_jmol": 16996.315174999963,
+       "delta_s_jmol_k": 8.430711892361092
+      },
+      "Zr": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-131-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -8.54770063,
+       "material_id": "mp-41-GGA",
+       "spacegroup": 229,
+       "symbol": "Im-3m",
+       "energy_ev_per_atom": -8.47313825,
+       "delta_h_jmol": 7194.151234299971,
+       "delta_s_jmol_k": 6.332879607658425
+      }
+     },
+     "ref_mode": "binary-cache",
+     "omega_jmol": -14721.750769199614,
+     "deltaH_a_jmol": 16996.315174999963,
+     "deltaH_b_jmol": 7194.151234299971,
+     "deltaS_a_jmol_k": 8.430711892361092,
+     "deltaS_b_jmol_k": 6.332879607658425
+    },
+    "FCC": {
+     "refs": {
+      "Hf": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-103-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -9.95718903,
+       "material_id": "mp-8640-GGA",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -9.88478064,
+       "delta_h_jmol": 6986.323509149966,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-131-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -8.54770063,
+       "material_id": "mp-8635-GGA",
+       "spacegroup": 225,
+       "symbol": "Fm-3m",
+       "energy_ev_per_atom": -8.50843689,
+       "delta_h_jmol": 3788.3619538999133,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "binary-cache",
+     "omega_jmol": -104.07921374380798,
+     "deltaH_a_jmol": 6986.323509149966,
+     "deltaH_b_jmol": 3788.3619538999133,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    },
+    "HCP": {
+     "refs": {
+      "Hf": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-103-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -9.95718903,
+       "material_id": "mp-103-GGA",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": -9.95718903,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      },
+      "Zr": {
+       "source": "binary-cache",
+       "ground_material_id": "mp-131-GGA",
+       "ground_spacegroup": 194,
+       "ground_symbol": "P6_3/mmc",
+       "ground_energy_ev_per_atom": -8.54770063,
+       "material_id": "mp-131-GGA",
+       "spacegroup": 194,
+       "symbol": "P6_3/mmc",
+       "energy_ev_per_atom": -8.54770063,
+       "delta_h_jmol": 0.0,
+       "delta_s_jmol_k": 0.0
+      }
+     },
+     "ref_mode": "binary-cache",
+     "omega_jmol": 311.27146456200086,
+     "deltaH_a_jmol": 0.0,
+     "deltaH_b_jmol": 0.0,
+     "deltaS_a_jmol_k": 0.0,
+     "deltaS_b_jmol_k": 0.0
+    }
+   },
+   "reconciled": {
+    "Hf": {
+     "H_liq": 44196.31517499997,
+     "S_liq": 19.28466241111608
+    },
+    "Zr": {
+     "H_liq": 28194.15123429997,
+     "S_liq": 16.205940256459556
+    }
+   }
+  }
+ },
+ "pin4": {
+  "steps": [
+   [
+    3000.0,
+    1200.0
+   ]
+  ],
+  "h_liq": 23000.0,
+  "s_liq": 12.5,
+  "expected_h": 23000.0,
+  "expected_s": 12.5,
+  "ordered_steps_hf": [
+   [
+    5000.0,
+    2016
+   ]
+  ]
+ }
+}
