@@ -1,0 +1,208 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gliquid"
+# Not a static string: the version is derived from the git tag by hatch-vcs. See
+# [tool.hatch.version] below -- tagging v<X.Y.Z> IS the release.
+dynamic = ["version"]
+dependencies = [
+    # Floor measured, not guessed: plotly 5.18's express layer calls
+    # grouped.get_group(s[0]), unwrapping a 1-tuple, which pandas 3.x rejects with
+    # KeyError. The compat matrix hit it in every -min env on py311+ (where pandas 3 is
+    # installable) and not on py310-min (pandas 2.3.3). 5.24.1 is measured clean against
+    # pandas 3.0.5. The <6 ceiling is separate and unrelated: plotly 6 moved the
+    # fillpattern semantics the solid-solution envelope depends on.
+    "plotly>=5.24,<6.0.0",
+    # Ceiling restored on evidence. emmet-core 0.87.1 resolves
+    # emmet.core.io.pymatgen.__getattr__ onto pymatgen.core.entries, a module current
+    # pymatgen no longer has, so api.get_dft_convexhull raises ModuleNotFoundError on any
+    # live MP fetch. Measured broken at 0.87.1 (py311/312/313) and clean at 0.85.1
+    # (py310). This bound was removed in an earlier release-prep pass; the matrix shows
+    # that removal was wrong.
+    "emmet-core>=0.84,<0.86",
+    "mp-api>=0.45.1",
+    "pymatgen>=2024.1.1",
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "matplotlib>=3.10.0",
+    "sympy>=1.13",
+    "scikit-learn>=1.4,<2",
+    "shap>=0.48.0",
+    "joblib>=1.3.0",
+    "xgboost>=2.0,<4",
+    "tqdm>=4.65",
+]
+requires-python = ">=3.10,<3.14"
+authors = [
+    {name = "Joshua Willwerth", email = "willwerj@umich.edu"},
+    {name = "Abrar Rauf", email = "arauf@umich.edu"},
+    {name = "Shibo Tan", email = "shibot@umich.edu"},
+    {name = "Wenhao Sun", email = "whsun@umich.edu"}
+]
+maintainers = [
+    {name = "Joshua Willwerth", email = "willwerj@umich.edu"}
+]
+description = "A package for fitting DFT-referenced liquid free energies from digitized equilibrium phase boundaries"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "Density Functional Theory (DFT)",
+    "Thermodynamic Modeling",
+    "Equilibrium",
+    "Liquidus",
+    "Solution Phase",
+    "Intermetallic Phase",
+    "Materials Project (MP)",
+    "Materials Platform for Data Science (MPDS)"
+]
+# Deliberately no OSI-Approved-License classifier: the license is declared above in the PEP
+# 639 SPDX form (license = "MIT"), and current packaging tooling rejects carrying both. Adding
+# one back is the single easiest way to break the build.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+mpds = [
+    "mpds-client"
+]
+editor = [
+    # Needed only to CONSTRUCT a ConvexHullEditor. hull_editor.py guards both imports, so
+    # on a bare install the module still imports and `from gliquid import ConvexHullEditor`
+    # still resolves; instantiating raises an ImportError naming this extra.
+    "ipywidgets>=8.0",
+    "ipython>=8.0",
+]
+models = [
+    # The pickled estimators in the external data corpus unpickle against the versions
+    # that wrote them. Pinning EXACTLY here rather than in [project.dependencies] keeps
+    # the constraint off every consumer of the library.
+    "scikit-learn==1.7.1",
+    "xgboost==3.1.3",
+    "openpyxl>=3.1.5",
+]
+test = [
+    "pytest>=7.0",
+    "ruff>=0.6",
+]
+notebook = [
+    "jupyter>=1.1.1",
+    "ipykernel>=6.0",
+]
+
+[project.urls]
+Homepage = "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
+TernaryInterpolation = "https://viz.whsunresearch.group/gliquid/ternary-interpolation/"
+Repository = "https://github.com/willwerj/gliquid_python"
+# The README is the documentation until a real docs site exists; pointing anywhere else
+# would advertise a page that 404s.
+Documentation = "https://github.com/willwerj/gliquid_python#readme"
+Issues = "https://github.com/willwerj/gliquid_python/issues"
+Changelog = "https://github.com/willwerj/gliquid_python/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+source = "vcs"
+# NOT optional decoration, and it covers two different failures. With no SCM data at all --
+# a source extraction, a vendored copy, anything built outside a clone -- setuptools-scm
+# errors the build out; this makes it emit 0.0.0 instead. With a git history that has no
+# reachable tag (the archived pre-release branches, a shallow CI checkout fetched without
+# tags) it is the base the dev version counts up from: 0.0.1.dev<N>+g<sha>.
+# The value is 0.0.0 ON PURPOSE, not the release version. Setting it to the version being
+# released would make a silent fallback INDISTINGUISHABLE from a correct build: `python -m
+# build` builds the wheel from the extracted sdist, which has no .git, so a broken SCM
+# hand-off would emit exactly the right-looking number and ship. With 0.0.0 the same
+# failure surfaces as 0.0.x -- an obviously wrong artifact that cannot reach an index by
+# accident. Build verification should still run in a `git clone`, never an extracted tree.
+fallback-version = "0.0.0"
+
+[tool.hatch.build.hooks.vcs]
+# Written into the source tree at build time and shipped in the wheel; gitignored, never
+# committed. gliquid/__init__.py reads it only when no installed distribution provides
+# metadata.
+version-file = "src/gliquid/_version.py"
+
+[tool.hatch.build.targets.wheel]
+# Maps the src layout to a top-level `gliquid` in the wheel. Every non-VCS-ignored file
+# under src/gliquid/ ships, so the reference tables in src/gliquid/data/ need no
+# package-data declaration of their own.
+packages = ["src/gliquid"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/tests",
+    "/tests_internal",
+    # NOT optional. Hatchling's sdist default is "everything not VCS-ignored", which is
+    # BROADER than the setuptools default this replaced: setuptools omitted data/ by
+    # accident, hatchling would ship all ~10 MB of it. That directory is the external
+    # corpus (per-system DFT caches, MPDS diagrams, the model bundle) reached through
+    # config.set_data_dir()/GLIQUID_DATA_DIR -- a distribution does not carry it.
+    "/data",
+]
+
+[tool.ruff]
+# 100, not the 88 default: this codebase already writes to ~95-100 characters, so 88 would
+# roughly double the reformat diff and split calls that read fine today.
+line-length = 100
+# Must track requires-python's floor -- ruff may not suggest syntax 3.10 cannot run.
+target-version = "py310"
+extend-exclude = ["notebooks", ".tox"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length is the formatter's job, not the linter's
+
+    # B905, zip() without an explicit strict=. Off because the correct value is a per-site
+    # judgement, not a global one, and there are 55 sites across the hull walk and the plotting
+    # code. strict=True is only right where the two sequences are GUARANTEED equal-length;
+    # where they legitimately differ it converts working code into a ValueError at runtime.
+    # strict=False silences the rule while asserting nothing, so 55 mechanical `strict=False`
+    # insertions would buy zero safety and would then look, to the next reader, like a decision
+    # someone had already made. This is a deferred AUDIT, not a dismissal: the useful pass is to
+    # walk each zip, decide whether equal length is a real invariant of that call, and write
+    # strict=True where it is. Re-enable this rule when someone can spend that pass.
+    "B905",
+
+    # E402, module-level import not at the top of the file. All 13 sites are positional on
+    # purpose and hoisting any of them changes behaviour:
+    #   * src/gliquid/binary.py (2) -- the back-compat re-export block for the plot stack that
+    #     was split out into gliquid.plotting. It sits mid-file, directly under the comment that
+    #     explains why it exists and directly above BLPlotter, the consumer of those names.
+    #   * tests/ (11) -- imports that must follow either a sys.path.insert(... "src") bootstrap
+    #     or a pytest.importorskip() gate. Hoisted, they import the wrong tree or they hard-fail
+    #     a suite that is supposed to skip on a missing optional dependency.
+    # ~18 further sites already carry a per-line `# noqa: E402`; those markers are kept as local
+    # documentation of the same intent even though this entry now covers them.
+    "E402",
+]
+
+[tool.pytest.ini_options]
+# A bare `pytest` means the PUBLIC suite. The maintainer suite is explicit:
+#   pytest                        -> tests/
+#   pytest tests_internal         -> the pins, figure goldens and gated families
+#   pytest tests tests_internal   -> everything; what CI runs
+#   pytest -m "not slow"          -> the public suite without the Nelder-Mead fits
+# tests/fixtures/, tests/pin_utils.py and tests/conftest.py stay in tests/ even though
+# tests_internal/ reads them: every file there anchors back out through parents[1]/'tests'.
+testpaths = ["tests"]
+markers = [
+    "pins: frozen-value characterization pin. Re-freeze deliberately with the freezer script named in the file's docstring -- never edit a pin to make it pass.",
+    "needs_cache: needs the workspace matrix_data/ store. Skips (does not fail) without it.",
+    "needs_network: needs NEW_MP_API_KEY and a live Materials Project connection.",
+    "slow: a multi-second Nelder-Mead fit or hull build. Deselect with -m 'not slow'.",
+]
+# Fail on an undeclared marker rather than silently treating the typo as no marker.
+addopts = "--strict-markers"

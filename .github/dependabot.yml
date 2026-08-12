@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Keep Python dependencies up to date
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "willwerj"
+    ignore:
+      # These are tightly pinned for compatibility — update manually
+      - dependency-name: "scikit-learn"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "xgboost"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "emmet-core"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Keep GitHub Actions up to date
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    reviewers:
+      - "willwerj"

@@ -1,0 +1,884 @@
+{
+ "Ag-V": {
+  "system": "Ag-V",
+  "cache_kwargs": {},
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.000793239,
+    "temp": 1236.882,
+    "phases": [
+     "Ag",
+     "(V)"
+    ],
+    "phase_comps": [
+     0,
+     0.999238
+    ]
+   },
+   {
+    "type": "mig",
+    "comp": 0.502281,
+    "cbounds": [
+     [
+      0.0774836,
+      2126.08
+     ],
+     [
+      0.9218040000000001,
+      2126.08
+     ]
+    ],
+    "tbounds": [
+     [
+      0.502281,
+      2126.08
+     ],
+     [
+      0.502281,
+      3141.62
+     ]
+    ],
+    "phases": [
+     "(V)"
+    ],
+    "phase_comps": [
+     0.999238
+    ]
+   }
+  ],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(V)",
+    "comp": 0.999238,
+    "cbounds": [
+     [
+      0.967451,
+      2123.53
+     ],
+     [
+      0.999238,
+      2180.08
+     ]
+    ],
+    "tbounds": [
+     [
+      0.999238,
+      729.649
+     ],
+     [
+      0.999238,
+      2180.08
+     ]
+    ]
+   }
+  ]
+ },
+ "Al-Cu": {
+  "system": "Al-Cu",
+  "cache_kwargs": {},
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.171966,
+    "temp": 821.1519999999999,
+    "phases": [
+     "Al",
+     "CuAl2"
+    ],
+    "phase_comps": [
+     0,
+     0.33225299999999997
+    ]
+   },
+   {
+    "type": "per",
+    "comp": 0.316571,
+    "temp": 863.064,
+    "phases": [
+     "CuAl2"
+    ],
+    "phase_comps": [
+     0.33225299999999997
+    ]
+   },
+   {
+    "type": "per",
+    "comp": 0.36573300000000003,
+    "temp": 895.502,
+    "phases": [
+     "CuAl rt"
+    ],
+    "phase_comps": [
+     0.52135
+    ]
+   },
+   {
+    "type": "per",
+    "comp": 0.41161000000000003,
+    "temp": 958.1469999999999,
+    "phases": [
+     "Cu33Al17 rt"
+    ],
+    "phase_comps": [
+     0.620473
+    ]
+   },
+   {
+    "type": "per",
+    "comp": 0.537181,
+    "temp": 1144.463,
+    "phases": [
+     "Cu9Al4 rt"
+    ],
+    "phase_comps": [
+     0.642204
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.8312569999999999,
+    "temp": 1305.27,
+    "phases": [
+     null,
+     "(Cu)"
+    ],
+    "phase_comps": [
+     null,
+     0.999619
+    ]
+   }
+  ],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(Cu)",
+    "comp": 0.999619,
+    "cbounds": [
+     [
+      0.8046129999999999,
+      840.542
+     ],
+     [
+      0.999619,
+      1357.0900000000001
+     ]
+    ],
+    "tbounds": [
+     [
+      0.816749,
+      573.555
+     ],
+     [
+      0.999619,
+      1357.0900000000001
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "Cu9Al4 rt",
+    "comp": 0.642204,
+    "cbounds": [
+     [
+      0.630385,
+      958.1469999999999
+     ],
+     [
+      0.69329,
+      1051.812
+     ]
+    ],
+    "tbounds": [
+     [
+      0.6517350000000001,
+      573.15
+     ],
+     [
+      0.642204,
+      1144.463
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "Cu33Al17 rt",
+    "comp": 0.620473,
+    "cbounds": [
+     [
+      0.595692,
+      832.653
+     ],
+     [
+      0.622379,
+      573.15
+     ]
+    ],
+    "tbounds": [
+     [
+      0.612657,
+      573.15
+     ],
+     [
+      0.620473,
+      958.1469999999999
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "CuAl rt",
+    "comp": 0.52135,
+    "cbounds": [
+     [
+      0.5,
+      573.15
+     ],
+     [
+      0.525734,
+      862.456
+     ]
+    ],
+    "tbounds": [
+     [
+      0.5,
+      573.15
+     ],
+     [
+      0.52135,
+      895.502
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "CuAl2",
+    "comp": 0.33225299999999997,
+    "cbounds": [
+     [
+      0.321388,
+      820.692
+     ],
+     [
+      0.332825,
+      834.275
+     ]
+    ],
+    "tbounds": [
+     [
+      0.327297,
+      573.15
+     ],
+     [
+      0.33225299999999997,
+      863.064
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "Cu11Al9 rt",
+    "comp": 0.562905,
+    "cbounds": [
+     [
+      0.5539459999999999,
+      831.437
+     ],
+     [
+      0.571292,
+      832.653
+     ]
+    ],
+    "tbounds": [
+     [
+      0.558521,
+      573.15
+     ],
+     [
+      0.562905,
+      862.456
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "Cu4Al rt",
+    "comp": 0.775257,
+    "cbounds": [
+     [
+      0.7682040000000001,
+      573.15
+     ],
+     [
+      0.783073,
+      573.15
+     ]
+    ],
+    "tbounds": [
+     [
+      0.7682040000000001,
+      573.15
+     ],
+     [
+      0.775257,
+      634.174
+     ]
+    ]
+   }
+  ]
+ },
+ "C-Nb": {
+  "system": "C-Nb",
+  "cache_kwargs": {},
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.40155,
+    "temp": 3576.23,
+    "phases": [
+     "C",
+     "NbC0.95"
+    ],
+    "phase_comps": [
+     0,
+     0.5499430000000001
+    ]
+   },
+   {
+    "type": "cmp",
+    "comp": 0.5499430000000001,
+    "temp": 3887.4900000000002,
+    "phases": [
+     "NbC0.95"
+    ],
+    "phase_comps": [
+     0.5499430000000001
+    ]
+   },
+   {
+    "type": "per",
+    "comp": 0.859007,
+    "temp": 2808.9300000000003,
+    "phases": [
+     "Nb2C ht1"
+    ],
+    "phase_comps": [
+     0.698056
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.898468,
+    "temp": 2611.73,
+    "phases": [
+     "Nb2C ht1",
+     "(Nb)"
+    ],
+    "phase_comps": [
+     0.698056,
+     0.999619
+    ]
+   }
+  ],
+  "low_t_exp_phases": [
+   {
+    "type": "cmp",
+    "name": "NbC0.95",
+    "comp": 0.5499430000000001,
+    "cbounds": [
+     [
+      0.501144,
+      999.506
+     ],
+     [
+      0.7075870000000001,
+      2797.78
+     ]
+    ],
+    "tbounds": [
+     [
+      0.501144,
+      999.506
+     ],
+     [
+      0.5499430000000001,
+      3887.4900000000002
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "Nb2C ht1",
+    "comp": 0.698056,
+    "cbounds": [
+     [
+      0.6673779999999999,
+      1552.3000000000002
+     ],
+     [
+      0.713877,
+      2609.2400000000002
+     ]
+    ],
+    "tbounds": [
+     [
+      0.6681279999999999,
+      999.506
+     ],
+     [
+      0.698056,
+      2808.9300000000003
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "(Nb)",
+    "comp": 0.999619,
+    "cbounds": [
+     [
+      0.949953,
+      2608.89
+     ],
+     [
+      0.999619,
+      2742.63
+     ]
+    ],
+    "tbounds": [
+     [
+      0.999619,
+      1419.02
+     ],
+     [
+      0.999619,
+      2742.63
+     ]
+    ]
+   }
+  ]
+ },
+ "Cr-Eu": {
+  "system": "Cr-Eu",
+  "cache_kwargs": {},
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.974838,
+    "temp": 1064.027,
+    "phases": [
+     "Cr",
+     "Eu"
+    ],
+    "phase_comps": [
+     0,
+     1
+    ]
+   }
+  ],
+  "low_t_exp_phases": []
+ },
+ "Cu-Mg": {
+  "system": "Cu-Mg",
+  "cache_kwargs": {},
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.22010100000000002,
+    "temp": 994.1469999999999,
+    "phases": [
+     "(Cu)",
+     "MgCu2"
+    ],
+    "phase_comps": [
+     0.000381243,
+     0.332825
+    ]
+   },
+   {
+    "type": "cmp",
+    "comp": 0.332825,
+    "temp": 1086.657,
+    "phases": [
+     "MgCu2"
+    ],
+    "phase_comps": [
+     0.332825
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.574707,
+    "temp": 822.939,
+    "phases": [
+     "MgCu2",
+     "Mg2Cu"
+    ],
+    "phase_comps": [
+     0.332825,
+     0.6666030000000001
+    ]
+   },
+   {
+    "type": "cmp",
+    "comp": 0.6666030000000001,
+    "temp": 838.482,
+    "phases": [
+     "Mg2Cu"
+    ],
+    "phase_comps": [
+     0.6666030000000001
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.858082,
+    "temp": 756.712,
+    "phases": [
+     "Mg2Cu",
+     "Mg"
+    ],
+    "phase_comps": [
+     0.6666030000000001,
+     1
+    ]
+   }
+  ],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(Cu)",
+    "comp": 0.000381243,
+    "cbounds": [
+     [
+      0.000381243,
+      673.505
+     ],
+     [
+      0.0669068,
+      994.389
+     ]
+    ],
+    "tbounds": [
+     [
+      0.000381243,
+      673.505
+     ],
+     [
+      0.000381243,
+      1352.52
+     ]
+    ]
+   },
+   {
+    "type": "cmp",
+    "name": "MgCu2",
+    "comp": 0.332825,
+    "tbounds": [
+     [
+      0.332825,
+      673.15
+     ],
+     [
+      0.332825,
+      1086.657
+     ]
+    ]
+   },
+   {
+    "type": "cmp",
+    "name": "Mg2Cu",
+    "comp": 0.6666030000000001,
+    "tbounds": [
+     [
+      0.6666030000000001,
+      673.15
+     ],
+     [
+      0.6666030000000001,
+      838.482
+     ]
+    ]
+   }
+  ]
+ },
+ "Cu-Mg_ttol25": {
+  "system": "Cu-Mg",
+  "cache_kwargs": {},
+  "call_kwargs": {
+   "t_tol": 25
+  },
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [
+   {
+    "type": "eut",
+    "comp": 0.22010100000000002,
+    "temp": 994.1469999999999,
+    "phases": [
+     "(Cu)",
+     "MgCu2"
+    ],
+    "phase_comps": [
+     0.000381243,
+     0.332825
+    ]
+   },
+   {
+    "type": "cmp",
+    "comp": 0.332825,
+    "temp": 1086.657,
+    "phases": [
+     "MgCu2"
+    ],
+    "phase_comps": [
+     0.332825
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.574707,
+    "temp": 822.939,
+    "phases": [
+     "MgCu2",
+     "Mg2Cu"
+    ],
+    "phase_comps": [
+     0.332825,
+     0.6666030000000001
+    ]
+   },
+   {
+    "type": "cmp",
+    "comp": 0.6666030000000001,
+    "temp": 838.482,
+    "phases": [
+     "Mg2Cu"
+    ],
+    "phase_comps": [
+     0.6666030000000001
+    ]
+   },
+   {
+    "type": "eut",
+    "comp": 0.858082,
+    "temp": 756.712,
+    "phases": [
+     "Mg2Cu",
+     "Mg"
+    ],
+    "phase_comps": [
+     0.6666030000000001,
+     1
+    ]
+   }
+  ],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(Cu)",
+    "comp": 0.000381243,
+    "cbounds": [
+     [
+      0.000381243,
+      673.505
+     ],
+     [
+      0.0669068,
+      994.389
+     ]
+    ],
+    "tbounds": [
+     [
+      0.000381243,
+      673.505
+     ],
+     [
+      0.000381243,
+      1352.52
+     ]
+    ]
+   },
+   {
+    "type": "cmp",
+    "name": "MgCu2",
+    "comp": 0.332825,
+    "tbounds": [
+     [
+      0.332825,
+      673.15
+     ],
+     [
+      0.332825,
+      1086.657
+     ]
+    ]
+   },
+   {
+    "type": "cmp",
+    "name": "Mg2Cu",
+    "comp": 0.6666030000000001,
+    "tbounds": [
+     [
+      0.6666030000000001,
+      673.15
+     ],
+     [
+      0.6666030000000001,
+      838.482
+     ]
+    ]
+   }
+  ]
+ },
+ "Hf-Zr_pd0_fullss": {
+  "system": "Hf-Zr",
+  "cache_kwargs": {
+   "pd_ind": 0
+  },
+  "call_kwargs": {},
+  "init_error_before": false,
+  "init_error_after": true,
+  "returned_is_attribute": true,
+  "invariants": [],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(Hf, Zr) rt",
+    "comp": 0.0,
+    "cbounds": [
+     [
+      0.0,
+      1073.15
+     ],
+     [
+      1.0,
+      1135.5929999999998
+     ]
+    ],
+    "tbounds": [
+     [
+      0.0,
+      1073.15
+     ],
+     [
+      0.0,
+      2016.69
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "(Hf, Zr) ht",
+    "comp": 0.0,
+    "cbounds": [
+     [
+      0.0,
+      2016.69
+     ],
+     [
+      1.0,
+      2128.19
+     ]
+    ],
+    "tbounds": [
+     [
+      1.0,
+      1135.5929999999998
+     ],
+     [
+      0.0,
+      2505.28
+     ]
+    ]
+   }
+  ]
+ },
+ "Hf-Zr_pd0_no_fullss_check": {
+  "system": "Hf-Zr",
+  "cache_kwargs": {
+   "pd_ind": 0
+  },
+  "call_kwargs": {
+   "check_full_ss": false
+  },
+  "init_error_before": false,
+  "init_error_after": false,
+  "returned_is_attribute": true,
+  "invariants": [],
+  "low_t_exp_phases": [
+   {
+    "type": "ss",
+    "name": "(Hf, Zr) ht",
+    "comp": 0.0,
+    "cbounds": [
+     [
+      0.0,
+      2016.69
+     ],
+     [
+      1.0,
+      2128.19
+     ]
+    ],
+    "tbounds": [
+     [
+      1.0,
+      1135.5929999999998
+     ],
+     [
+      0.0,
+      2505.28
+     ]
+    ]
+   },
+   {
+    "type": "ss",
+    "name": "(Hf, Zr) rt",
+    "comp": 0.0,
+    "cbounds": [
+     [
+      0.0,
+      1073.15
+     ],
+     [
+      1.0,
+      1135.5929999999998
+     ]
+    ],
+    "tbounds": [
+     [
+      0.0,
+      1073.15
+     ],
+     [
+      0.0,
+      2016.69
+     ]
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "GLiquid"
+abstract: >-
+  A Python package for fitting DFT-referenced liquid free energies from digitized equilibrium
+  phase boundaries, and for interpolating multicomponent phase diagrams from the fitted binary
+  liquid descriptions.
+type: software
+# NOTE: this version is a literal and nothing derives it. The distribution version comes from
+# the git tag via hatch-vcs, so this file and `date-released` below must be bumped BY HAND at
+# each release -- see the release checklist in CONTRIBUTING.md.
+version: "0.1.0"
+date-released: "2026-08-12"
+license: MIT
+repository-code: "https://github.com/willwerj/gliquid_python"
+url: "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
+authors:
+  - given-names: Joshua
+    family-names: Willwerth
+    email: willwerj@umich.edu
+    affiliation: "University of Michigan"
+  - given-names: Abrar
+    family-names: Rauf
+    email: arauf@umich.edu
+    affiliation: "University of Michigan"
+  - given-names: Shibo
+    family-names: Tan
+    email: shibot@umich.edu
+    affiliation: "University of Michigan"
+  - given-names: Wenhao
+    family-names: Sun
+    email: whsun@umich.edu
+    affiliation: "University of Michigan"
+keywords:
+  - "density functional theory"
+  - "thermodynamic modeling"
+  - "phase diagram"
+  - "liquidus"
+  - "solution phase"
+  - "intermetallic phase"
+  - "Materials Project"
+  - "Materials Platform for Data Science"
