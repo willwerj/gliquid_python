@@ -1,0 +1,125 @@
+name: Run Tests
+
+# Every branch, not just main. This workflow previously triggered on main only, while the
+# code being released lived ~90 commits ahead of it -- so it had never actually run against
+# the package it guards.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-cached:
+    name: Cached Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One version failing must not hide the state of the other three.
+      fail-fast: false
+      matrix:
+        # Mirrors requires-python = ">=3.10,<3.14" and the tox compat matrix.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # NOT optional. hatch-vcs derives the version from the git tag, and the default
+          # shallow clone fetches none. Getting this wrong does not fail the checkout -- it
+          # silently produces the pyproject fallback-version (0.0.0), which is why that
+          # fallback is deliberately not the release version.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
+      - name: Install package and test extra
+        # Install the declared extra rather than a bare `pip install pytest`, so CI
+        # exercises the same dependency set a contributor gets from CONTRIBUTING.md.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+
+      - name: Run cached tests
+        # CI is where the maintainer tier belongs, so both tiers run. The live Materials
+        # Project fetch is deselected by MARKER, not by path: test_dft_data_loading.py moved
+        # to tests_internal/ and carries `needs_network`, and the API job below runs it.
+        run: pytest tests tests_internal -v --tb=short -m "not needs_network"
+
+  test-api:
+    name: API Tests
+    runs-on: ubuntu-latest
+    needs: test-cached
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # see the note on the cached job
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.12-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.12-
+            ${{ runner.os }}-pip-
+
+      - name: Install package and test extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+
+      - name: Run API tests
+        env:
+          NEW_MP_API_KEY: ${{ secrets.NEW_MP_API_KEY }}
+        run: pytest tests_internal/test_dft_data_loading.py -v --tb=short
+
+  lint:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+
+    # NON-BLOCKING ON PURPOSE, for one cycle. `ruff format` landed in spec 04 but
+    # `ruff check` still has a backlog of findings; failing every push on it would
+    # red-wall the repo before anyone could read the list. The job exists so the backlog
+    # is VISIBLE in the checks tab. Flip this to false (or just delete the line) once the
+    # backlog is burned down -- leaving it here permanently makes the job decorative.
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # see the note on the cached job
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[test]'
+
+      - name: Ruff lint
+        run: ruff check src/gliquid tests tests_internal
+
+      - name: Ruff format check
+        run: ruff format --check src/gliquid tests tests_internal

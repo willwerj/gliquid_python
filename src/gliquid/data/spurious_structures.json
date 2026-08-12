@@ -1,0 +1,173 @@
+{
+  "metadata": {
+    "description": "Tier A blacklist of the tiered unary data policy: elemental Materials Project structures with NO equilibrium stability field at any temperature at 1 atm (high-pressure-only, thin-film-only, stacking-variant, impurity-artifact, or purely computational structures). Consumed by BOTH phase database/build_element_database.py (removed before ground-state selection, so the experimental structure becomes the DFT anchor) and gliquid.api (entries filtered at fetch time and at cache read, so every hull references formation energies to the same surviving elemental ground states). Matching is by material_id (classic ids) AND by (element, spacegroup_number) computed from the entry structure (covers new-generation alpha-id caches; also intentionally catches future re-relaxations of the same spurious symmetry - note this means e.g. ANY P6_3/mmc Ag entry is refused and Ag's HCP solid-solution reference must come from the omegas file).",
+    "policy": "Every entry was verified against the criterion 'no reported or credibly proposed ambient-pressure stability field at any temperature' by a 2026-08-04 literature review (three web-research passes + one targeted adjudication), anchored on NIST TN 2312 (D.R. Burgess Jr., 'Phase Transition Temperatures of the Solid Elements at Atmospheric Pressure', 2025). Real low-T allotropes (alpha-Sn, Na hP4, Li 9R) and genuinely misranked real phases (Co HCP/FCC, Sm alpha/beta - handled as Tier C ground-state overrides in the builder) are NOT listed here.",
+    "created_date": "2026-08-04",
+    "signed_off_by": "J. Willwerth (audit table + literature cross-check sign-off, 2026-08-04)",
+    "anchor_consistency": "expected_gs_spacegroup drives two consumers: (1) build_element_database.py asserts the post-blacklist DFT ground state matches it (build fails otherwise); (2) gliquid.api drops ELEMENTAL entries that sit BELOW the expected-GS entry while not being of the expected spacegroup. The second guard exists because entry caches (get_entries_in_chemsys) include THEORETICAL structures the summary endpoint's theoretical=False filter never returns - e.g. a 9R Ag polytype (SG 166) below FCC, theoretical FCC-Eu below BCC, monoclinic Rb, an SG-69 carbon - an unbounded artifact family that per-id enumeration cannot close. It also keeps Tier C elements' hull references frame-consistent with their re-anchored ladders (raw GGA ranks beta-Sm below alpha-Sm; the guard drops the below-anchor beta entry so Sm-X hulls reference alpha)."
+  },
+  "expected_gs_spacegroup": {
+    "Rb": 229, "Na": 194, "Li": 166, "Ba": 229, "Sr": 225,
+    "Ca": 225, "Eu": 229, "Yb": 225, "Lu": 194, "Tm": 194,
+    "Y": 194, "Er": 194, "Ho": 194, "Dy": 194, "Tb": 194,
+    "Gd": 194, "Sm": 166, "Nd": 194, "Pr": 194, "Ce": 225,
+    "La": 194, "Th": 225, "Sc": 194, "Zr": 194, "Hf": 194,
+    "Ti": 191, "Ta": 229, "Nb": 229, "V": 229, "Cr": 229,
+    "Mo": 229, "W": 229, "Re": 194, "Os": 194, "Ru": 194,
+    "Rh": 225, "Ir": 225, "Pd": 225, "Au": 225, "Ag": 225,
+    "Cu": 225, "Ni": 225, "Co": 194, "Fe": 229, "Mn": 217,
+    "Mg": 194, "Zn": 194, "Cd": 194, "Hg": 166, "Be": 194,
+    "Al": 225, "Ga": 64, "In": 139, "Tl": 194, "Pb": 225,
+    "Sn": 227, "Ge": 227, "Si": 227, "B": 166, "C": 194
+  },
+  "elements": {
+    "Ag": [
+      {
+        "material_id": "mp-8566",
+        "spacegroup_number": 194,
+        "common_name": "4H silver (P6_3/mmc)",
+        "reason": "4H-Ag exists only as epitaxial thin films / nanostructures; Ag is FCC from 0 K to melting at 1 atm (NIST TN 2312 lists no solid-solid transition). GGA polytype energies of low-stacking-fault-energy noble metals are numerically fragile at the sub-meV/atom scale.",
+        "source": "NIST TN 2312 (2025), Z=47; Fan et al., Nat. Commun. 6 (2015)",
+        "date": "2026-08-04"
+      }
+    ],
+    "Ta": [
+      {
+        "material_id": "mp-569794",
+        "spacegroup_number": 136,
+        "common_name": "beta-Ta (P4_2/mnm)",
+        "reason": "beta-Ta is a metastable sputtered-thin-film phase absent from the bulk P-T diagram; it reverts to BCC alpha-Ta on annealing at 700-1100 C. Independent DFT ranks distorted Ta polymorphs ABOVE bcc (+30-80 meV/atom); MP's -9 meV/atom ranking is likely a relaxation artifact of the 30-atom Frank-Kasper cell.",
+        "source": "Jiang et al., Thin Solid Films 479, 166 (2005); Magnuson et al., Appl. Surf. Sci. 470 (2019); Nnolim, Tyson & Axe, arXiv:cond-mat/0207590",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-42",
+        "spacegroup_number": 113,
+        "common_name": "beta-Ta sibling (P-42_1m)",
+        "reason": "Same experimentally-known thin-film beta-Ta phase as mp-569794 under a long-running space-group dispute (P4_2/mnm: Moseley & Seabrook 1973 vs P-42_1m: Arakcheeva et al. 2002); sits +0.74 J/mol above it, so both must be removed or the second promotes to ground state.",
+        "source": "Arakcheeva et al., Acta Crystallogr. B (2002); Magnuson et al. (2019)",
+        "date": "2026-08-04"
+      }
+    ],
+    "Rb": [
+      {
+        "material_id": "mp-639755",
+        "spacegroup_number": 139,
+        "common_name": "Rb (I4/mmm)",
+        "reason": "All tetragonal/incommensurate Rb phases are high-pressure only (tI4 Rb-V onset ~16 GPa); Rb is BCC from 0 K to melting at 1 atm (NIST TN 2312 lists no solid-solid transition).",
+        "source": "NIST TN 2312 (2025), Z=37; McMahon et al., high-pressure Rb systematics",
+        "date": "2026-08-04"
+      }
+    ],
+    "Sr": [
+      {
+        "material_id": "mp-139",
+        "spacegroup_number": 194,
+        "common_name": "Sr (P6_3/mmc, hP2)",
+        "reason": "The historical fcc->hcp(~215-235 C)->bcc sequence repeated by secondary sources is a hydrogen-contamination artifact: Peterson & Colburn (1966) found the ~240 C 'second transformation' only in samples containing hydrogen (analogous to the Ca-CaH2 case). NIST TN 2312 recognizes only fcc->bcc at 820 K then melting at 1041 K.",
+        "source": "Peterson & Colburn, J. Phys. Chem. 70, 468 (1966); NIST TN 2312 (2025), Z=38; Alcock, Chase & Itkin, JPCRD 22, 1 (1993)",
+        "date": "2026-08-04"
+      }
+    ],
+    "Eu": [
+      {
+        "material_id": "mp-21462",
+        "spacegroup_number": 194,
+        "common_name": "Eu (P6_3/mmc, hP2)",
+        "reason": "HCP-Eu is the high-pressure Eu-II phase (>=12 GPa, ~4% volume collapse) or a thin-film epitaxial-strain artifact; divalent 4f7 Eu is BCC from 0 K to melting at 1 atm. GGA self-interaction error for mid-period lanthanides is documented by MP's own methodology notes.",
+        "source": "Bi et al., Phys. Rev. B 83, 104106 (2011); MP docs (GGA/GGA+U mixing, lanthanide caveats)",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-1057315",
+        "spacegroup_number": 63,
+        "common_name": "Eu (Cmcm)",
+        "reason": "Matches no experimentally known Eu phase at ANY condition (the high-pressure orthorhombic phase above 66 GPa is Pnma, not Cmcm); purely computational structure sitting below the real BCC.",
+        "source": "Bi et al., Phys. Rev. B 83, 104106 (2011)",
+        "date": "2026-08-04"
+      }
+    ],
+    "Lu": [
+      {
+        "material_id": "mp-973571",
+        "spacegroup_number": 166,
+        "common_name": "Lu (R-3m, Sm-type)",
+        "reason": "Sm-type Lu is a high-pressure phase (hcp->Sm-type at ~23-24 GPa, standard lanthanide pressure sequence); Lu is HCP from 0 K to melting at 1 atm (NIST TN 2312 lists no solid-solid transition). The +71 J/mol MP gap reflects GGA near-degeneracy of close-packed lanthanide stackings.",
+        "source": "J. Phys. Chem. Solids (1975) Lu high-pressure polymorph; NIST TN 2312 (2025), Z=71",
+        "date": "2026-08-04"
+      }
+    ],
+    "Pr": [
+      {
+        "material_id": "mp-97",
+        "spacegroup_number": 225,
+        "common_name": "Pr (Fm-3m, fcc)",
+        "reason": "FCC Pr is the high-pressure Pr-II phase (onset ~4-5 GPa); the 1-atm sequence is dhcp (0-1068 K) -> bcc -> melt (Konings & Benes 2010, via NIST TN 2312). Caveat documented: 1971 magnetism studies used quenched samples labeled 'beta-fcc'; NIST flags the structure as unresolved - no equilibrium stability-field claim exists. GGA 4f self-interaction error is the documented ranking-error cause.",
+        "source": "NIST TN 2312 (2025), Z=59; Konings & Benes, JPCRD 39, 043102 (2010); PRB 80, 134105 (2009)",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-567630",
+        "spacegroup_number": 152,
+        "common_name": "Pr (P3_121)",
+        "reason": "Corresponds to the distorted-fcc high-pressure phase (~7-10 GPa continuous distortion of fcc); no ambient field.",
+        "source": "PRB 105, 174104 (2022), high-pressure Pr revisited",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-1059528",
+        "spacegroup_number": 12,
+        "common_name": "Pr (C2/m)",
+        "reason": "Corresponds to a disputed monoclinic phase reported only at 10-25 GPa and 'definitely ruled out' by dedicated synchrotron XRD (possibly a first-pressurization strain artifact even there); no ambient field.",
+        "source": "McMahon et al., PRB 80, 134105 (2009); PRB 105, 174104 (2022)",
+        "date": "2026-08-04"
+      }
+    ],
+    "In": [
+      {
+        "material_id": "mp-85",
+        "spacegroup_number": 225,
+        "common_name": "In (Fm-3m, fcc)",
+        "reason": "FCC In is the undistorted parent of the real body-centered-tetragonal A6 structure; in-situ XRD shows the tetragonal cell trends toward but never reaches cubic up to melting. The bct distortion is a Fermi-surface-driven instability of a few meV/atom - exactly the scale where GGA ranking is unreliable.",
+        "source": "arXiv:1508.04200 (in-situ XRD thermal expansion); NIST TN 2312 (2025), Z=49",
+        "date": "2026-08-04"
+      }
+    ],
+    "C": [
+      {
+        "material_id": "mp-169",
+        "spacegroup_number": 166,
+        "common_name": "rhombohedral graphite (R-3m, 3R)",
+        "reason": "3R graphite is an extended stacking fault of hexagonal graphite, never found pure (minority fraction in natural graphite, reverts to 2H above ~1300 C), thermodynamically metastable at all conditions. Hexagonal graphite is the standard reference state of carbon. Plain GGA misses the interlayer vdW dispersion that controls the ABA/ABC stacking energetics - a textbook failure mode.",
+        "source": "Carbon (1964) enthalpy difference of hexagonal and rhombohedral graphite; Lipson & Stokes stacking-fault literature",
+        "date": "2026-08-04"
+      }
+    ],
+    "Hg": [
+      {
+        "material_id": "mp-10861",
+        "spacegroup_number": 191,
+        "common_name": "Hg (P6/mmm)",
+        "reason": "Matches none of the four experimentally known Hg polymorphs (alpha-rhombohedral, beta-BCT, gamma-monoclinic, delta-hcp); purely computational relaxation. Plain GGA is documented to give a badly wrong Hg ground state without relativistic treatment.",
+        "source": "PRB 74, 094102 (2006) relativistic Hg lattice structure; Young (1991)",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-569360",
+        "spacegroup_number": 12,
+        "common_name": "Hg (C2/m)",
+        "reason": "Space group matches the high-pressure gamma-Hg phase, stable only between 12 and 37 GPa; no ambient field.",
+        "source": "Schulte & Holzapfel, PRB 48, 14009 (1993)",
+        "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-569289",
+        "spacegroup_number": 139,
+        "common_name": "beta-Hg (I4/mmm, BCT)",
+        "reason": "Real pressure-induced phase (onset ~1.2 GPa) that can be retention-quenched metastably at low T. The 1959 'stable form below 79 K' wording (Atoji et al.) is retention-quench metastability, not a 1-atm field: the same group's methods paper describes 'Retention... of Metastable High Pressure Phases', and the modern P-T diagram keeps the alpha-beta boundary at >=1 GPa. Alpha-Hg R-3m is the only 1-atm solid (0-234.32 K).",
+        "source": "Atoji, Schirber & Swenson, J. Chem. Phys. 31, 1628 (1959); Schulte & Holzapfel, PRB 48, 14009 (1993); Young (1991)",
+        "date": "2026-08-04"
+      }
+    ]
+  }
+}
