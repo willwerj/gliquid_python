@@ -13,9 +13,7 @@ ORCID: https://orcid.org/0009-0004-6334-9426
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 from dataclasses import dataclass
 
@@ -23,6 +21,7 @@ import numpy as np
 from pymatgen.analysis.phase_diagram import PhaseDiagram
 
 import gliquid.api as api
+import gliquid.cache as cache
 import gliquid.config as config
 from gliquid.phase import SS_SPACEGROUPS, UNARY, validate_and_format_system
 
@@ -49,6 +48,153 @@ _HTML_TAG_RE = re.compile(r"<[^>]+>")
 # disjoint liquid regions. Plotters use exactly that to decide where to break the trace.
 _FILL_GAP_X = 0.06
 _FILL_STEP_X = 0.03
+
+# ---------------------------------------------------------------------------------------
+# Lean records: an MPDS diagram reduced to what a fit + a liquidus plot need.
+#
+# ``shapes`` is 93-97% of every MPDS json, and a deployed liquidus viewer never reads it.
+# A LEAN record drops it and carries the already-stitched liquidus instead, under one
+# reserved key. Everything else the package reads is KEPT: ``reference`` (``_stitched_
+# liquidus`` bails on None, and it is the figure-caption provenance), ``chemical_elements``
+# (frame), ``temp`` (temp_range, low_temp_threshold), ``comp_range``, ``labels`` (1-5%, and
+# the full-composition-SS / miscibility-gap / polymorph logic reads it), and the
+# ``entry``/``jcode``/``year`` citation fields (~20 B).
+#
+# It is a reserved KEY rather than a new class on purpose: ``load_mpds_data`` returns
+# ``(dict, (curve, is_partial))`` and 100+ sites treat that first element as an MPDS json.
+# A new type breaks all of them; a dict with one extra private key preserves the shape and
+# lets every ``shapes`` consumer detect the reduction (:func:`record_mode`).
+#
+# WHAT IS STORED IS THE **PRE-FILL** CURVE, and that is the load-bearing decision here.
+# ``extract_digitized_liquidus`` linearly densifies every in-region gap wider than 0.06, so
+# its output cannot tell a digitized point from synthetic fill. Storing THAT would make
+# ``liquidus_coverage`` report ``max_gap <= 0.06`` for every system in the corpus, and the
+# interior-sparsity gate in ``BinaryLiquid.from_cache`` would never fire again -- silently,
+# for every system, with the metrics still looking plausible. So the reduction stores
+# ``_stitched_liquidus``'s own output, and the fill happens at read time exactly as before.
+_GLIQUID_KEY = "_gliquid"
+
+#: Bumped when the shape of the ``_gliquid`` block changes.
+LEAN_SCHEMA = 1
+
+
+def record_mode(mpds_json) -> str:
+    """Classify an MPDS record: ``'full'``, ``'lean'`` or ``'empty'``.
+
+    * ``'empty'`` -- the ``{"reference": None}`` placeholder ``load_mpds_data`` caches for
+      a system MPDS has no digitized diagram for. Checked FIRST, so a placeholder is
+      classified the same way in a lean store as in a full one and every consumer keeps its
+      existing "no data" behaviour rather than starting to raise.
+    * ``'lean'`` -- the reduction above: no ``shapes``, the stitched liquidus instead.
+    * ``'full'`` -- an ordinary MPDS json.
+    """
+    if not isinstance(mpds_json, dict) or mpds_json.get("reference") is None:
+        return "empty"
+    block = mpds_json.get(_GLIQUID_KEY)
+    if isinstance(block, dict) and block.get("mode") == "lean":
+        return "lean"
+    return "full"
+
+
+def _require_full_record(mpds_json, caller: str, *, escape: str = "") -> None:
+    """Raise unless ``mpds_json`` still carries its digitized ``shapes``.
+
+    **The failure this prevents is not a crash.** ``identify_mpds_phases`` reads
+    ``mpds_json.get("shapes", [])`` and would return ``[]`` on a lean record; an empty phase
+    list makes :func:`assess_solid_coverage` report ZERO reported compounds, which reads as
+    "nothing unsupported", and the solid-coverage gate PASSES. That is a silent wrong answer
+    of exactly the class the gate exists to prevent, so a lean record must stop the caller
+    rather than degrade it.
+
+    There is deliberately **no auto-degrade path**. A fit run without invariant constraints
+    and without the coverage gate is a *different fit*; returning one silently under the
+    same call is the failure mode, not the mitigation.
+    """
+    if record_mode(mpds_json) != "lean":
+        return
+    raise config.CacheModeError(
+        f"{caller} needs the digitized 'shapes' block, and this MPDS record is LEAN "
+        f"(liquidus-only; see gliquid.mpds.record_mode). Returning an empty phase list "
+        f"here would read downstream as 'no unsupported compounds' and pass the solid-"
+        f"coverage gate, so this raises instead. Fix: point gliquid at a store migrated "
+        f"with `python -m gliquid.cache migrate --mpds-mode full`"
+        + (f", or {escape}." if escape else ".")
+    )
+
+
+def lean_record(mpds_json: dict) -> dict:
+    """Reduce a full MPDS json to a lean one. Inverse of nothing — ``shapes`` is gone.
+
+    Computes :func:`_stitched_liquidus` ONCE and stores its pre-fill ``(x, T)`` points plus
+    the ``covered`` region structure, so that ``extract_digitized_liquidus`` and
+    ``liquidus_coverage`` reproduce their full-record answers exactly.
+
+    ``is_partial`` is **derived** at read time, never stored — storing it would let the two
+    drift. The one thing derivation cannot recover from an empty ``covered`` is *why* it is
+    empty, so the two empty cases are distinguished by ``covered`` itself: ``None`` means
+    "no liquid field was digitized at all" (nothing was ever measured) and ``[]`` means
+    "'L' shapes existed but none yielded a usable branch" — which is exactly the case
+    ``_stitched_liquidus`` reports as partial. Both are faithful values of ``covered``, not
+    a smuggled flag.
+
+    ``chemical_elements`` is written **explicitly, ``None`` when genuinely unknown**:
+    :func:`mpds_frame_matches` treats an ABSENT frame block as *matching* the caller, so a
+    lean record that merely omitted it would silently mis-mirror every reversed-frame
+    construction.
+    """
+    import gliquid.cache as _cache  # local: cache imports config only, mpds imports cache
+
+    stitched, is_partial, covered = _stitched_liquidus(mpds_json, quiet=True)
+    if stitched is None and not covered:
+        covered = [] if is_partial else None
+    header = _cache.mpds_header(mpds_json)
+    header.setdefault("chemical_elements", None)
+    return {
+        **header,
+        _GLIQUID_KEY: {
+            "mode": "lean",
+            "schema": LEAN_SCHEMA,
+            "stitched": stitched,
+            "covered": covered,
+        },
+    }
+
+
+def _lean_stitched(block: dict, quiet: bool) -> tuple[list[list] | None, bool, list[list[float]]]:
+    """``_stitched_liquidus``'s answer, read back off a lean record's ``_gliquid`` block.
+
+    The warnings are re-emitted so a lean store does not silently lose the "this system's
+    liquidus is incomplete" signal. Only the disjoint-shape message differs: it can no
+    longer name the branch COUNT (the branches are gone), so it names the covered regions,
+    which is the part a reader acts on.
+    """
+    stitched, covered = block.get("stitched"), block.get("covered")
+    if covered is None:
+        if not quiet:
+            logger.warning("No liquidus data found.")
+        return None, False, []
+    if not covered:
+        if not quiet:
+            logger.warning("Insufficient liquidus data.")
+        return None, True, []
+
+    is_partial = False
+    if covered[0][0] > 0.03 or covered[-1][1] < 0.97:
+        if not quiet:
+            logger.warning(
+                f"MPDS liquidus does not span the entire composition range! "
+                f"({100 * covered[0][0]}-{100 * covered[-1][1]})"
+            )
+        is_partial = True
+    if len(covered) > 1:
+        if not quiet:
+            logger.warning(
+                f"MPDS liquid field is drawn as disjoint 'L' shapes covering "
+                f"{[[round(100 * lo, 2), round(100 * hi, 2)] for lo, hi in covered]} "
+                f"at.%; the liquidus between them is not digitized."
+            )
+        is_partial = True
+    return stitched, is_partial, covered
 
 
 def shape_to_list(svgpath: str) -> list[list]:
@@ -95,7 +241,12 @@ def liquid_shape_paths(mpds_json: dict) -> list[str]:
     other than 'phase' is a drawing overlay or a mislabelled solid compound (five in the
     cached corpus, e.g. Hg-Pd, Li-Mo) and is likewise not liquid; ``kind``-less shapes in
     older cached jsons are kept.
+
+    Raises:
+        config.CacheModeError: on a LEAN record, which has no ``shapes``. Reachable only by
+            a direct caller — ``_stitched_liquidus`` short-circuits before it.
     """
+    _require_full_record(mpds_json, "liquid_shape_paths")
     return [
         shape["svgpath"]
         for shape in mpds_json.get("shapes", [])
@@ -251,11 +402,20 @@ def _stitched_liquidus(
 
     ``quiet`` suppresses the warnings so a metrics pass over a json that was already
     extracted does not double-count them in scanned logs.
+
+    THIS IS THE ONE SEAM lean mode needs. Both ``extract_digitized_liquidus`` and
+    ``liquidus_coverage`` route through here, so the early return below is what makes a
+    lean record work end to end — and it is why the reduction stores the pre-fill curve:
+    the two callers must keep seeing the same thing they always saw at this point,
+    ``liquidus_coverage`` most of all.
     """
     if mpds_json.get("reference") is None:
         if not quiet:
             logger.warning("No data in MPDS JSON.")
         return None, False, []
+    block = mpds_json.get(_GLIQUID_KEY)
+    if isinstance(block, dict) and block.get("mode") == "lean":
+        return _lean_stitched(block, quiet)
     svgpaths = liquid_shape_paths(mpds_json)
     if not svgpaths:
         if not quiet:
@@ -451,15 +611,18 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
     # On-disk keys (and the MPDS query) canonicalize to the alphabetical name; the raw
     # json therefore stays in the alphabetical frame — consumers mirror at use.
     cache_name = api._canonical_sys_name(components)
-    sys_dir = api._resolve_sys_dir(cache_name)
+    # Which diagram a pd_ind resolves to is a question about the RECORDS a store holds, not
+    # about files in a directory, so it is asked of the backend. ``variant == ""`` is the
+    # indexless ``<sys>.json`` naming; ``"0"``, ``"1"``, ... are the indexed diagrams.
+    backend = cache.resolve_backend(None)
+    available = set(backend.variants(cache_name, cache.KIND_MPDS))
+    has_indexless = "" in available
+    has_pd0 = "0" in available
+    sys_dir = cache.store_label(backend, cache_name)
 
-    sys_pd0_file = os.path.join(sys_dir, f"{cache_name}_MPDS_PD_0.json")
-    sys_indexless_file = os.path.join(sys_dir, f"{cache_name}.json")
     if pd_ind is None:
-        sys_file = sys_indexless_file
-        if not os.path.exists(sys_file):
-            sys_file = sys_pd0_file
-        elif os.path.exists(sys_pd0_file):
+        variant = "" if has_indexless else "0"
+        if has_indexless and has_pd0:
             # Both namings present: the indexless file SHADOWS PD_0 and the caller almost
             # certainly meant the indexed one. Silent in a single-diagram store (no PD_0
             # sibling), which is where indexless is the legitimate convention.
@@ -469,11 +632,11 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                 f"pin which diagram is loaded."
             )
     elif isinstance(pd_ind, int):
-        sys_file = os.path.join(sys_dir, f"{cache_name}_MPDS_PD_{pd_ind}.json")
-        if not os.path.exists(sys_file):
-            if os.path.exists(sys_pd0_file):
+        variant = str(pd_ind)
+        if variant not in available:
+            if has_pd0:
                 raise ValueError(f"No matching json with pd_ind={pd_ind} found in cache!")
-            if os.path.exists(sys_indexless_file):
+            if has_indexless:
                 # An indexless-only store holds exactly one diagram, so pd_ind=0 names it.
                 # Without this the requested-index path falls through to the API branch and
                 # hands back {"reference": None} with no error — the mirror image of the
@@ -489,18 +652,25 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                     f"No {cache_name}_MPDS_PD_0.json in {sys_dir}; pd_ind=0 resolving the "
                     f"indexless {cache_name}.json, the store's only diagram."
                 )
-                sys_file = sys_indexless_file
+                variant = ""
     else:
         raise ValueError("Input for pd_ind must be an integer or 'None'!")
 
-    if os.path.exists(sys_file):  # Load from cache
-        with open(sys_file) as f:
-            mpds_json = json.load(f)
-            if mpds_json.get("reference", None) is not None:
-                logger.info(
-                    "Reading MPDS json from entry at " + mpds_json["reference"]["entry"] + "..."
-                )
+    sys_key = cache.CacheKey(cache_name, cache.KIND_MPDS, variant)
+    if backend.exists(sys_key):  # Load from cache
+        mpds_json = backend.read_json(sys_key)
+        if mpds_json.get("reference", None) is not None:
+            logger.info(
+                "Reading MPDS json from entry at " + mpds_json["reference"]["entry"] + "..."
+            )
     else:  # Try API call
+        # THE remote MPDS path. Guarded ABOVE the key check below, which is the whole
+        # point: without a key this function logs a warning and returns
+        # ``{"reference": None}``, a record shaped exactly like the real answer "MPDS holds
+        # no digitized diagram for this system". Under offline mode that silence would be
+        # indistinguishable from that fact, and a fit would proceed against a diagram
+        # nobody ever looked for. So it raises instead (config.OfflineError).
+        config.require_online(f"Fetching the MPDS phase diagram for '{cache_name}'")
         logger.info("No cached binary phase data found!")
         mpds_json = {"reference": None}
         if not api.get_api_key(api.MPDS_KEY_VAR):
@@ -551,9 +721,9 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
 
         if pd_ind is None:
             mpds_json = valid_jsons[0]
-            sys_file = os.path.join(sys_dir, f"{cache_name}.json")
-            with open(sys_file, "w") as f:
-                json.dump(mpds_json, f)
+            write_key = cache.CacheKey(cache_name, cache.KIND_MPDS, "")
+            backend.write_json(write_key, mpds_json)
+            sys_file = backend.locate(write_key)
             if mpds_json.get("reference", None) is None:
                 logger.info("No valid phase diagrams found, caching default json")
             else:
@@ -562,9 +732,9 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                 )
         else:
             for ind, dia_json in enumerate(valid_jsons):
-                sys_file = os.path.join(sys_dir, f"{cache_name}_MPDS_PD_{ind}.json")
-                with open(sys_file, "w") as f:
-                    json.dump(dia_json, f)
+                write_key = cache.CacheKey(cache_name, cache.KIND_MPDS, str(ind))
+                backend.write_json(write_key, dia_json)
+                sys_file = backend.locate(write_key)
                 if dia_json.get("reference", None) is None:
                     logger.info("No valid phase diagrams found, caching default json")
                     break
@@ -896,7 +1066,12 @@ def identify_mpds_phases(
 
     Returns:
         list: A list of dictionaries containing information on equilibrium phase composition and temperature boundaries
+
+    Raises:
+        config.CacheModeError: on a LEAN record. This is the single most important guard in
+            the lean-mode contract — see :func:`_require_full_record`.
     """
+    _require_full_record(mpds_json, "identify_mpds_phases")
     if mpds_json.get("reference") is None:
         if verbose:
             logger.warning("System JSON does not contain any data!")
@@ -1162,6 +1337,15 @@ def assess_solid_coverage(
 
     Returns:
         SolidCoverageReport
+
+    Note:
+        This function never sees an MPDS record — it takes ``mpds_phases``, already
+        identified. It is therefore guarded one level up, at the two places that DO hold a
+        json: :func:`identify_mpds_phases`, its only source of phases, and
+        ``BinaryLiquid.assess_solid_coverage``, which names itself in the error. Handing a
+        lean record's (impossible) empty phase list in here would report zero reported
+        compounds, i.e. "nothing unsupported", and the gate would pass — see
+        :func:`_require_full_record`.
     """
     ss_narrow_tol = config.coverage_ss_narrow_tol if ss_narrow_tol is None else ss_narrow_tol
     dft_cover_tol = config.coverage_dft_cover_tol if dft_cover_tol is None else dft_cover_tol
@@ -1320,7 +1504,13 @@ def get_low_temp_phase_data(
         Tuples with low temperature phase data for both digitzed and computed phases. The returned data is in the
         following format: (mpds congruently melting phases, mpds incongruently melting phases, max phase decomp temp),
         (dft phase formation energies, dft phase energies below convex hull, minimum phase formation energy)
+    Raises:
+        config.CacheModeError: on a LEAN record. Guarded here as well as inside
+            :func:`identify_mpds_phases` so the message names the function the caller
+            actually called — ``plotting/binary_figs.py``'s phase-comparison figure is the
+            consumer, and an empty MPDS column there reads as a real finding.
     """
+    _require_full_record(mpds_json, "get_low_temp_phase_data")
 
     dft_phases, dft_phases_ebelow = {}, {}
     min_form_e = 0
@@ -1523,7 +1713,17 @@ def identify_invariant_points(
         full composition range; identification stops early (solidus processing is not
         implemented) and the CALLER decides whether fitting can proceed — it can when
         solid-solution phase energies (ss_models) are available.
+
+    Raises:
+        config.CacheModeError: on a LEAN record. Invariant points ARE the digitized solid
+            fields; without ``shapes`` there is nothing to identify, and an empty invariant
+            list would silently remove every invariant constraint from a fit.
     """
+    _require_full_record(
+        mpds_json,
+        "identify_invariant_points",
+        escape="fit without invariant constraints by passing disable_inv_constrs=True",
+    )
     if mpds_json["reference"] is None:
         logger.warning("System JSON does not contain any data!")
         return [], [], False

@@ -319,9 +319,11 @@ class UnaryData:
         }
         if not self.elements:
             # phase_transitions.json ships inside the package, so reaching here means the
-            # file was overridden (set_data_dir at a directory carrying its own unreadable
+            # file was overridden (set_cache_dir at a directory carrying its own unreadable
             # copy) or the install is damaged -- report whichever location was consulted.
-            consulted = config.data_dir if config.data_dir is not None else config._BUNDLED_DATA_DIR
+            consulted = (
+                config.cache_dir if config.cache_dir is not None else config._BUNDLED_REFERENCE_DIR
+            )
             data_dir_parts = os.path.normpath(consulted).split(os.sep)
             last_two = (
                 os.sep.join(data_dir_parts[-2:]) if len(data_dir_parts) >= 2 else str(consulted)

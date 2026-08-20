@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import re
-import tempfile
+import warnings
 from pathlib import Path
 
 from pymatgen.analysis.phase_diagram import CompoundPhaseDiagram, PhaseDiagram
@@ -33,6 +33,13 @@ from pymatgen.core import Composition, Element, Structure
 from pymatgen.entries.computed_entries import ComputedEntry, ComputedStructureEntry
 
 import gliquid.config as config
+from gliquid.cache import (
+    KIND_DFT_ENTRIES,
+    CacheKey,
+    CacheModeError,
+    atomic_write_json,
+    resolve_backend,
+)
 from gliquid.phase import validate_and_format_system
 
 logger = logging.getLogger(__name__)
@@ -125,6 +132,7 @@ def get_mpr():
     """
     global _mpr
     if _mpr is None:
+        config.require_online("Constructing a Materials Project client")
         api_key = get_api_key(MP_KEY_VAR)
         if not api_key:
             raise ValueError(f"{MP_KEY_VAR} not found in environment variables!")
@@ -138,6 +146,7 @@ def mp_rester(api_key: str | None = None):
     The shared ``get_mpr()`` singleton must not be used as a context manager — exiting the
     block closes its session and would poison every later call.
     """
+    config.require_online("Constructing a Materials Project client")
     api_key = api_key or get_api_key(MP_KEY_VAR)
     if not api_key:
         raise ValueError(f"{MP_KEY_VAR} not found in environment variables!")
@@ -161,6 +170,7 @@ def mpds_api_error() -> type[Exception]:
 
 def get_mpds_client(dtype: str = "PEER_REVIEWED"):
     """Construct an authenticated MPDSDataRetrieval client (key via ``get_api_key``)."""
+    config.require_online("Constructing an MPDS client")
     try:
         from mpds_client import MPDSDataRetrieval, MPDSDataTypes
     except ImportError as exc:
@@ -178,9 +188,11 @@ def get_mpds_client(dtype: str = "PEER_REVIEWED"):
 
 # --------------------------------------------------------------------------------------
 # DFT entry cache/load — n-component Materials Project entries and convex hulls.
-# Cache files are ``{sys_name}_ENTRIES_MP_{dft_type}.json`` under the resolved system
-# directory (``config.dir_structure`` flat/nested, or flat inside an explicit
-# ``data_dir`` override such as TernaryLiquidInterpolation's).
+# Records are addressed as ``CacheKey(sys_name, 'dft_entries', dft_type)`` and resolved by a
+# ``gliquid.cache`` backend: the configured store, or the one named by an explicit
+# ``data_dir`` override such as TernaryLiquidInterpolation's. Under the DirectoryBackend
+# that is still ``{sys_name}_ENTRIES_MP_{dft_type}.json`` under the system directory
+# (``config.dir_structure`` flat/nested, or flat inside an explicit override).
 # --------------------------------------------------------------------------------------
 
 _LEGACY_MONTY_MODULES = {
@@ -292,28 +304,72 @@ def _computed_entry_from_dict(entry: dict):
     return ComputedEntry.from_dict(entry)
 
 
-# Tier A spurious-structure blacklist (``config.spurious_structures_file``): elemental MP
-# structures with no stability field at any T at 1 atm. Filtered at fetch AND at cache
-# read (mirroring the Mg149 guard) so every hull references formation energies to the
-# same surviving elemental ground states as the unary DB — old caches included, without
-# rewriting them. Matching is two-path because entry ids changed generations: classic
-# string ids ('mp-8566-GGA') match the blacklist's material_ids; new-API alpha ids
-# ({'identifier': 'mp-aaaaaaeu', ...}) are unmappable, so elemental entries fall back to
-# the (element, spacegroup) of their structure (symprec=0.1, the MP convention).
+# Tier A spurious-structure blacklist (``config.spurious_structures_file``). Two sibling
+# blocks, two policies:
+#   'elements' — elemental MP structures with no stability field at any T at 1 atm.
+#   'compounds' — non-elemental artifacts (MP composition artifacts and the like), which
+#     the elemental block structurally cannot express because that path refuses any entry
+#     of arity != 1.
+# Both are filtered at fetch AND at cache read, so every hull references formation
+# energies to the same surviving elemental ground states as the unary DB — old caches
+# included, without rewriting them. Elemental matching is two-path because entry ids
+# changed generations: classic string ids ('mp-8566-GGA') match the blacklist's
+# material_ids; new-API alpha ids ({'identifier': 'mp-aaaaaaeu', ...}) are unmappable, so
+# elemental entries fall back to the (element, spacegroup) of their structure
+# (symprec=0.1, the MP convention).
 _MP_ID_RE = re.compile(r"(mp-[a-z0-9]+)")
-_spurious_cache: tuple | None = None  # (path, mtime, ids, pairs, expected_gs)
+_spurious_cache: tuple | None = None  # (path, mtime, ids, pairs, expected_gs, compounds)
+
+# Compound-rule predicate forms, in EVALUATION PRECEDENCE. A record's ``match`` object may
+# name several; the highest-precedence form present decides that record. 'composition' is
+# the preferred shape for new records — it pins every element and so cannot over-match.
+# 'element_count' constrains only the elements it names and leaves the rest free, which is
+# what makes it the exact translation of a legacy ``comp.get(el, 0) != n`` literal.
+_COMPOUND_MATCH_FORMS = ("material_id", "composition", "element_count")
 
 
-def _spurious_structure_index() -> tuple[frozenset, frozenset, dict]:
+def _normalize_compound_rules(records) -> tuple:
+    """``compounds`` block -> ordered ``(form, payload)`` pairs.
+
+    One rule per record: the first form of ``_COMPOUND_MATCH_FORMS`` present in its
+    ``match`` object wins. A record naming no recognized form — or naming one with an
+    EMPTY payload, which would make ``all(...)`` vacuously true and blacklist the whole
+    corpus — is dropped with a warning rather than silently over-matching.
+    """
+    rules: list[tuple[str, object]] = []
+    for rec in records or []:
+        match = rec.get("match", {}) if isinstance(rec, dict) else {}
+        for form in _COMPOUND_MATCH_FORMS:
+            payload = match.get(form) if isinstance(match, dict) else None
+            if not payload:
+                continue
+            if form == "material_id":
+                rules.append((form, str(payload)))
+            elif form == "composition":
+                rules.append((form, tuple(sorted((str(el), int(n)) for el, n in payload.items()))))
+            else:  # element_count
+                rules.append((form, tuple(sorted((str(el), n) for el, n in payload.items()))))
+            break
+        else:
+            logger.warning(
+                "Spurious-structure 'compounds' record names no usable match form %s "
+                "(missing or empty); ignoring it: %r",
+                _COMPOUND_MATCH_FORMS,
+                rec,
+            )
+    return tuple(rules)
+
+
+def _spurious_structure_index() -> tuple[frozenset, frozenset, dict, tuple]:
     """(blacklisted material_ids, blacklisted (element, spacegroup) pairs,
-    {element: expected ground-state spacegroup})."""
+    {element: expected ground-state spacegroup}, compound (form, payload) rules)."""
     global _spurious_cache
     path = config.spurious_structures_file
     if path is None or not os.path.exists(path):
-        return frozenset(), frozenset(), {}
+        return frozenset(), frozenset(), {}, ()
     mtime = os.path.getmtime(path)
     if _spurious_cache and _spurious_cache[:2] == (str(path), mtime):
-        return _spurious_cache[2], _spurious_cache[3], _spurious_cache[4]
+        return _spurious_cache[2], _spurious_cache[3], _spurious_cache[4], _spurious_cache[5]
     with open(path) as f:
         raw = json.load(f)
     ids, pairs = set(), set()
@@ -324,8 +380,9 @@ def _spurious_structure_index() -> tuple[frozenset, frozenset, dict]:
             if rec.get("spacegroup_number"):
                 pairs.add((element, int(rec["spacegroup_number"])))
     expected = {el: int(sg) for el, sg in raw.get("expected_gs_spacegroup", {}).items()}
-    _spurious_cache = (str(path), mtime, frozenset(ids), frozenset(pairs), expected)
-    return _spurious_cache[2], _spurious_cache[3], _spurious_cache[4]
+    compounds = _normalize_compound_rules(raw.get("compounds", []))
+    _spurious_cache = (str(path), mtime, frozenset(ids), frozenset(pairs), expected, compounds)
+    return _spurious_cache[2], _spurious_cache[3], _spurious_cache[4], _spurious_cache[5]
 
 
 def _entry_spacegroup(entry_dict: dict) -> int | None:
@@ -342,20 +399,58 @@ def _entry_spacegroup(entry_dict: dict) -> int | None:
         return None
 
 
-def _is_spurious_entry_dict(entry_dict: dict) -> bool:
-    """True if a cached/fetched entry dict is a blacklisted elemental structure."""
-    ids, pairs, _ = _spurious_structure_index()
-    if not ids and not pairs:
-        return False
-    comp = entry_dict.get("composition", {})
-    if len(comp) != 1:
-        return False  # the blacklist is an elemental ground-state policy
+def _entry_mp_id(entry_dict: dict) -> str | None:
+    """Classic 'mp-xxxx' prefix of an entry dict's id (dict- or string-form); None if absent."""
     entry_id = entry_dict.get("entry_id")
     id_str = entry_id.get("identifier") if isinstance(entry_id, dict) else entry_id
     if isinstance(id_str, str):
         m = _MP_ID_RE.match(id_str)
-        if m and m.group(1) in ids:
-            return True
+        if m:
+            return m.group(1)
+    return None
+
+
+def _matches_compound_rule(entry_dict: dict, comp: dict, rules: tuple) -> bool:
+    """True if any ``compounds`` rule matches. Applies at ANY arity, elemental included."""
+    for form, payload in rules:
+        if form == "material_id":
+            if _entry_mp_id(entry_dict) == payload:
+                return True
+        elif form == "composition":
+            try:
+                got = tuple(sorted((str(el), int(n)) for el, n in comp.items()))
+            except (TypeError, ValueError):
+                continue
+            if got == payload:
+                return True
+        else:  # element_count — plain numeric equality, NOT an int cast: this is the
+            # bit-exact translation of the legacy ``comp.get(el, 0) != n`` literals.
+            # Cached counts are floats, and float == int already compares equal; an
+            # int cast would additionally swallow a genuinely fractional near-miss.
+            if all(comp.get(el, 0) == n for el, n in payload):
+                return True
+    return False
+
+
+def _is_spurious_entry_dict(entry_dict: dict) -> bool:
+    """True if a cached/fetched entry dict is blacklisted by either block.
+
+    Dispatches on arity policy, not on file layout: ``compounds`` rules are tested
+    against every entry (a composition artifact is not an elemental-ground-state
+    question), while the ``elements`` block stays gated to arity-1 entries.
+    """
+    ids, pairs, _, compounds = _spurious_structure_index()
+    if not ids and not pairs and not compounds:
+        return False
+    comp = entry_dict.get("composition", {}) or {}
+    if compounds and _matches_compound_rule(entry_dict, comp, compounds):
+        return True
+    if not ids and not pairs:
+        return False
+    if len(comp) != 1:
+        return False  # the 'elements' block is an elemental ground-state policy
+    if _entry_mp_id(entry_dict) in ids:
+        return True
     element = next(iter(comp))
     if pairs and any(el == element for el, _ in pairs):
         sg = _entry_spacegroup(entry_dict)
@@ -366,7 +461,8 @@ def _is_spurious_entry_dict(entry_dict: dict) -> bool:
 def _filter_spurious_entries(computed_entry_dicts: list[dict]) -> list[dict]:
     """Tier A for the entry layer: blacklist filter + anchor-consistency guard.
 
-    The blacklist removes known spurious elemental structures. The anchor guard
+    The blacklist removes known spurious elemental structures and, via the
+    ``compounds`` block, non-elemental artifacts of any arity. The anchor guard
     then drops any ELEMENTAL entry of an audited element that sits BELOW the
     lowest entry of the element's expected ground-state spacegroup while not
     being of that spacegroup itself. Entry caches include THEORETICAL
@@ -374,9 +470,12 @@ def _filter_spurious_entries(computed_entry_dicts: list[dict]) -> list[dict]:
     below FCC, theoretical FCC-Eu below BCC, ...), an unbounded artifact family
     per-id enumeration cannot close; this pins every hull's elemental reference
     to the same experimentally-anchored structure as the unary DB.
+
+    The anchor guard stays deliberately ELEMENTAL-ONLY: its ``len(comp) == 1``
+    tests below are load-bearing, not an oversight the compound block relaxes.
     """
-    ids, pairs, expected = _spurious_structure_index()
-    if not ids and not pairs and not expected:
+    ids, pairs, expected, compounds = _spurious_structure_index()
+    if not ids and not pairs and not expected and not compounds:
         return computed_entry_dicts
     survivors = [e for e in computed_entry_dicts if not _is_spurious_entry_dict(e)]
     if not expected:
@@ -426,6 +525,16 @@ def _get_dft_entries_from_components(
     components: list[str], dft_type: str, keep_data=False
 ) -> list[dict]:
     """Fetches DFT entries for the specified components and DFT functional type."""
+    # THE remote DFT path. Refused first, above the credential lookup and above the import
+    # of anything that can open a socket, so offline mode is a property of the
+    # configuration and not of whether a key happens to be installed (see
+    # config.OfflineError). Every cache miss for a system the store does not cover arrives
+    # here, so this one guard covers get_dft_convexhull, get_dft_structure_entries and
+    # cache_imputed_entries alike.
+    config.require_online(
+        f"Fetching Materials Project DFT entries for '{'-'.join(components)}' "
+        f"(dft_type={dft_type!r})"
+    )
     # emmet.core transitively imports requests; keep it out of module import time
     # (tests/test_api.py pins the import hygiene).
     from emmet.core.thermo import ThermoType
@@ -475,9 +584,9 @@ def _get_dft_entries_from_components(
     # objects; accept either so the cache format is unchanged.
     computed_entry_dicts = [e.as_dict() if hasattr(e, "as_dict") else e for e in entries]
 
-    # Filter out Mg149 phase and remove run data to reduce cache size
-    computed_entry_dicts = [e for e in computed_entry_dicts if e["composition"].get("Mg", 0) != 149]
-    # Tier A: blacklist + anchor-consistency guard at fetch time.
+    # Tier A: blacklist + anchor-consistency guard at fetch time. The blacklist's
+    # 'compounds' block carries the MP composition artifact that used to be an
+    # element-specific literal here; run data is dropped just below.
     computed_entry_dicts = _filter_spurious_entries(computed_entry_dicts)
     if not keep_data:
         for e in computed_entry_dicts:
@@ -503,36 +612,9 @@ def _get_dft_entries_from_components(
     return computed_entry_dicts
 
 
-def _atomic_write_json(path: str, payload) -> None:
-    """Serialize ``payload`` to ``path`` atomically, via a temp file + ``os.replace``.
-
-    A plain ``json.dump`` to the cache path writes incrementally, so an interrupted or
-    failing write leaves a TRUNCATED file that later reads accept as a valid cache. Worse,
-    concurrent cold fetches of the same system interleave into one file --
-    ``dev/scripts/Fit_Binary_Systems.py`` fans campaigns out over a ``ProcessPoolExecutor``,
-    and a campaign over uncached systems is exactly a burst of concurrent cold fetches.
-
-    The temp file is created in the DESTINATION directory so it shares a filesystem with
-    the target; ``os.replace`` is only atomic within one filesystem, and is atomic on both
-    POSIX and Windows. A reader therefore sees either the old file or the complete new one,
-    never a partial one. Two writers racing still both fetch -- that is accepted -- but
-    whichever lands last leaves a whole, valid file.
-    """
-    directory = os.path.dirname(path) or "."
-    fd, tmp_path = tempfile.mkstemp(
-        dir=directory, prefix=f".{os.path.basename(path)}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w") as handle:
-            json.dump(payload, handle)
-        os.replace(tmp_path, path)
-    except BaseException:
-        # Never leave the scratch file behind on a failed write.
-        try:
-            os.unlink(tmp_path)
-        except OSError:  # pragma: no cover - already gone, or undeletable
-            pass
-        raise
+# The atomic-write implementation moved to ``gliquid.cache`` (it is the DirectoryBackend's
+# job now); the old name stays reachable here because callers and tests use it.
+_atomic_write_json = atomic_write_json
 
 
 def _canonical_sys_name(components) -> str:
@@ -544,22 +626,57 @@ def _canonical_sys_name(components) -> str:
     return "-".join(sorted(components))
 
 
-def _resolve_sys_dir(sys_name: str, data_dir=None) -> str:
-    """Return the cache directory for ``sys_name``.
+def resolve_cache_path(key: CacheKey, cache=None) -> Path | None:
+    """The filesystem path of one cached record, or ``None`` if the store has no paths.
 
-    An explicit ``data_dir`` wins and implies a FLAT layout inside it (the historical
-    per-instance ternary convention); otherwise ``config.dir_structure`` decides.
+    The supported replacement for ``_resolve_sys_dir``: it names a RECORD rather than a
+    directory, which is the only question every backend can answer. ``None`` is a real
+    answer, not an error -- a single-file store holds the record but not at a path -- so
+    callers that need a path must handle it rather than assume one exists.
+
+    Args:
+        key: The record to locate.
+        cache: ``None`` for the configured store, or a path / ``CacheBackend`` override.
     """
-    if data_dir is not None:
-        return str(data_dir)
-    root = config.require_data_dir(f"Reading the cache for '{sys_name}'")
-    if config.dir_structure == "nested":
-        sys_dir = os.path.join(root, sys_name)
-        os.makedirs(sys_dir, exist_ok=True)
-        return sys_dir
-    if config.dir_structure == "flat":
-        return root
-    raise ValueError(f"Invalid dir_structure '{config.dir_structure}'. Must be 'nested' or 'flat'.")
+    backend = resolve_backend(cache)
+    path_for = getattr(backend, "path_for", None)
+    if path_for is None:
+        return None
+    return Path(path_for(key))
+
+
+def _resolve_sys_dir(sys_name: str, data_dir=None) -> str:
+    """Deprecated. The cache directory for ``sys_name``; use :func:`resolve_cache_path`.
+
+    Kept with IDENTICAL semantics because callers outside this package depend on them,
+    including the side effect below. An explicit ``data_dir`` wins and implies a FLAT
+    layout inside it (the historical per-instance ternary convention); otherwise
+    ``config.dir_structure`` decides.
+
+    Side effect, deliberately preserved: in nested mode this CREATES the system directory,
+    on the read path as much as the write path. ``dev/scripts/Fit_Binary_Systems.py``
+    relies on it for cold fetches into the workspace ``matrix_data`` store.
+
+    Raises:
+        CacheModeError: under ``cache_mode='sqlite'``, where the question "which directory"
+            has no answer and any string returned here would be a fabrication.
+    """
+    warnings.warn(
+        "gliquid.api._resolve_sys_dir() is deprecated and will be removed in a future "
+        "release; use gliquid.api.resolve_cache_path(CacheKey(...)) instead, which names a "
+        "record rather than a directory and works for single-file stores too.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    backend = resolve_backend(data_dir)
+    sys_location = getattr(backend, "sys_location", None)
+    if sys_location is None:
+        raise CacheModeError(
+            f"The configured gliquid cache store keeps every record in one file, so there "
+            f"is no cache DIRECTORY for '{sys_name}' to return. Use "
+            f"gliquid.api.resolve_cache_path(CacheKey(...)) to name a record instead."
+        )
+    return str(sys_location(sys_name))
 
 
 def _is_imputed_entry_dict(entry_dict: dict) -> bool:
@@ -590,7 +707,8 @@ def get_dft_structure_entries(
         dft_type (str): Functional type. Only 'GGA' works; 'R2SCAN' and 'MIXED' are
             recognized names blocked upstream and raise (see ``_BLOCKED_DFT_TYPES``).
         verbose (bool): Whether to print cache activity.
-        data_dir: Explicit cache directory override (flat layout inside it).
+        data_dir: Explicit cache STORE override — a directory (flat layout inside it) or a
+            ``CacheBackend``. The parameter keeps its historical name.
 
     Returns:
         list[ComputedStructureEntry]: Real (non-imputed) entries with structures.
@@ -599,13 +717,12 @@ def get_dft_structure_entries(
     cache_name = _canonical_sys_name(components)
     _validate_dft_type(dft_type)
 
-    sys_dir = _resolve_sys_dir(cache_name, data_dir=data_dir)
-    dft_entries_file = os.path.join(sys_dir, f"{cache_name}_ENTRIES_MP_{dft_type}.json")
+    backend = resolve_backend(data_dir)
+    key = CacheKey(cache_name, KIND_DFT_ENTRIES, dft_type)
 
     computed_entry_dicts = None
-    if os.path.exists(dft_entries_file):
-        with open(dft_entries_file) as f:
-            computed_entry_dicts = json.load(f)
+    if backend.exists(key):
+        computed_entry_dicts = backend.read_json(key)
         if verbose:
             logger.info("Loading cached DFT entry data.")
 
@@ -615,8 +732,8 @@ def get_dft_structure_entries(
         real_entries = _get_dft_entries_from_components(components, dft_type, keep_data=True)
         computed_entry_dicts = real_entries + imputed
         if verbose:
-            logger.info(f"Caching DFT entry data as {dft_entries_file}...")
-        _atomic_write_json(dft_entries_file, computed_entry_dicts)
+            logger.info(f"Caching DFT entry data as {backend.locate(key)}...")
+        backend.write_json(key, computed_entry_dicts)
 
     # Read-time Tier A guard (see get_dft_convexhull): filter in memory, never rewrite.
     return [_computed_entry_from_dict(e) for e in _filter_spurious_entries(real_entries)]
@@ -635,28 +752,28 @@ def cache_imputed_entries(
     Args:
         input (str or list): System specification (e.g., 'A-B' or ['A', 'B']).
         imputed_entry_dicts (list[dict]): Tagged ``ComputedEntry.as_dict()`` payloads.
-        dft_type (str): Functional type, selecting the cache file.
-        data_dir: Explicit cache directory override (flat layout inside it).
+        dft_type (str): Functional type, selecting the cache record.
+        data_dir: Explicit cache STORE override — a directory (flat layout inside it) or a
+            ``CacheBackend``. The parameter keeps its historical name.
 
     Returns:
-        str: Path to the cache file written.
+        str: A handle to the record written — the cache file path for a directory store.
     """
     components, _, _ = validate_and_format_system(input, allow_compounds=True)
     cache_name = _canonical_sys_name(components)
-    sys_dir = _resolve_sys_dir(cache_name, data_dir=data_dir)
-    dft_entries_file = os.path.join(sys_dir, f"{cache_name}_ENTRIES_MP_{dft_type}.json")
+    backend = resolve_backend(data_dir)
+    key = CacheKey(cache_name, KIND_DFT_ENTRIES, dft_type)
 
-    if os.path.exists(dft_entries_file):
-        with open(dft_entries_file) as f:
-            existing = json.load(f)
+    if backend.exists(key):
+        existing = backend.read_json(key)
     else:
         existing = _get_dft_entries_from_components(components, dft_type)
 
     new_ids = {e.get("entry_id") for e in imputed_entry_dicts}
     existing = [e for e in existing if e.get("entry_id") not in new_ids]
     existing.extend(imputed_entry_dicts)
-    _atomic_write_json(dft_entries_file, existing)
-    return dft_entries_file
+    backend.write_json(key, existing)
+    return backend.locate(key)
 
 
 def get_dft_convexhull(
@@ -680,8 +797,9 @@ def get_dft_convexhull(
         include_imputed (bool): If False (default), imputed entries cached by
             ``cache_imputed_entries`` are filtered out so the hull is DFT-only. Set True to
             include them (phase-energy imputation workflow).
-        data_dir: Explicit cache directory override (flat layout inside it) — e.g. the
-            per-instance ternary ``data_dir``.
+        data_dir: Explicit cache STORE override — a directory (flat layout inside it) or a
+            ``CacheBackend``, e.g. the per-instance ternary store. The parameter keeps its
+            historical name.
 
     Returns:
         A tuple of the phase diagram and a dictionary of stable entry atomic volumes.
@@ -693,42 +811,37 @@ def get_dft_convexhull(
     if verbose:
         logger.info(f"Using DFT entries solved with {dft_type} functionals.")
 
-    sys_dir = _resolve_sys_dir(cache_name, data_dir=data_dir)
-
-    dft_entries_file = os.path.join(sys_dir, f"{cache_name}_ENTRIES_MP_{dft_type}.json")
+    backend = resolve_backend(data_dir)
+    key = CacheKey(cache_name, KIND_DFT_ENTRIES, dft_type)
+    cached = backend.exists(key)
 
     # Yb-containing structures are only available with R2SCAN functional
     # See https://docs.materialsproject.org/changes/database-versions#v2023.11.1
     # and https://docs.materialsproject.org/changes/database-versions#v2025.02.12
-    if "Yb" in components and not os.path.exists(dft_entries_file):
+    if "Yb" in components and not cached:
         logger.warning(
             "Yb-containing structures are only available with R2SCAN or MIXED functionals "
             "on the MP database, and BOTH are blocked upstream (see _BLOCKED_DFT_TYPES), so "
             "there is no working functional for a cold Yb fetch: expect an empty result."
         )
 
-    if os.path.exists(dft_entries_file):
-        with open(dft_entries_file) as f:
-            computed_entry_dicts = [_normalize_entry_dict(e) for e in json.load(f)]
+    if cached:
+        computed_entry_dicts = [_normalize_entry_dict(e) for e in backend.read_json(key)]
         if verbose:
             logger.info("Loading cached DFT entry data.")
     else:
         computed_entry_dicts = _get_dft_entries_from_components(components, dft_type)
         if verbose:
-            logger.info(f"Caching DFT entry data as {dft_entries_file}...")
-        _atomic_write_json(dft_entries_file, computed_entry_dicts)
+            logger.info(f"Caching DFT entry data as {backend.locate(key)}...")
+        backend.write_json(key, computed_entry_dicts)
 
     if not include_imputed:
         computed_entry_dicts = [e for e in computed_entry_dicts if not _is_imputed_entry_dict(e)]
 
-    # Read-time Mg149 guard (fetch already filters; old ternary caches may predate it).
-    computed_entry_dicts = [
-        e for e in computed_entry_dicts if e.get("composition", {}).get("Mg", 0) != 149
-    ]
-
     # Read-time Tier A guard (blacklist + anchor consistency): caches of any age
-    # may hold blacklisted or sub-anchor elemental structures; filter in memory,
-    # never rewrite the cache file.
+    # may hold blacklisted elemental structures, sub-anchor elemental structures,
+    # or the blacklisted MP composition artifacts old ternary caches predate;
+    # filter in memory, never rewrite the cache file.
     computed_entry_dicts = _filter_spurious_entries(computed_entry_dicts)
 
     if any(len(Composition(c).elements) > 1 for c in components):

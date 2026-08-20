@@ -160,6 +160,10 @@ class TestPinnedDiagramsAreDeterministic:
             )
         monkeypatch.setattr(config, "data_dir", tmp_path)
         monkeypatch.setattr(config, "dir_structure", "flat")
+        # Pin the mode too: this fixture IS a directory store, and leaving the mode ambient
+        # would make the test depend on how the session happened to be configured (the root
+        # conftest.py can swap a single-file store in process-wide).
+        monkeypatch.setattr(config, "cache_mode", "directory")
         return tmp_path
 
     def test_explicit_index_ignores_the_indexless_sibling(self, flat_cache):

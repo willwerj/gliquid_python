@@ -75,7 +75,7 @@ pip install -e .     # editable, for development
 pip install -e .[test]  # editable, plus pytest and ruff -- see CONTRIBUTING.md
 ```
 
-A clone also needs no data configuration: GLiquid falls back to the checkout's own `data/`
+A clone also needs no data configuration: GLiquid falls back to the checkout's own `cache/`
 directory. See step 3.
 
 ### **3. Point GLiquid at its data**
@@ -83,7 +83,7 @@ GLiquid's data comes in two kinds, and only one of them is installed with the pa
 
 **Reference tables — shipped, nothing to do.** `phase_transitions.json` (the unary element
 database), `omegas_hcp.json` and `spurious_structures.json` live inside the package at
-`gliquid/data/`. They are what element free-energy references are built from, so a
+`gliquid/reference/`. They are what element free-energy references are built from, so a
 `pip install gliquid` is immediately able to compute:
 
 ```python
@@ -99,15 +99,15 @@ cached system needs a data directory. Point at one either way:
 ```python
 from pathlib import Path
 import gliquid.config as cfg
-cfg.set_data_dir(Path("/path/to/gliquid_python/data"))
+cfg.set_data_dir(Path("/path/to/gliquid_python/cache"))
 ```
 
 ```bash
-export GLIQUID_DATA_DIR=/path/to/gliquid_python/data   # read once, at import
+export GLIQUID_DATA_DIR=/path/to/gliquid_python/cache   # read once, at import
 ```
 
 The resolution order is `set_data_dir()`, then `GLIQUID_DATA_DIR`, then — if you are running
-from a source checkout — that checkout's own `data/`. Working from a clone therefore needs no
+from a source checkout — that checkout's own `cache/`. Working from a clone therefore needs no
 configuration at all. With none of the three available, a call that needs the corpus raises
 `gliquid.ConfigError` naming both remedies; it will **not** guess a directory, because a
 guessed path yields an empty registry and results that are quietly zero rather than wrong
@@ -202,7 +202,7 @@ import os
 from pathlib import Path
 import gliquid.config as cfg
 os.environ["NEW_MP_API_KEY"] = "YOUR_API_KEY_HERE"
-cfg.set_data_dir(Path("/content/gliquid_python/data").resolve())
+cfg.set_data_dir(Path("/content/gliquid_python/cache").resolve())
 ```
 
 ## Usage

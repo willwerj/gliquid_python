@@ -22,7 +22,7 @@ work needs them — `.[editor]` for `ConvexHullEditor`, `.[mpds]` for live MPDS 
 serialized model artifacts were pickled against.
 
 Working from a clone also means the data corpus resolves automatically: `gliquid.config` falls
-back to the checkout's own `data/` directory when neither `set_data_dir()` nor
+back to the checkout's own `cache/` directory when neither `set_data_dir()` nor
 `GLIQUID_DATA_DIR` has been used. See the README for the full resolution order.
 
 ## Running the tests
