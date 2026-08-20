@@ -11,6 +11,16 @@ from __future__ import annotations
 import numpy as np
 import plotly.graph_objects as go
 
+# Plotly CLIPS 3-D geometry at the axis bounds, and the base triangle is drawn on the floor.
+# Placed exactly at ``conds[0]`` its two back edges land on the clip plane and disappear, so it
+# is lifted by a hair to sit strictly inside the range -- 0.1% of the temperature span, about
+# 3 C on a 2800 C diagram and invisible at plot scale. This is what lets the z-axis stop at
+# ``conds[0]``, which is absolute zero, instead of borrowing drawing room below it: the old code
+# put the labels 150 C BELOW the floor and then opened the axis 200 C below it to fit them,
+# which only looked harmless while ``conds[0]`` was 0 K misread as 0 C. The solid-phase segments
+# are NOT lifted -- they still start at the true grid floor.
+FLOOR_INSET_FRAC = 1e-3
+
 
 def render_hull_slice(hull_data, components) -> go.Figure:
     """The 3-D single-slice lower-hull figure over ``get_convex_hull`` output."""
@@ -248,10 +258,17 @@ def connect_line_segments(segments, tolerance=1e-4):
 
 
 def render_tx_surface(
-    solid_df, liq_df, liq_points, triangles, color_map, components, conds, temp_slider
+    solid_df, liq_df, liq_points, triangles, color_map, components, conds
 ) -> go.Figure:
     """The 3-D ternary liquidus figure: solid-phase lines, liquidus mesh, isotherms,
-    legend markers, and the base-triangle axes/labels (ex-TLIPlotter._plot_tx draw tail)."""
+    legend markers, and the base-triangle axes/labels (ex-TLIPlotter._plot_tx draw tail).
+
+    ``conds`` is the plotted temperature window in CELSIUS -- the same frame as the ``T``
+    columns of ``solid_df``/``liq_df`` -- and it is the z-axis range verbatim. It already
+    carries any ``temp_slider`` margin, which is folded into the temperature grid it is
+    derived from (:meth:`gliquid.ternary.TernaryLiquidInterpolation._init_sys`), so this
+    function takes no slider of its own; the retired one was applied a second time here.
+    """
     fig = go.Figure()
 
     for label, group in solid_df.groupby("Phase"):
@@ -310,11 +327,14 @@ def render_tx_surface(
             )
         )
 
+    # The drawn floor: conds[0] lifted clear of the clip plane (see FLOOR_INSET_FRAC).
+    floor_z = conds[0] + FLOOR_INSET_FRAC * (conds[1] - conds[0])
+
     fig.add_trace(
         go.Scatter3d(
             x=[0, 0.5, 1, 0],
             y=[0, np.sqrt(3) / 2, 0, 0],
-            z=[conds[0], conds[0], conds[0], conds[0]],
+            z=[floor_z] * 4,
             mode="lines",
             line=dict(color="black", width=5),
             name="axes",
@@ -326,10 +346,16 @@ def render_tx_surface(
         go.Scatter3d(
             x=[-0.02, 0.48, 0.98, -0.02],
             y=[0.02, np.sqrt(3) / 2 + 0.02, 0.02, 0.02],
-            z=[conds[0] - 150, conds[0] - 150, conds[0] - 150, conds[0] - 150],
+            # Anchored ON the base triangle, with the drop to below it taken in SCREEN space
+            # (textposition) rather than as a temperature. conds[0] is absolute zero, so there
+            # is no room under the floor to borrow: a z coordinate below it would be an
+            # impossible temperature, and plotly clips out-of-range 3-D text, so the labels
+            # would simply vanish -- which is what the old ``conds[0] - 150`` anchor and the
+            # matching ``- 200`` on the z-axis range were paying for.
+            z=[floor_z] * 4,
             mode="text",
             text=[f"<b>{components[0]}</b>", f"<b>{components[2]}</b>", f"<b>{components[1]}</b>"],
-            textposition="top center",
+            textposition="bottom center",
             showlegend=False,
             textfont=dict(size=12),
         )
@@ -341,7 +367,12 @@ def render_tx_surface(
         margin=dict(l=50, r=50, b=50, t=50),
         scene=dict(
             zaxis=dict(
-                range=[conds[0] - 200 - temp_slider[0], conds[1] - 200 + temp_slider[1]],
+                # Exactly the plotted window: conds IS the temperature grid in Celsius, so the
+                # axis runs from absolute zero to the top of the grid and nothing drawn can
+                # fall outside it. ``temp_slider`` is NOT re-applied here -- it is already
+                # folded into the grid, hence into conds, by _init_sys; the retired
+                # ``- 200 - temp_slider[0]`` / ``- 200 + temp_slider[1]`` counted it twice.
+                range=[conds[0], conds[1]],
                 title="Temperature (C)",
             ),
             xaxis=dict(

@@ -307,13 +307,15 @@ class TestLadderSurvivesIntoTheFigure:
         assert len(spans) >= 2, f"{el}: only {spans} -- nothing to stack"
         floor = float(htz_plot.conds[0])
 
-        # The stack must REACH the plot floor, but the lowest segment does not have to START
-        # there: conds[0] is carried in Kelvin against a Celsius frame, so a phase stable
-        # only at very low temperature (Ti's spurious P6/mmm, ceiling -93.15 C) legitimately
-        # tops out below it. What must hold is that the segments tile the corner without
-        # inverting or overlapping -- that is what makes each transition visible.
-        assert spans[0][0] <= floor + 1e-6, (
-            f"{el}: stack starts at {spans[0][0]}, leaving a gap below it to the floor {floor}"
+        # The stack starts exactly ON the plot floor: conds[0] is the bottom of the temperature
+        # grid in Celsius, so it is at or below every phase's ceiling. (It used to be carried in
+        # Kelvin, putting the floor 273.15 C above the grid, so a phase stable only at very low
+        # temperature -- Ti's spurious P6/mmm, ceiling -93.15 C -- topped out below it and needed
+        # a fallback. See tests/test_ternary_temperature_units.py.) Above that, the segments must
+        # tile the corner without inverting or overlapping -- that is what makes each transition
+        # visible.
+        assert spans[0][0] == pytest.approx(floor, abs=1e-6), (
+            f"{el}: stack starts at {spans[0][0]}, not on the plot floor {floor}"
         )
         for lo, hi, ph in spans:
             assert lo <= hi + 1e-6, f"{el}: {ph} segment is inverted ({lo} -> {hi})"
