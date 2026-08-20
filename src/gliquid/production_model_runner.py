@@ -41,6 +41,34 @@ what it predicted at export whichever scikit-learn is installed later — or non
 path unchanged — joblib pipelines, and the feature corpus read from the bundle's own xlsx —
 so the notebooks and ``dev/scripts/Interactive_Matrix_Plotter.py`` keep running against
 ``dev/model_bundles/`` and ``cache/20260329_022905/`` with no edits.
+
+**The ML stack is an OPTIONAL EXTRA, and this module is where that line is drawn.** Nothing
+else in gliquid imports XGBoost, SHAP, joblib or scikit-learn: the hull walk, the phase
+diagrams and the ternary interpolation reach none of them. Carrying them as base
+dependencies cost every consumer ~935 MB of site-packages for code it never called —
+measured on the ``whsun-viz`` image, whose ternary app uses only the hull path and never
+constructs a runner: ``nvidia`` (NCCL, pulled by ``xgboost`` on Linux) 454 MB, ``xgboost``
+228 MB, ``llvmlite`` 173 MB, ``scikit-learn`` 50 MB, ``numba`` 35 MB. So they moved behind
+extras, and the imports below are deferred to the exact call that needs one:
+
+===================  ================  =====================================================
+what you are doing   extra             what it actually needs
+===================  ================  =====================================================
+``import gliquid``   *(none)*          nothing here — the façade is lazy, see ``__init__``
+portable bundle      ``ml``            ``xgboost`` only: ``Booster`` + JSON scaler coefficients
+SHAP explanations    ``shap``          ``shap`` (which drags ``numba``/``llvmlite``)
+legacy joblib bundle ``models``        ``joblib`` + the pinned ``scikit-learn`` to unpickle into
+===================  ================  =====================================================
+
+The split is not cosmetic: the *portable* path genuinely needs less than the legacy one.
+Its scalers are :class:`_AffineScaler` / :class:`_StandardInverse` — plain NumPy replaying
+recorded coefficients — so it never imports scikit-learn at all, and its weights are UBJSON
+rather than a pickle graph, so it never imports joblib. ``shap`` is needed by no prediction
+path whatsoever, only by the explanation and figure methods.
+
+Each accessor raises an ``ImportError`` naming its extra, following the same pattern
+``hull_editor`` uses for ``editor``. ``gliquid/__init__.py`` resolves ``ProductionModelRunner``
+lazily, so a bare install can still *name* the export; CONSTRUCTING one is what raises.
 """
 
 from __future__ import annotations
@@ -50,21 +78,94 @@ import importlib.resources
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import shap
-import xgboost
 
 import gliquid.cache as gliquid_cache
 import gliquid.config as config
-from gliquid.shap_compat import apply_patches as apply_shap_patches
 
-apply_shap_patches()
+if TYPE_CHECKING:
+    # Annotations only. `from __future__ import annotations` keeps every annotation a
+    # string, so nothing below evaluates these names at runtime.
+    import shap
+    import xgboost
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------------------
+# Optional ML dependencies -- imported at the call that needs them, never at module import
+# ---------------------------------------------------------------------------------------
+
+_ML_EXTRA_HINT = (
+    "ProductionModelRunner needs XGBoost, which gliquid ships as an optional extra "
+    "(gliquid has no other use for it). Install it with `pip install gliquid[ml]` or "
+    "`pip install xgboost`."
+)
+
+_SHAP_EXTRA_HINT = (
+    "SHAP explanations need the `shap` package, which gliquid ships as an optional extra "
+    "because it pulls numba and llvmlite (~200 MB) that no prediction path uses. Install it "
+    "with `pip install gliquid[shap]` or `pip install shap`. Predicting needs none of this."
+)
+
+_MODELS_EXTRA_HINT = (
+    "Loading a LEGACY joblib bundle needs joblib and the pinned scikit-learn it was "
+    "pickled against, which gliquid ships as the optional `models` extra. Install it with "
+    "`pip install gliquid[models]`. The bundle shipped inside the wheel is pickle-free and "
+    "needs none of it: construct ProductionModelRunner() with no arguments."
+)
+
+
+def _xgboost():
+    """The ``xgboost`` module, or an ``ImportError`` naming the ``ml`` extra.
+
+    Required by BOTH bundle formats — portable bundles load a ``Booster`` directly, and a
+    legacy bundle's pickled pipelines unpickle ``xgboost.sklearn.XGBRegressor`` — so it is
+    resolved once in :meth:`ProductionModelRunner._load_model_artifacts` rather than at each
+    use. Raising there means a missing extra surfaces as a message naming it, not as a
+    ``ModuleNotFoundError`` from inside ``joblib.load``.
+    """
+    try:
+        import xgboost
+    except ImportError as exc:  # pragma: no cover - exercised in a subprocess, see tests
+        raise ImportError(_ML_EXTRA_HINT) from exc
+    return xgboost
+
+
+def _shap():
+    """The ``shap`` module with :mod:`gliquid.shap_compat` applied, or an ``ImportError``.
+
+    The patches were applied at module import while ``shap`` was a base dependency. They are
+    applied here instead, which preserves the ordering ``shap_compat`` documents — "before
+    any ``shap.TreeExplainer`` is created or any ``shap.plots.waterfall`` is called" — since
+    every such call in this module goes through this accessor first. ``apply_patches`` is
+    idempotent, so the repeat calls cost a set lookup.
+    """
+    try:
+        import shap
+    except ImportError as exc:  # pragma: no cover - exercised in a subprocess, see tests
+        raise ImportError(_SHAP_EXTRA_HINT) from exc
+    from gliquid.shap_compat import apply_patches
+
+    apply_patches()
+    return shap
+
+
+def _joblib():
+    """The ``joblib`` module, or an ``ImportError`` naming the ``models`` extra.
+
+    Reached only by :meth:`ProductionModelRunner._load_legacy_artifacts`. The portable
+    bundle in the wheel is UBJSON plus JSON and never unpickles anything.
+    """
+    try:
+        import joblib
+    except ImportError as exc:  # pragma: no cover - exercised in a subprocess, see tests
+        raise ImportError(_MODELS_EXTRA_HINT) from exc
+    return joblib
 
 #: The ONE bundle that ships in the wheel. Policy is replace, never accumulate: binary
 #: artifacts in git are forever, and two bundles in ``gliquid/models/`` would double the
@@ -273,7 +374,9 @@ class _PortableModel:
 
     def predict(self, X):
         scaled = self.scaler.transform(X)
-        return self.booster.predict(xgboost.DMatrix(scaled))
+        # A sys.modules hit after the runner's constructor already resolved it. Called once
+        # per predict() -- and the golden draw pushes all 4,096 rows through a single call.
+        return self.booster.predict(_xgboost().DMatrix(scaled))
 
 
 class ProductionModelRunner:
@@ -283,6 +386,13 @@ class ProductionModelRunner:
         bundle_dir: A portable bundle (``manifest.json`` + ``<target>.ubj``) or a legacy
             joblib bundle (``model/<target>_model.joblib``). ``None`` — the default — uses
             the bundle shipped inside the wheel, :func:`default_bundle_dir`.
+
+    Raises:
+        ImportError: when the optional ML stack is absent. CONSTRUCTING a runner is what
+            raises — importing this module, and naming ``gliquid.ProductionModelRunner``
+            through the lazy façade, both still work on a bare install. ``ml`` covers the
+            shipped portable bundle; a legacy bundle additionally needs ``models``. See the
+            module docstring for the full table.
     """
 
     def __init__(self, bundle_dir: str | Path | None = None):
@@ -331,6 +441,11 @@ class ProductionModelRunner:
 
     def _load_model_artifacts(self) -> None:
         """Load the WEIGHTS only. The feature corpus is loaded lazily, on first use."""
+        # Resolved here, before either branch, because BOTH need it and only one names it
+        # directly: a legacy bundle reaches xgboost through joblib's unpickling, so without
+        # this the `models` path would report a bare ModuleNotFoundError raised inside
+        # joblib.load rather than a message naming the extra to install.
+        _xgboost()
         if self.bundle_format == "portable":
             self._load_portable_artifacts()
         else:
@@ -366,7 +481,7 @@ class ProductionModelRunner:
             raise FileNotFoundError("Missing required bundle files:\n" + "\n".join(missing))
 
         for target in self.targets:
-            booster = xgboost.Booster()
+            booster = _xgboost().Booster()
             booster.load_model(str(self.bundle_dir / f"{target}.ubj"))
             feature_block = preprocess["features"][target]
             scaler = _AffineScaler(feature_block["center"], feature_block["scale"])
@@ -387,7 +502,11 @@ class ProductionModelRunner:
         The target list comes from the directory contents, not from a literal
         ``["L0_a", "L0_b", "L1_a"]``. That literal is exactly what stops a v23 four-target
         bundle from loading, and the fix is the same one the converter's ``--targets`` makes.
+
+        This is the ONLY path that unpickles, hence the only one that needs ``joblib`` and
+        the pinned ``scikit-learn`` of the ``models`` extra.
         """
+        joblib = _joblib()
         suffix = "_model.joblib"
         self.targets = sorted(p.name[: -len(suffix)] for p in self.model_dir.glob("*" + suffix))
         if not self.targets:  # pragma: no cover - _detect_format already required one
@@ -681,7 +800,7 @@ class ProductionModelRunner:
         if target in self.explainers:
             return
         tree_model = self._get_tree_model(self.models[target])
-        self.explainers[target] = shap.TreeExplainer(tree_model)
+        self.explainers[target] = _shap().TreeExplainer(tree_model)
 
     def _target_inverse_affine(self, target: str) -> tuple[float, float] | None:
         """Return ``(intercept, slope)`` of the target's inverse transform.
@@ -760,7 +879,12 @@ class ProductionModelRunner:
         Returns:
             shap.Explanation: One-dimensional Explanation with values in original
             target space.
+
+        Raises:
+            ImportError: when ``shap`` is absent — it is the optional ``shap`` extra. No
+                PREDICTION path needs it; see the module docstring.
         """
+        shap = _shap()
         self._ensure_explainer(target)
         model = self.models[target]
         explainer = self.explainers[target]
@@ -812,7 +936,12 @@ class ProductionModelRunner:
 
         Returns:
             str: Path to saved figure file, or ``None`` when shown interactively.
+
+        Raises:
+            ImportError: when ``shap`` is absent — the optional ``shap`` extra.
         """
+        shap = _shap()
+
         # Fetch feature rows using the existing workflow
         symm_row, anti_row, _ = self.get_rows_for_system(system_name)
         l0_features_df = self._prepare_row(symm_row, mode="symmetric")
@@ -1006,7 +1135,9 @@ class ProductionModelRunner:
         Raises:
             gliquid.ConfigError: reads the whole feature corpus, so it needs one — unlike
                 :meth:`predict_from_dataframes`.
+            ImportError: when ``shap`` is absent — the optional ``shap`` extra.
         """
+        shap = _shap()
         results: list[str | None] = []
 
         for target in self.targets:
