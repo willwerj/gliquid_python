@@ -601,9 +601,8 @@ class ProductionModelRunner:
                 f"(cache: {len(columns)} columns exported for bundle "
                 f"{backend.ml_features_bundle_id(frame)!r}; bundle: {len(expected)}). "
                 f"Predicting from mismatched columns would feed the model a row of the "
-                f"wrong features, which it would accept without complaint. Re-export the "
-                f"feature tables for this bundle with "
-                f"`python dev/scripts/export_portable_model_bundle.py --features-out ...`."
+                f"wrong features, which it would accept without complaint. Point gliquid at "
+                f"a cache store whose feature tables were exported for this bundle."
             )
         rows = backend.ml_feature_rows(frame)
         if not rows:
@@ -622,16 +621,14 @@ class ProductionModelRunner:
 
         A ``ConfigError`` and not a ``FileNotFoundError``: nothing is missing from the
         BUNDLE — the bundle is complete and its weights already loaded. What is missing is
-        the pointer to a corpus, which is a configuration fault, and the message says how to
-        fix it rather than naming a path that was never going to exist.
+        the pointer to a corpus, which is a configuration fault.
         """
         how_to = (
             f"Point gliquid at a SQLite cache store carrying them with "
             f"gliquid.config.set_cache_dir('<store>.sqlite') (or the "
-            f"{config.CACHE_DIR_ENV_VAR} environment variable), and build one with "
-            f"`python dev/scripts/export_portable_model_bundle.py --joblib-bundle <bundle> "
-            f"--out <bundle> --features-out <store>.sqlite`. Predicting from feature rows "
-            f"you already hold needs none of this: use predict_from_dataframes()."
+            f"{config.CACHE_DIR_ENV_VAR} environment variable); the tables are exported "
+            f"alongside the bundle and are not part of the wheel. Predicting from feature "
+            f"rows you already hold needs none of this: use predict_from_dataframes()."
         )
         if config.cache_dir is None:
             raise config.ConfigError(
