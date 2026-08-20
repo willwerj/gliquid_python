@@ -11,6 +11,36 @@ source tree carries a version literal that could disagree with this file.
 
 ### Changed
 
+- **The machine-learning stack is now an optional extra, not a base dependency.**
+  `scikit-learn`, `shap`, `joblib` and `xgboost` left `[project.dependencies]` for the new
+  `ml` / `shap` extras and the existing `models` one. They are reachable from exactly one
+  module, `gliquid.production_model_runner`; every other capability — fitting, the convex
+  hull, the phase diagrams, the ternary interpolation — ran without them and paid for them
+  anyway. Measured over the full dependency closure on a linux-x86_64 / py312 resolve, a
+  plain `pip install gliquid` goes from **1088.5 MB to 469.4 MB** of installed packages, and
+  from 535.4 MB to 151.4 MB of downloads — 70 distributions to 60. Most of that is not the ML
+  libraries themselves but what they drag: `xgboost` declares NVIDIA's NCCL on Linux
+  (301.7 MB unpacked) and `shap` pulls `numba` → `llvmlite` (195.2 MB).
+
+  Installing the capability back still costs less than the old default did: `gliquid[ml]`
+  resolves to 492.8 MB, `gliquid[models]` to 520.9 MB, and `gliquid[shap]` — everything —
+  to 722.8 MB.
+
+  Nothing about how the runner is *reached* changed: `import gliquid` still works, and
+  `gliquid.ProductionModelRunner` still resolves through the lazy façade. Constructing one
+  without the extra now raises an `ImportError` naming it, the way `ConvexHullEditor` already
+  did for `editor`. Which extra depends on what you are doing — `ml` for the pickle-free
+  bundle that ships in the wheel, `shap` for explanations and their figures, `models` for a
+  legacy joblib bundle. Callers who were relying on `pip install gliquid` to supply these
+  need `pip install gliquid[ml]` (or `[shap]` / `[models]`).
+
+- `ml` and `models` install **`xgboost-cpu`** rather than `xgboost` on every platform that
+  publishes it (all but macOS). Same library, same import name, same 3.1.3 for the pinned
+  legacy path; `xgboost` differs only in also declaring NVIDIA NCCL on Linux, which gliquid
+  cannot use — there is no GPU code path in the package. `ml-gpu` installs the CUDA-capable
+  build for callers who want it, and must be used *instead of* `ml`: both distributions
+  install a package directory named `xgboost`.
+
 - **Two directories no longer share the name `data`.** The bundled reference tables moved
   from `src/gliquid/data/` to `src/gliquid/reference/` (in the wheel: `gliquid/data/` →
   `gliquid/reference/`), and a source checkout's external corpus moved from `data/` to

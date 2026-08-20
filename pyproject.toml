@@ -29,11 +29,15 @@ dependencies = [
     "scipy>=1.11",
     "matplotlib>=3.10.0",
     "sympy>=1.13",
-    "scikit-learn>=1.4,<2",
-    "shap>=0.48.0",
-    "joblib>=1.3.0",
-    "xgboost>=2.0,<4",
     "tqdm>=4.65",
+    # NO ML STACK HERE, and that is measured rather than tidy-minded. scikit-learn, shap,
+    # joblib and xgboost were base dependencies until they were found to cost ~935 MB of
+    # site-packages on the whsun-viz image -- which serves the ternary app, uses only the
+    # hull/phase-diagram path, and never constructs a ProductionModelRunner. The image went
+    # 5.08 GB -> 6.45 GB while its own /app payload SHRANK 1.3 G -> 1.1 G. gliquid.production_model_runner
+    # is the ONLY module in the package that imports any of them, so they are extras now:
+    # `ml`, `shap` and `models` below. Re-adding one here re-adds it for every consumer of
+    # the library; test_optional_ml_extras.py fails if one reappears.
 ]
 requires-python = ">=3.10,<3.14"
 authors = [
@@ -86,17 +90,60 @@ editor = [
     "ipywidgets>=8.0",
     "ipython>=8.0",
 ]
+ml = [
+    # Everything the SHIPPED portable bundle needs, and nothing else. Its scalers are
+    # _AffineScaler/_StandardInverse -- plain NumPy replaying recorded coefficients -- so
+    # scikit-learn is NOT here; its weights are UBJSON, not a pickle graph, so joblib is
+    # not either. Booster.load_model + DMatrix is the whole requirement.
+    #
+    # xgboost-cpu, not xgboost. They are the same code and the same import name; the only
+    # difference is that `xgboost` declares `nvidia-nccl-cuXX; platform_system == "Linux"`
+    # and `xgboost-cpu` does not. Measured on PyPI for the linux-x86_64 py312 resolve:
+    # nvidia-nccl-cu13 2.31.2 unpacks to 302 MB (cu12, which xgboost 3.1.3 pulls, to
+    # 476 MB) and the xgboost wheel itself unpacks to 87.5 MB against xgboost-cpu's 12.7 MB.
+    # gliquid has no GPU code path at all -- this is single-row inference over three small
+    # boosted-tree models -- so the CUDA build buys nothing and costs ~380 MB.
+    #
+    # The marker split is because xgboost-cpu publishes manylinux (x86_64/aarch64) and
+    # Windows (amd64/arm64) wheels but NO macOS wheels; on macOS the ordinary xgboost wheel
+    # is 2.5 MB and carries no nvidia dependency anyway, so there is nothing to avoid.
+    # 2.1.1 is xgboost-cpu's FIRST release -- a >=2.0 floor there would name a version that
+    # has never existed.
+    "xgboost-cpu>=2.1.1,<4; sys_platform != 'darwin'",
+    "xgboost>=2.0,<4; sys_platform == 'darwin'",
+]
+ml-gpu = [
+    # The CUDA-capable build, for a caller who wants XGBoost on a GPU for something OTHER
+    # than gliquid. Use INSTEAD OF `ml`, never alongside it: both distributions install a
+    # package directory named `xgboost`, so having both resolved into one environment leaves
+    # whichever pip wrote last, and uninstalling either breaks the other.
+    "xgboost>=2.0,<4",
+]
+shap = [
+    "gliquid[ml]",
+    # Separate from `ml` because no PREDICTION path touches it -- only get_shap_explanation
+    # and the two figure methods do -- and it is not cheap: shap pulls numba, which pulls
+    # llvmlite, which alone unpacks to 179.5 MB (measured, linux-x86_64 py312).
+    "shap>=0.48.0",
+]
 models = [
     # ONLY for LEGACY joblib bundles (dev/model_bundles/, cache/<timestamp>/model/). The
     # bundle shipped inside the wheel at gliquid/models/ is pickle-free -- XGBoost UBJSON
-    # plus JSON scaler coefficients -- and needs none of this: it loads on the base
-    # dependencies at any version, which is the entire point of spec 07.
+    # plus JSON scaler coefficients -- and needs none of this: it loads on `ml` alone at any
+    # version, which is the entire point of spec 07.
     #
     # A pickled estimator unpickles against the versions that wrote it, hence the exact
     # pins; keeping them here rather than in [project.dependencies] keeps the constraint
     # off every consumer of the library.
     "scikit-learn==1.7.1",
-    "xgboost==3.1.3",
+    # joblib was a base dependency until the ML stack moved out; it is reached from exactly
+    # one place, _load_legacy_artifacts, and only ever to unpickle these bundles.
+    "joblib>=1.3.0",
+    # Pinned to the same 3.1.3 as before, on whichever distribution `ml` uses, so
+    # `gliquid[ml,models]` resolves to ONE xgboost rather than to two that clobber each
+    # other. Same version of the same code either way, so the unpickle guarantee is intact.
+    "xgboost-cpu==3.1.3; sys_platform != 'darwin'",
+    "xgboost==3.1.3; sys_platform == 'darwin'",
     # Needed only to read a legacy bundle's prediction_dataset_*.xlsx feature sheets.
     # It used to be required by an UNCONDITIONAL pd.read_excel in ProductionModelRunner's
     # constructor, so a bare `pip install gliquid` imported fine and then died on
@@ -107,6 +154,21 @@ models = [
 test = [
     "pytest>=7.0",
     "ruff>=0.6",
+    # The compat matrix installs `extras = test`, so the ML stack has to arrive through
+    # here or tests/test_portable_model_bundle.py would collect against no xgboost in all
+    # eight environments. Deliberately the UNPINNED forms, not `gliquid[models]`: that
+    # extra's scikit-learn==1.7.1 would freeze every env at one version and throw away the
+    # coverage that caught StandardScaler.inverse_transform changing its float32 op order
+    # between 1.7.2 and 1.9.0 -- the reason _StandardInverse records a convention at all.
+    #
+    # `shap` is NOT here. No test exercises a SHAP path, so installing it would add numba +
+    # llvmlite (~200 MB) to eight environments for zero coverage; the absence is itself
+    # covered, by the subprocess tests that assert the guarded imports raise a message
+    # naming the extra.
+    "gliquid[ml]",
+    "scikit-learn>=1.4,<2",
+    "joblib>=1.3.0",
+    "openpyxl>=3.1.5",
 ]
 notebook = [
     "jupyter>=1.1.1",
