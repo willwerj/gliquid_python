@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import math
 
+import pandas as pd
 import pytest
 
 import gliquid.api as api
 import gliquid.solution as solution
 from gliquid.phase import UNARY
-from gliquid.ternary import TernaryLiquidInterpolation
+from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
 
 AFFECTED = ["Hf", "Ti", "Zr"]  # every corner has a bcc transition below melting
 UNAFFECTED = ["Al", "Mg", "Si"]  # no sub-melting transition on any ladder
@@ -194,3 +195,160 @@ class TestSolidSolutionExclusion:
         assert not ti.ss_models
         names = set(ti.tern_mp_df["Phase Name"])
         assert {"beta-Hf (bcc)", "beta-Ti (bcc)", "beta-Zr (bcc)"} <= names
+
+
+# ----------------------------------------------------------------------------------
+# The ladder reaches the hull (above). Does it reach the FIGURE?
+# ----------------------------------------------------------------------------------
+def _plotter(components, xs_mix):
+    """A TLIPlotter with its tx frame built.
+
+    ``fit_or_pred`` is deliberately left empty: ``_init_sys`` only builds the binary edge
+    sub-figures when BOTH ``xs_mix`` and ``fit_or_pred`` are populated, and those are not
+    under test here -- skipping them keeps the fixture cheap.
+    """
+    ti = TernaryLiquidInterpolation(
+        list(components),
+        delta=0.25,
+        interp_scheme="linear",
+        param_format="linear",
+        xs_mix=xs_mix,
+        T_incr=T_INCR,
+        order="given",
+    )
+    ti.interpolate()
+    p = TLIPlotter(ti, order="given", T_incr=T_INCR)
+    p.process_data()
+    p.get_plot("tx")  # builds solid_plotting_df as a side effect
+    return p
+
+
+@pytest.fixture(scope="module")
+def htz_plot():
+    return _plotter(AFFECTED, ZERO_MIX)
+
+
+@pytest.fixture(scope="module")
+def ams_plot():
+    return _plotter(UNAFFECTED, ZERO_MIX_AMS)
+
+
+def _corner_xy(components, el):
+    i = list(components).index(el)
+    return (1.0 if i == 1 else 0.0, 1.0 if i == 2 else 0.0)
+
+
+def _raw_solid(plotter):
+    df = pd.concat(plotter.equil_df_list, ignore_index=True)
+    return df[df["Phase"] != "L"]
+
+
+def _corner_rows(plotter, components, el):
+    """(raw_rows, rendered_rows) at ``el``'s vertex, both keyed on the SAME columns.
+
+    Only the equilibrium frames carry ``x0_orig``/``x1_orig``; the floor rows ``_plot_tx``
+    appends set just x0/x1/T/Phase/Colors, so those rows have NaN there and a filter on the
+    _orig columns silently drops exactly the rows a flooring assertion is about. Both frames
+    do share the post-``cartesian_to_ternary`` x0/x1, so resolve the corner's transformed
+    coordinates from the raw frame once and key everything on those.
+    """
+    import numpy as np
+
+    cx, cy = _corner_xy(components, el)
+    raw = _raw_solid(plotter)
+    seed = raw[np.isclose(raw["x0_orig"], cx, atol=1e-6) & np.isclose(raw["x1_orig"], cy, atol=1e-6)]
+    assert not seed.empty, f"no solid row at {el}'s vertex -- fixture or convention changed"
+    tx0, tx1 = float(seed["x0"].iloc[0]), float(seed["x1"].iloc[0])
+
+    def _pick(df):
+        return df[np.isclose(df["x0"], tx0, atol=1e-6) & np.isclose(df["x1"], tx1, atol=1e-6)]
+
+    return _pick(raw), _pick(plotter.solid_plotting_df)
+
+
+class TestLadderSurvivesIntoTheFigure:
+    """The hull finds the whole ladder; the figure must not silently drop most of it.
+
+    ``_plot_tx`` deduplicated the solid frame on ``["x0", "x1"]`` alone, and every polymorph
+    of one element shares that element's corner -- so only the highest-temperature one
+    survived and was then floored at ``conds[0]``, rendering the corner as ONE unbroken line
+    from the plot floor to the melting point with no transition visible.
+    """
+
+    @pytest.mark.parametrize("el", AFFECTED)
+    def test_premise_hull_really_carries_a_ladder_here(self, htz_plot, el):
+        """Without this the survival assertions below could pass vacuously."""
+        at, _ = _corner_rows(htz_plot, AFFECTED, el)
+        assert at["Phase"].nunique() >= 2, (
+            f"{el}'s corner carries {sorted(at['Phase'].unique())} on the hull -- "
+            "a single phase cannot exercise the dedupe"
+        )
+
+    @pytest.mark.parametrize("el", AFFECTED)
+    def test_every_hull_phase_at_the_corner_is_rendered(self, htz_plot, el):
+        raw_at, rendered_at = _corner_rows(htz_plot, AFFECTED, el)
+        raw, rendered = set(raw_at["Phase"]), set(rendered_at["Phase"])
+        assert rendered == raw, f"{el}: dropped {sorted(raw - rendered)} between hull and figure"
+
+    @pytest.mark.parametrize("el", AFFECTED)
+    def test_ladder_segments_stack_instead_of_all_starting_at_the_floor(self, htz_plot, el):
+        """Each polymorph must occupy its OWN temperature band.
+
+        The ground state starts at the plot floor; every higher polymorph starts where the
+        one below it ends. If they all started at conds[0] the segments would overlap and
+        the transition would be invisible even with the phases present.
+        """
+        _, at = _corner_rows(htz_plot, AFFECTED, el)
+        spans = sorted(
+            ((float(g["T"].min()), float(g["T"].max()), ph) for ph, g in at.groupby("Phase")),
+            key=lambda s: s[1],
+        )
+        assert len(spans) >= 2, f"{el}: only {spans} -- nothing to stack"
+        floor = float(htz_plot.conds[0])
+
+        # The stack must REACH the plot floor, but the lowest segment does not have to START
+        # there: conds[0] is carried in Kelvin against a Celsius frame, so a phase stable
+        # only at very low temperature (Ti's spurious P6/mmm, ceiling -93.15 C) legitimately
+        # tops out below it. What must hold is that the segments tile the corner without
+        # inverting or overlapping -- that is what makes each transition visible.
+        assert spans[0][0] <= floor + 1e-6, (
+            f"{el}: stack starts at {spans[0][0]}, leaving a gap below it to the floor {floor}"
+        )
+        for lo, hi, ph in spans:
+            assert lo <= hi + 1e-6, f"{el}: {ph} segment is inverted ({lo} -> {hi})"
+        for (_lo_prev, hi_prev, ph_prev), (lo, _hi, ph) in zip(spans, spans[1:]):
+            assert lo == pytest.approx(hi_prev, abs=T_INCR + 1e-6), (
+                f"{el}: {ph} starts at {lo} but {ph_prev} ends at {hi_prev} -- not contiguous"
+            )
+            assert lo > spans[0][0] + 1e-6, (
+                f"{el}: {ph} still starts at the bottom of the stack -- segments overlap and "
+                f"the {ph_prev}->{ph} transition is invisible"
+            )
+
+    def test_no_solid_phase_is_lost_anywhere(self, htz_plot):
+        """Not just corners: the dedupe is global, so nothing may vanish at any composition."""
+        raw = set(_raw_solid(htz_plot)["Phase"])
+        rendered = set(htz_plot.solid_plotting_df["Phase"])
+        assert rendered == raw, f"lost {sorted(raw - rendered)}"
+
+    @pytest.mark.parametrize("el", UNAFFECTED)
+    def test_negative_control_corner_is_untouched(self, ams_plot, el):
+        """No ladder means nothing to keep: exactly one phase, still floored at conds[0].
+
+        This is what protects tests_internal/test_tliplotter_figures.py, whose pins are
+        frozen on this very system.
+        """
+        raw, at = _corner_rows(ams_plot, UNAFFECTED, el)
+        assert raw["Phase"].nunique() == 1, f"{el} is no longer a control: {sorted(set(raw['Phase']))}"
+        assert at["Phase"].nunique() == 1
+        assert float(at["T"].min()) == pytest.approx(float(ams_plot.conds[0]), abs=1e-6)
+
+    def test_negative_control_system_has_no_stacked_composition_at_all(self, ams_plot):
+        """The pinned fixture's invariant, asserted rather than assumed: if no composition
+        in Al-Mg-Si carries two phases, the per-phase dedupe cannot move its figure pins."""
+        raw = _raw_solid(ams_plot)
+        stacked = raw.groupby(["x0", "x1"])["Phase"].nunique()
+        assert (stacked <= 1).all(), (
+            f"{int((stacked > 1).sum())} composition(s) carry >1 phase -- "
+            "the figure pins CAN move and must be re-frozen deliberately"
+        )
