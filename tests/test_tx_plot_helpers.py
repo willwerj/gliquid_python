@@ -41,9 +41,9 @@ def test_abbreviate_phase_name_rules():
     names = ["alpha Mn (bcc)", "beta Mn (bcc)", "delta Fe (bcc)", "ZrMn2", "Liquid"]
 
     # Mn has two polymorphs present -> keep greek; structure kept (already short).
-    assert _abbreviate_phase_name("alpha Mn (bcc)", names) == "(αMn) bcc"
+    assert _abbreviate_phase_name("alpha Mn (bcc)", names) == "α-Mn (bcc)"
     # Fe has a single phase present -> drop greek; structure kept.
-    assert _abbreviate_phase_name("delta Fe (bcc)", names) == "(Fe) bcc"
+    assert _abbreviate_phase_name("delta Fe (bcc)", names) == "Fe (bcc)"
     assert _abbreviate_phase_name("ZrMn2", names) == "ZrMn<sub>2</sub>"
     assert _abbreviate_phase_name("Liquid", names) == "L"
     assert _abbreviate_phase_name("L", names) == "L"
@@ -52,28 +52,30 @@ def test_abbreviate_phase_name_rules():
 def test_abbreviate_phase_name_hyphen_form_and_structure_abbrev():
     # Hyphen-separated greek prefix (real-data form), single polymorph -> drop greek, abbrev struct.
     single = ["alpha-Ga (orthorhombic)", "SmGa2", "L"]
-    assert _abbreviate_phase_name("alpha-Ga (orthorhombic)", single) == "(Ga) ortho"
+    assert _abbreviate_phase_name("alpha-Ga (orthorhombic)", single) == "Ga (ortho)"
 
     # Two polymorphs of the same element present -> keep greek.
     paired = ["alpha-Ga (orthorhombic)", "beta-Ga (tetragonal)", "SmGa2", "L"]
-    assert _abbreviate_phase_name("alpha-Ga (orthorhombic)", paired) == "(αGa) ortho"
-    assert _abbreviate_phase_name("beta-Ga (tetragonal)", paired) == "(βGa) tetra"
+    assert _abbreviate_phase_name("alpha-Ga (orthorhombic)", paired) == "α-Ga (ortho)"
+    assert _abbreviate_phase_name("beta-Ga (tetragonal)", paired) == "β-Ga (tetra)"
 
     # Long Strukturbericht structure -> compact token.
     mns = ["beta-Mn (complex cubic A13)", "delta-Mn (bcc)", "alpha-Mn (complex cubic A12)", "L"]
-    assert _abbreviate_phase_name("beta-Mn (complex cubic A13)", mns) == "(βMn) A13"
-    assert _abbreviate_phase_name("alpha-Mn (complex cubic A12)", mns) == "(αMn) A12"
-    assert _abbreviate_phase_name("delta-Mn (bcc)", mns) == "(δMn) bcc"
+    assert _abbreviate_phase_name("beta-Mn (complex cubic A13)", mns) == "β-Mn (A13)"
+    assert _abbreviate_phase_name("alpha-Mn (complex cubic A12)", mns) == "α-Mn (A12)"
+    assert _abbreviate_phase_name("delta-Mn (bcc)", mns) == "δ-Mn (bcc)"
 
 
 def test_abbreviate_phase_name_struct_element_form():
-    # "<structure>-<Element>" naming (no greek prefix) -> parenthesised element + structure.
-    names = ["fcc-Al", "bcc-Cr", "In (Fm-3m)", "L"]
-    assert _abbreviate_phase_name("fcc-Al", names) == "(Al) fcc"
-    assert _abbreviate_phase_name("bcc-Cr", names) == "(Cr) bcc"
-    # Space-group structure symbols are dropped (not a crystal-system name).
-    assert _abbreviate_phase_name("In (Fm-3m)", names) == "(In)"
-    assert _abbreviate_phase_name("alpha-Pu (P6_3/mmc)", ["alpha-Pu (P6_3/mmc)", "L"]) == "(Pu)"
+    # An unnamed polymorph -> bare element, structure parenthesised.
+    names = ["Al (fcc)", "Cr (bcc)", "In (Fm-3m)", "L"]
+    assert _abbreviate_phase_name("Al (fcc)", names) == "Al (fcc)"
+    assert _abbreviate_phase_name("Cr (bcc)", names) == "Cr (bcc)"
+    # Space-group symbols are still dropped rather than shown as a structure. The rename
+    # left none in phase_transitions.json, so this now guards data that no longer ships
+    # -- a spacegroup reaching a label means the naming convention was bypassed.
+    assert _abbreviate_phase_name("In (Fm-3m)", names) == "In"
+    assert _abbreviate_phase_name("alpha-Pu (P6_3/mmc)", ["alpha-Pu (P6_3/mmc)", "L"]) == "Pu"
 
 
 def test_abbreviate_phase_name_compound_with_tag():
@@ -85,21 +87,21 @@ def test_abbreviate_phase_name_compound_with_tag():
 
 
 def test_abbreviate_phase_name_bare_element():
-    # A bare element symbol (ground state with no greek/structure) -> parenthesised.
-    assert _abbreviate_phase_name("Ga", ["Ga", "SmGa2", "L"]) == "(Ga)"
+    # A bare element symbol (ground state with no greek/structure) -> just the symbol.
+    assert _abbreviate_phase_name("Ga", ["Ga", "SmGa2", "L"]) == "Ga"
 
 
 def test_abbreviate_phase_name_capitalised_structure_word_form():
-    # "<Structure words> <Element>" naming (capitalised multi-word structure, trailing element).
-    # The long descriptor is dropped -> just the parenthesised element, like other ground states.
-    names = ["Diamond cubic Si", "Diamond cubic Ge", "Cr3Ge", "L"]
-    assert _abbreviate_phase_name("Diamond cubic Si", names) == "(Si)"
-    assert _abbreviate_phase_name("Diamond cubic Ge", names) == "(Ge)"
+    # "diamond cubic" is a real structure, abbreviated rather than dropped.
+    names = ["Si (diamond cubic)", "Ge (diamond cubic)", "Cr3Ge", "L"]
+    assert _abbreviate_phase_name("Si (diamond cubic)", names) == "Si (dc)"
+    assert _abbreviate_phase_name("Ge (diamond cubic)", names) == "Ge (dc)"
+    assert _abbreviate_phase_name("C (graphite)", ["C (graphite)", "L"]) == "C (gra)"
     # A genuine compound is unaffected.
     assert _abbreviate_phase_name("Cr3Ge", names) == "Cr<sub>3</sub>Ge"
     # Greek polymorph naming must NOT be captured by the structure-word branch.
     assert (
-        _abbreviate_phase_name("alpha Mn (bcc)", ["alpha Mn (bcc)", "beta Mn (bcc)"]) == "(αMn) bcc"
+        _abbreviate_phase_name("alpha Mn (bcc)", ["alpha Mn (bcc)", "beta Mn (bcc)"]) == "α-Mn (bcc)"
     )
 
 

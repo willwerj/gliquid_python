@@ -38,7 +38,8 @@
         "name": "Young (1991), Dinsdale/SGTE (1991), Massalski (1990)",
         "description": "Solid–solid phase transition temperatures at 1 atm."
       }
-    ]
+    ],
+    "naming_convention": "Solid-phase common_name is '<polymorph name>-<El> (<structure>)' where the phase has a name (alpha-Ti (hcp)), else '<El> (<structure>)' (Cd (hcp)). The structure always sits in the parentheses and never in the name slot. Greek prefixes are spelled out here; renderers substitute the unicode symbol."
   },
   "elements": {
     "H": {
@@ -46,7 +47,7 @@
       "name": "Hydrogen",
       "atomic_number": 1,
       "reference_state": {
-        "common_name": "H (P2_12_12_1)",
+        "common_name": "H (orthorhombic)",
         "spacegroup_symbol": "P2_12_12_1",
         "spacegroup_number": 19,
         "crystal_system": "Orthorhombic",
@@ -58,7 +59,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "H (P2_12_12_1)",
+          "common_name": "H (orthorhombic)",
           "spacegroup_symbol": "P2_12_12_1",
           "spacegroup_number": 19,
           "crystal_system": "Orthorhombic",
@@ -170,7 +171,7 @@
       "name": "Helium",
       "atomic_number": 2,
       "reference_state": {
-        "common_name": "He (Im-3m)",
+        "common_name": "He (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -182,7 +183,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "He (Im-3m)",
+          "common_name": "He (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -279,7 +280,7 @@
       "name": "Lithium",
       "atomic_number": 3,
       "reference_state": {
-        "common_name": "Li (R-3m)",
+        "common_name": "Li (trigonal)",
         "spacegroup_symbol": "R-3m",
         "spacegroup_number": 166,
         "crystal_system": "Trigonal",
@@ -291,7 +292,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Li (R-3m)",
+          "common_name": "Li (trigonal)",
           "spacegroup_symbol": "R-3m",
           "spacegroup_number": 166,
           "crystal_system": "Trigonal",
@@ -310,7 +311,7 @@
         },
         {
           "phase_type": "solid",
-          "common_name": "bcc-Li",
+          "common_name": "Li (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -598,7 +599,7 @@
       "name": "Carbon",
       "atomic_number": 6,
       "reference_state": {
-        "common_name": "Graphite",
+        "common_name": "C (graphite)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -610,7 +611,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Graphite",
+          "common_name": "C (graphite)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -781,7 +782,7 @@
       "name": "Nitrogen",
       "atomic_number": 7,
       "reference_state": {
-        "common_name": "N (P2_13)",
+        "common_name": "N (cubic)",
         "spacegroup_symbol": "P2_13",
         "spacegroup_number": 198,
         "crystal_system": "Cubic",
@@ -793,7 +794,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "N (P2_13)",
+          "common_name": "N (cubic)",
           "spacegroup_symbol": "P2_13",
           "spacegroup_number": 198,
           "crystal_system": "Cubic",
@@ -912,7 +913,7 @@
       "name": "Oxygen",
       "atomic_number": 8,
       "reference_state": {
-        "common_name": "O (C2/m)",
+        "common_name": "O (monoclinic)",
         "spacegroup_symbol": "C2/m",
         "spacegroup_number": 12,
         "crystal_system": "Monoclinic",
@@ -924,7 +925,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "O (C2/m)",
+          "common_name": "O (monoclinic)",
           "spacegroup_symbol": "C2/m",
           "spacegroup_number": 12,
           "crystal_system": "Monoclinic",
@@ -1050,7 +1051,7 @@
       "name": "Fluorine",
       "atomic_number": 9,
       "reference_state": {
-        "common_name": "F (C2/c)",
+        "common_name": "F (monoclinic)",
         "spacegroup_symbol": "C2/c",
         "spacegroup_number": 15,
         "crystal_system": "Monoclinic",
@@ -1062,7 +1063,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "F (C2/c)",
+          "common_name": "F (monoclinic)",
           "spacegroup_symbol": "C2/c",
           "spacegroup_number": 15,
           "crystal_system": "Monoclinic",
@@ -1117,7 +1118,7 @@
       "name": "Neon",
       "atomic_number": 10,
       "reference_state": {
-        "common_name": "Ne (Fm-3m)",
+        "common_name": "Ne (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -1129,7 +1130,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Ne (Fm-3m)",
+          "common_name": "Ne (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -1184,7 +1185,7 @@
       "name": "Sodium",
       "atomic_number": 11,
       "reference_state": {
-        "common_name": "Na (P6_3/mmc)",
+        "common_name": "Na (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -1196,7 +1197,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Na (P6_3/mmc)",
+          "common_name": "Na (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -1301,7 +1302,7 @@
       "name": "Magnesium",
       "atomic_number": 12,
       "reference_state": {
-        "common_name": "hcp-Mg",
+        "common_name": "Mg (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -1313,7 +1314,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Mg",
+          "common_name": "Mg (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -1410,7 +1411,7 @@
       "name": "Aluminum",
       "atomic_number": 13,
       "reference_state": {
-        "common_name": "fcc-Al",
+        "common_name": "Al (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -1422,7 +1423,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Al",
+          "common_name": "Al (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -1512,7 +1513,7 @@
       "name": "Silicon",
       "atomic_number": 14,
       "reference_state": {
-        "common_name": "Diamond cubic Si",
+        "common_name": "Si (diamond cubic)",
         "spacegroup_symbol": "Fd-3m",
         "spacegroup_number": 227,
         "crystal_system": "Cubic",
@@ -1524,7 +1525,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Diamond cubic Si",
+          "common_name": "Si (diamond cubic)",
           "spacegroup_symbol": "Fd-3m",
           "spacegroup_number": 227,
           "crystal_system": "Cubic",
@@ -1683,7 +1684,7 @@
       "name": "Phosphorus",
       "atomic_number": 15,
       "reference_state": {
-        "common_name": "P (P2/c)",
+        "common_name": "P (monoclinic)",
         "spacegroup_symbol": "P2/c",
         "spacegroup_number": 13,
         "crystal_system": "Monoclinic",
@@ -1695,7 +1696,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "P (P2/c)",
+          "common_name": "P (monoclinic)",
           "spacegroup_symbol": "P2/c",
           "spacegroup_number": 13,
           "crystal_system": "Monoclinic",
@@ -1992,7 +1993,7 @@
       "name": "Chlorine",
       "atomic_number": 17,
       "reference_state": {
-        "common_name": "Cl (Cmce)",
+        "common_name": "Cl (orthorhombic)",
         "spacegroup_symbol": "Cmce",
         "spacegroup_number": 64,
         "crystal_system": "Orthorhombic",
@@ -2004,7 +2005,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Cl (Cmce)",
+          "common_name": "Cl (orthorhombic)",
           "spacegroup_symbol": "Cmce",
           "spacegroup_number": 64,
           "crystal_system": "Orthorhombic",
@@ -2067,7 +2068,7 @@
       "name": "Argon",
       "atomic_number": 18,
       "reference_state": {
-        "common_name": "Ar (Fm-3m)",
+        "common_name": "Ar (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -2079,7 +2080,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Ar (Fm-3m)",
+          "common_name": "Ar (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -2156,7 +2157,7 @@
       "name": "Potassium",
       "atomic_number": 19,
       "reference_state": {
-        "common_name": "K (Pnma)",
+        "common_name": "K (orthorhombic)",
         "spacegroup_symbol": "Pnma",
         "spacegroup_number": 62,
         "crystal_system": "Orthorhombic",
@@ -2168,7 +2169,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "K (Pnma)",
+          "common_name": "K (orthorhombic)",
           "spacegroup_symbol": "Pnma",
           "spacegroup_number": 62,
           "crystal_system": "Orthorhombic",
@@ -2555,7 +2556,7 @@
       "name": "Titanium",
       "atomic_number": 22,
       "reference_state": {
-        "common_name": "Ti (P6/mmm)",
+        "common_name": "Ti (hexagonal)",
         "spacegroup_symbol": "P6/mmm",
         "spacegroup_number": 191,
         "crystal_system": "Hexagonal",
@@ -2567,7 +2568,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Ti (P6/mmm)",
+          "common_name": "Ti (hexagonal)",
           "spacegroup_symbol": "P6/mmm",
           "spacegroup_number": 191,
           "crystal_system": "Hexagonal",
@@ -2676,7 +2677,7 @@
       "name": "Vanadium",
       "atomic_number": 23,
       "reference_state": {
-        "common_name": "bcc-V",
+        "common_name": "V (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -2688,7 +2689,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-V",
+          "common_name": "V (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -2770,7 +2771,7 @@
       "name": "Chromium",
       "atomic_number": 24,
       "reference_state": {
-        "common_name": "bcc-Cr",
+        "common_name": "Cr (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -2782,7 +2783,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Cr",
+          "common_name": "Cr (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -3268,7 +3269,7 @@
       "name": "Nickel",
       "atomic_number": 28,
       "reference_state": {
-        "common_name": "fcc-Ni",
+        "common_name": "Ni (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -3280,7 +3281,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Ni",
+          "common_name": "Ni (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -3370,7 +3371,7 @@
       "name": "Copper",
       "atomic_number": 29,
       "reference_state": {
-        "common_name": "fcc-Cu",
+        "common_name": "Cu (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -3382,7 +3383,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Cu",
+          "common_name": "Cu (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -3474,7 +3475,7 @@
       "name": "Zinc",
       "atomic_number": 30,
       "reference_state": {
-        "common_name": "hcp-Zn",
+        "common_name": "Zn (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -3486,7 +3487,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Zn",
+          "common_name": "Zn (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -3704,7 +3705,7 @@
       "name": "Germanium",
       "atomic_number": 32,
       "reference_state": {
-        "common_name": "Diamond cubic Ge",
+        "common_name": "Ge (diamond cubic)",
         "spacegroup_symbol": "Fd-3m",
         "spacegroup_number": 227,
         "crystal_system": "Cubic",
@@ -3716,7 +3717,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Diamond cubic Ge",
+          "common_name": "Ge (diamond cubic)",
           "spacegroup_symbol": "Fd-3m",
           "spacegroup_number": 227,
           "crystal_system": "Cubic",
@@ -3875,7 +3876,7 @@
       "name": "Arsenic",
       "atomic_number": 33,
       "reference_state": {
-        "common_name": "As (Cmce)",
+        "common_name": "As (orthorhombic)",
         "spacegroup_symbol": "Cmce",
         "spacegroup_number": 64,
         "crystal_system": "Orthorhombic",
@@ -3887,7 +3888,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "As (Cmce)",
+          "common_name": "As (orthorhombic)",
           "spacegroup_symbol": "Cmce",
           "spacegroup_number": 64,
           "crystal_system": "Orthorhombic",
@@ -3990,7 +3991,7 @@
       "name": "Selenium",
       "atomic_number": 34,
       "reference_state": {
-        "common_name": "Se (P2_1/c)",
+        "common_name": "Se (monoclinic)",
         "spacegroup_symbol": "P2_1/c",
         "spacegroup_number": 14,
         "crystal_system": "Monoclinic",
@@ -4002,7 +4003,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Se (P2_1/c)",
+          "common_name": "Se (monoclinic)",
           "spacegroup_symbol": "P2_1/c",
           "spacegroup_number": 14,
           "crystal_system": "Monoclinic",
@@ -4182,7 +4183,7 @@
       "name": "Krypton",
       "atomic_number": 36,
       "reference_state": {
-        "common_name": "Kr (P6_3/mmc)",
+        "common_name": "Kr (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -4194,7 +4195,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Kr (P6_3/mmc)",
+          "common_name": "Kr (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -4271,7 +4272,7 @@
       "name": "Rubidium",
       "atomic_number": 37,
       "reference_state": {
-        "common_name": "bcc-Rb",
+        "common_name": "Rb (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -4283,7 +4284,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Rb",
+          "common_name": "Rb (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -4705,7 +4706,7 @@
       "name": "Niobium",
       "atomic_number": 41,
       "reference_state": {
-        "common_name": "bcc-Nb",
+        "common_name": "Nb (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -4717,7 +4718,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Nb",
+          "common_name": "Nb (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -4799,7 +4800,7 @@
       "name": "Molybdenum",
       "atomic_number": 42,
       "reference_state": {
-        "common_name": "bcc-Mo",
+        "common_name": "Mo (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -4811,7 +4812,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Mo",
+          "common_name": "Mo (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -4908,7 +4909,7 @@
       "name": "Technetium",
       "atomic_number": 43,
       "reference_state": {
-        "common_name": "hcp-Tc",
+        "common_name": "Tc (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -4920,7 +4921,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Tc",
+          "common_name": "Tc (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -4975,7 +4976,7 @@
       "name": "Ruthenium",
       "atomic_number": 44,
       "reference_state": {
-        "common_name": "hcp-Ru",
+        "common_name": "Ru (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -4987,7 +4988,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Ru",
+          "common_name": "Ru (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -5069,7 +5070,7 @@
       "name": "Rhodium",
       "atomic_number": 45,
       "reference_state": {
-        "common_name": "fcc-Rh",
+        "common_name": "Rh (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -5081,7 +5082,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Rh",
+          "common_name": "Rh (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -5163,7 +5164,7 @@
       "name": "Palladium",
       "atomic_number": 46,
       "reference_state": {
-        "common_name": "fcc-Pd",
+        "common_name": "Pd (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -5175,7 +5176,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Pd",
+          "common_name": "Pd (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -5257,7 +5258,7 @@
       "name": "Silver",
       "atomic_number": 47,
       "reference_state": {
-        "common_name": "fcc-Ag",
+        "common_name": "Ag (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -5269,7 +5270,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Ag",
+          "common_name": "Ag (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -5372,7 +5373,7 @@
       "name": "Cadmium",
       "atomic_number": 48,
       "reference_state": {
-        "common_name": "hcp-Cd",
+        "common_name": "Cd (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -5384,7 +5385,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Cd",
+          "common_name": "Cd (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -5466,7 +5467,7 @@
       "name": "Indium",
       "atomic_number": 49,
       "reference_state": {
-        "common_name": "bct-In (tetragonal)",
+        "common_name": "In (bct)",
         "spacegroup_symbol": "I4/mmm",
         "spacegroup_number": 139,
         "crystal_system": "Tetragonal",
@@ -5478,7 +5479,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bct-In (tetragonal)",
+          "common_name": "In (bct)",
           "spacegroup_symbol": "I4/mmm",
           "spacegroup_number": 139,
           "crystal_system": "Tetragonal",
@@ -5583,7 +5584,7 @@
       "name": "Tin",
       "atomic_number": 50,
       "reference_state": {
-        "common_name": "alpha-Sn",
+        "common_name": "alpha-Sn (diamond cubic)",
         "spacegroup_symbol": "Fd-3m",
         "spacegroup_number": 227,
         "crystal_system": "Cubic",
@@ -5595,7 +5596,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "alpha-Sn",
+          "common_name": "alpha-Sn (diamond cubic)",
           "spacegroup_symbol": "Fd-3m",
           "spacegroup_number": 227,
           "crystal_system": "Cubic",
@@ -5888,7 +5889,7 @@
       "name": "Tellurium",
       "atomic_number": 52,
       "reference_state": {
-        "common_name": "Trigonal Te",
+        "common_name": "Te (trigonal)",
         "spacegroup_symbol": "P3_121",
         "spacegroup_number": 152,
         "crystal_system": "Trigonal",
@@ -5900,7 +5901,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Trigonal Te",
+          "common_name": "Te (trigonal)",
           "spacegroup_symbol": "P3_121",
           "spacegroup_number": 152,
           "crystal_system": "Trigonal",
@@ -6106,7 +6107,7 @@
       "name": "Xenon",
       "atomic_number": 54,
       "reference_state": {
-        "common_name": "Xe (P6_3/mmc)",
+        "common_name": "Xe (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -6118,7 +6119,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Xe (P6_3/mmc)",
+          "common_name": "Xe (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -6195,7 +6196,7 @@
       "name": "Cesium",
       "atomic_number": 55,
       "reference_state": {
-        "common_name": "Cs (Fm-3m)",
+        "common_name": "Cs (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -6207,7 +6208,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Cs (Fm-3m)",
+          "common_name": "Cs (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -6333,7 +6334,7 @@
       "name": "Barium",
       "atomic_number": 56,
       "reference_state": {
-        "common_name": "bcc-Ba",
+        "common_name": "Ba (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -6345,7 +6346,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Ba",
+          "common_name": "Ba (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -7069,7 +7070,7 @@
       "name": "Europium",
       "atomic_number": 63,
       "reference_state": {
-        "common_name": "bcc-Eu",
+        "common_name": "Eu (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -7081,7 +7082,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Eu",
+          "common_name": "Eu (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -7507,7 +7508,7 @@
       "name": "Holmium",
       "atomic_number": 67,
       "reference_state": {
-        "common_name": "hcp-Ho",
+        "common_name": "Ho (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -7519,7 +7520,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Ho",
+          "common_name": "Ho (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -7623,7 +7624,7 @@
       "name": "Erbium",
       "atomic_number": 68,
       "reference_state": {
-        "common_name": "hcp-Er",
+        "common_name": "Er (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -7635,7 +7636,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Er",
+          "common_name": "Er (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -7732,7 +7733,7 @@
       "name": "Thulium",
       "atomic_number": 69,
       "reference_state": {
-        "common_name": "hcp-Tm",
+        "common_name": "Tm (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -7744,7 +7745,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Tm",
+          "common_name": "Tm (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -7934,7 +7935,7 @@
       "name": "Lutetium",
       "atomic_number": 71,
       "reference_state": {
-        "common_name": "hcp-Lu",
+        "common_name": "Lu (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -7946,7 +7947,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Lu",
+          "common_name": "Lu (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -8132,7 +8133,7 @@
       "name": "Tantalum",
       "atomic_number": 73,
       "reference_state": {
-        "common_name": "bcc-Ta",
+        "common_name": "Ta (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -8144,7 +8145,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-Ta",
+          "common_name": "Ta (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -8266,7 +8267,7 @@
       "name": "Tungsten",
       "atomic_number": 74,
       "reference_state": {
-        "common_name": "bcc-W",
+        "common_name": "W (bcc)",
         "spacegroup_symbol": "Im-3m",
         "spacegroup_number": 229,
         "crystal_system": "Cubic",
@@ -8278,7 +8279,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "bcc-W",
+          "common_name": "W (bcc)",
           "spacegroup_symbol": "Im-3m",
           "spacegroup_number": 229,
           "crystal_system": "Cubic",
@@ -8375,7 +8376,7 @@
       "name": "Rhenium",
       "atomic_number": 75,
       "reference_state": {
-        "common_name": "hcp-Re",
+        "common_name": "Re (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -8387,7 +8388,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Re",
+          "common_name": "Re (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -8469,7 +8470,7 @@
       "name": "Osmium",
       "atomic_number": 76,
       "reference_state": {
-        "common_name": "hcp-Os",
+        "common_name": "Os (hcp)",
         "spacegroup_symbol": "P6_3/mmc",
         "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
@@ -8481,7 +8482,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "hcp-Os",
+          "common_name": "Os (hcp)",
           "spacegroup_symbol": "P6_3/mmc",
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
@@ -8571,7 +8572,7 @@
       "name": "Iridium",
       "atomic_number": 77,
       "reference_state": {
-        "common_name": "fcc-Ir",
+        "common_name": "Ir (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -8583,7 +8584,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Ir",
+          "common_name": "Ir (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -8673,7 +8674,7 @@
       "name": "Platinum",
       "atomic_number": 78,
       "reference_state": {
-        "common_name": "fcc-Pt",
+        "common_name": "Pt (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -8685,7 +8686,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Pt",
+          "common_name": "Pt (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -8767,7 +8768,7 @@
       "name": "Gold",
       "atomic_number": 79,
       "reference_state": {
-        "common_name": "fcc-Au",
+        "common_name": "Au (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -8779,7 +8780,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Au",
+          "common_name": "Au (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -9120,7 +9121,7 @@
       "name": "Lead",
       "atomic_number": 82,
       "reference_state": {
-        "common_name": "fcc-Pb",
+        "common_name": "Pb (fcc)",
         "spacegroup_symbol": "Fm-3m",
         "spacegroup_number": 225,
         "crystal_system": "Cubic",
@@ -9132,7 +9133,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "fcc-Pb",
+          "common_name": "Pb (fcc)",
           "spacegroup_symbol": "Fm-3m",
           "spacegroup_number": 225,
           "crystal_system": "Cubic",
@@ -9606,7 +9607,7 @@
       "name": "Plutonium",
       "atomic_number": 94,
       "reference_state": {
-        "common_name": "Pu (P6_3/m)",
+        "common_name": "Pu (hexagonal)",
         "spacegroup_symbol": "P6_3/m",
         "spacegroup_number": 176,
         "crystal_system": "Hexagonal",
@@ -9618,7 +9619,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "Pu (P6_3/m)",
+          "common_name": "Pu (hexagonal)",
           "spacegroup_symbol": "P6_3/m",
           "spacegroup_number": 176,
           "crystal_system": "Hexagonal",

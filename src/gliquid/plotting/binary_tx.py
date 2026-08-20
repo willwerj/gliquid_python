@@ -910,6 +910,8 @@ _STRUCT_ABBREV = {
     "hexagonal close packed": "hcp",
     "complex cubic a12": "A12",
     "complex cubic a13": "A13",
+    "diamond cubic": "dc",
+    "graphite": "gra",
 }
 
 _SUB_TAG_RE = re.compile(r"<sub>(.*?)</sub>")
@@ -1046,9 +1048,19 @@ def _abbreviate_phase_name(name: str, all_names: list[str]) -> str:
     """Format a phase label: greek polymorph prefixes, subscripted stoichiometries,
     abbreviated crystal structures.
 
-    Elemental solid solutions render as ``(αMn) bcc``; the greek prefix is dropped when
-    the element has only one phase present in ``all_names`` (e.g. ``(Fe) bcc``). Compounds
-    render with subscripts (``ZrMn2`` -> ``ZrMn<sub>2</sub>``). ``"Liquid"``/``"L"`` -> ``"L"``.
+    Elemental phases render as ``αMn`` with the structure parenthesised after it —
+    ``α-Mn (bcc)`` — matching ``phase_transitions.json``'s ``<name>-<El> (<structure>)``
+    convention, so a corner label in the ternary figure and a field label here read the
+    same. The greek prefix is dropped when the element has only one phase present in
+    ``all_names`` (``Fe (bcc)``), since there is then nothing to tell apart.
+
+    This replaced a ``(αMn) bcc`` form. The parentheses around the ELEMENT were the
+    conventional phase-diagram mark for a terminal solid solution, which this notation no
+    longer distinguishes from a line compound; that was an explicit call, taken so the two
+    figures agree.
+
+    Compounds render with subscripts (``ZrMn2`` -> ``ZrMn<sub>2</sub>``).
+    ``"Liquid"``/``"L"`` -> ``"L"``.
     """
     name = str(name).strip()
     if name in ("L", "Liquid"):
@@ -1064,16 +1076,12 @@ def _abbreviate_phase_name(name: str, all_names: list[str]) -> str:
             == element
         )
         prefix = _GREEK_MAP.get(greek_word, "") if (greek_word and same_element > 1) else ""
-        label = f"({prefix}{element})"
-        suffix = []
-        if struct:
-            abbr = _abbrev_structure(struct)
-            if abbr:
-                suffix.append(abbr)
+        label = f"{prefix}-{element}" if prefix else element
+        abbr = _abbrev_structure(struct) if struct else ""
+        if abbr:
+            label += f" ({abbr})"
         if tag:
-            suffix.append(tag)
-        if suffix:
-            label += " " + " ".join(suffix)
+            label += f" {tag}"
         return label
 
     return _subscript_formula(name)
