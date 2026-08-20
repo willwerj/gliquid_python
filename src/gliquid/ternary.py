@@ -18,6 +18,7 @@ from scipy.spatial import Delaunay
 from tqdm import tqdm
 
 import gliquid.api as api
+import gliquid.cache as cache
 import gliquid.config as cfg
 import gliquid.plotting.export as plot_export
 import gliquid.plotting.ternary_surface as ternary_surface
@@ -103,7 +104,7 @@ class TernaryLiquidInterpolation:
     def __init__(
         self,
         components: list[str],
-        data_dir: Path | str | None = None,
+        data_dir: cache.CacheBackend | Path | str | None = None,
         *,
         delta: float = 0.025,
         interp_scheme: str = "linear",
@@ -129,7 +130,12 @@ class TernaryLiquidInterpolation:
             order if order is not None else "given", components
         )
         self.binary_systems = ordered_binary_systems(self.components)
-        self.data_dir = data_dir if data_dir is not None else cfg.data_dir
+        # A cache BACKEND, not a path: a single-file store cannot be named by a directory,
+        # and this attribute is threaded straight through to ``api.get_dft_convexhull``.
+        # ``cfg.cache_dir`` is passed positionally when the caller gave nothing, which keeps
+        # the historical semantics exactly — the ternary cache has always been FLAT inside
+        # whatever directory it was handed, even when config.dir_structure is 'nested'.
+        self.data_dir = cache.resolve_backend(data_dir if data_dir is not None else cfg.cache_dir)
         self.delta = delta
         self.comp_grid = generate_comp_grid(self.delta)
         self.interp_scheme = interp_scheme

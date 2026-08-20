@@ -43,7 +43,13 @@ _EXPORTS = {
     "Phase": "gliquid.phase",
     "identify_invariant_points": "gliquid.mpds",
     "load_mpds_data": "gliquid.mpds",
-    "set_data_dir": "gliquid.config",
+    # Added by spec 07 (dev/plans/gliquid-cache-layout/07-portable-ml-bundle.md), which is
+    # the recorded sign-off this mapping asks for. Additive: the pickle-free bundle now
+    # ships inside the wheel at gliquid/models/, so the runner is usable straight from
+    # `import gliquid` with no bundle path to find.
+    "ProductionModelRunner": "gliquid.production_model_runner",
+    "set_cache_dir": "gliquid.config",
+    "set_data_dir": "gliquid.config",  # deprecated alias of set_cache_dir; still public
     "ConfigError": "gliquid.config",
 }
 

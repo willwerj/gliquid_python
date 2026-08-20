@@ -1,0 +1,18 @@
+{
+  "timestamp": "20260329_022905",
+  "best_cv_score": 0.6918544473555479,
+  "n_trials": 500,
+  "n_cv_folds": 5,
+  "random_state": 42,
+  "model_types": {
+    "L0_a": "xgboost",
+    "L0_b": "xgboost",
+    "L1_a": "xgboost"
+  },
+  "transform_targets": {
+    "L0_a": "standard",
+    "L0_b": "standard",
+    "L1_a": "standard"
+  },
+  "xgb_device": "cpu"
+}
