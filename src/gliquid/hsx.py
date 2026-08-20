@@ -40,11 +40,11 @@ def _hull_from_fictitious(real_points, fict_points, second_filter=None):
 
 
 def lower_convex_hull(points, vertical_simplices=False):
-    # Function to calculate the general lower convex hull of an N-dimensional Xi-E space
-    # (the sub-hull-centroid fictitious-point strategy — distinct from HSX.hull()'s
-    #  corner-point strategy and separately pinned; the hull-and-filter core is shared)
-    # Input: points = array of coordinates of the points, energy-like axis LAST
-    # Output: simplices = array of simplices that form the lower convex hull
+    # General lower convex hull of an N-dimensional Xi-E space, by the sub-hull-centroid
+    # fictitious-point strategy (distinct from HSX.hull()'s corner-point strategy and
+    # separately pinned; the hull-and-filter core is shared).
+    # Input: points = coordinates, energy-like axis LAST
+    # Output: simplices forming the lower convex hull
 
     sub_points = points[:, :-1]
     sub_hull = ConvexHull(sub_points)
@@ -349,14 +349,12 @@ class HSX:
             max(entries, key=lambda x: x[0]) for entries in grouped_data.values()
         ]
 
-        # --- Solid-solid tie lines from 2-vertex (collapsed-triangle) simplices. A eutectic or
-        # peritectic between two adjacent solids collapses to a solid-solid hull edge whenever the
-        # liquid vertex is not a distinct third phase -- e.g. two close-set line compounds, or a
-        # eutectic pinned just below a low-melting element. Those facets are 2-vertex simplices the
-        # 3-vertex classification above never sees, so the horizontal tie at the top of that
-        # two-phase field would go unmarked. Recover the hottest tie per solid pair, dropping any
-        # that merely restates an already-detected invariant span or that spuriously bridges the two
-        # pure elements (a liquid miscibility-gap / monotectic artifact). ---
+        # --- Solid-solid tie lines from 2-vertex (collapsed-triangle) simplices. A eutectic
+        # or peritectic between two adjacent solids collapses to a solid-solid hull edge when
+        # the liquid vertex is not a distinct third phase; those facets are 2-vertex simplices
+        # the 3-vertex classification above never sees. Recover the hottest tie per solid
+        # pair, dropping any that restates a detected invariant or bridges the pure
+        # elements. ---
         solid_pair_ties = {}  # frozenset(phaseA, phaseB) -> [temp, comp_mid, comps, phases]
         for temp, comb_dict in combined_list:
             if len(comb_dict) != 2:
@@ -366,11 +364,10 @@ class HSX:
                 continue
             if abs(cB - cA) < 0.012:  # negligible composition gap -> not a real tie
                 continue
-            # An element-to-element span (cA~0, cB~1) is the top of the terminal (A)+(B) two-phase
-            # field: in a (near-)immiscible system the hottest such solid-solid edge sits exactly at
-            # the lower element's melting point, a genuine degenerate-eutectic horizontal (Hg-V,
-            # Ag-Mo, Cr-La). It is kept, NOT skipped -- monotectic / miscibility-gap artifacts carry
-            # an 'L' vertex and were already filtered out above.
+            # An element-to-element span (cA~0, cB~1) is the top of the terminal (A)+(B)
+            # two-phase field and is KEPT: in a near-immiscible system it is a genuine
+            # degenerate-eutectic horizontal. Miscibility-gap artifacts carry an 'L' vertex
+            # and were filtered above.
             key = frozenset((pA, pB))
             if key not in solid_pair_ties or temp > solid_pair_ties[key][0]:
                 solid_pair_ties[key] = [temp, (cA + cB) / 2, [cA, cB], [pA, pB]]
