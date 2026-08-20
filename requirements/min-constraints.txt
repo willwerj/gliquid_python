@@ -32,7 +32,7 @@
 #     backtracking path is gone, but the pymatgen-wheel reason stands on its own and the
 #     pin stays. Removing it is a matrix experiment, not a cleanup.
 
-plotly==5.24.0
+plotly==6.9.0
 nbformat==4.2.0
 mp-api==0.45.1
 matplotlib==3.10.0
