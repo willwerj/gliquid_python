@@ -515,14 +515,38 @@ class TernaryLiquidInterpolation:
             # SS colors, 'L' cornflowerblue -- so binary and ternary figures agree on color.
             self.color_map = build_phase_color_map(self.phase_names, ss_names=list(self.ss_models))
 
-        tern_temp = self.ref_data["T"]
+        # ONE temperature window, TWO units, converted in exactly one place -- here.
+        #
+        # T_grid is KELVIN: ``G = H - T * S`` needs an absolute temperature, and _eval_hull /
+        # get_convex_hull key their per-temperature slices by it. It is anchored at ABSOLUTE
+        # ZERO -- every solid is stable there, so no phase's stability window can fall off the
+        # bottom of it -- and runs to 200 K above the highest melting point.
+        #
+        # The floor is CLAMPED at 0 K, so no margin can push the grid to a negative absolute
+        # temperature, where ``H - T * S`` would flip the sign of the entropy term and the hull
+        # for those slices would be meaningless. Two ways in, both now closed: the retired lower
+        # bound ``np.min([0, min_temp - 200])`` did it for any system containing an element that
+        # melts below 200 K (10 of the 86 with a t_fusion in the unary registry -- He, H, Ne, F,
+        # O, N, Ar, Kr, Xe, Cl), and ``temp_slider[0]`` did it for any caller asking to extend
+        # the window downward. There is nothing below 0 K to reveal, so a lower margin is
+        # clamped away rather than honoured; a NEGATIVE temp_slider[0] still RAISES the floor,
+        # which is a coherent request and is preserved.
+        #
+        # conds is the SAME window in CELSIUS, because Celsius is the frame the data ends up
+        # in: _eval_hull and _process_data_hsx both convert every equilibrium frame with
+        # ``temp_df["T"] - 273.15``, and every consumer of conds compares it against those
+        # frames -- the solid-segment floor in TLIPlotter._plot_tx, and the base triangle and
+        # z-axis range in gliquid.plotting.ternary_surface.render_tx_surface. It is DERIVED
+        # from the grid rather than computed alongside it, so the two cannot drift apart and no
+        # gtx hull temperature can land outside the plotted range. gliquid.binary sets
+        # HSX.conds the same way (``temp_range - 273.15``), so the ternary HSX agrees with it.
+        tern_temp = self.ref_data["T"]  # UNARY t_fusion per component, KELVIN
         max_temp = round(np.max(tern_temp) + 200)
-        min_temp = round(np.min(tern_temp))
-        self.conds = [
-            np.min(np.array([0, min_temp - 200])) - self.temp_slider[0],
-            max_temp + self.temp_slider[1],
-        ]
-        self.T_grid = np.arange(self.conds[0], self.conds[1] + self.T_incr, self.T_incr)
+        t_floor = max(0, -self.temp_slider[0])  # absolute zero, or above it on request
+        self.T_grid = np.arange(
+            t_floor, max_temp + self.temp_slider[1] + self.T_incr, self.T_incr
+        )
+        self.conds = [float(self.T_grid[0]) - 273.15, float(self.T_grid[-1]) - 273.15]
         self.proc_df["x0"] = self.proc_df["x0"].round(4)
         self.proc_df["x1"] = self.proc_df["x1"].round(4)
         self.proc_df = self.proc_df.rename(columns={"Phase Name": "Phase"})
@@ -572,9 +596,10 @@ class TernaryLiquidInterpolation:
         start_time = time.time()
         self.equil_df_list = []
         shifter = 0
+        # No lower-bound guard: T_grid IS the window (and conds is that window in Celsius --
+        # see _init_sys), so there is nothing below it to skip. The guard that used to sit here
+        # compared a Kelvin grid value against conds and never fired.
         for T in tqdm(self.T_grid, desc="Evaluating lower hull over temperature intervals"):
-            if T < self.conds[0]:
-                continue
             points = np.array(self.df_Tgroups[T][["x0", "x1", "G"]])
             simplices = lower_convex_hull(points, vertical_simplices=False)
             simplex_vertices = []
@@ -1050,19 +1075,13 @@ class TLIPlotter:
         # full-height lines and hide the transition even with the phases present.
         floor_rows = []
         for (x0, x1), grp in self.solid_plotting_df.groupby(["x0", "x1"], sort=False):
-            # conds[0] is the plot floor, but it is carried in KELVIN while this frame was
-            # converted to Celsius (the `T - 273.15` above), so it can land ABOVE a phase
-            # that is only stable at very low temperature -- Ti's spurious P6/mmm ground
-            # state tops out at -93.15 C against a floor of 0.0. Flooring that segment at
-            # conds[0] would invert it and overlap the phase above. Fall back to the actual
-            # bottom of the temperature grid only in that case, so every ordinary
-            # composition keeps byte-identical output.
-            lowest_ceiling = float(grp["T"].min())
-            base = (
-                self.conds[0]
-                if self.conds[0] <= lowest_ceiling
-                else float(self.T_grid[0]) - 273.15
-            )
+            # conds[0] is the bottom of the temperature grid in Celsius (_init_sys) -- the same
+            # frame as this one -- so it is at or below EVERY phase's stability ceiling and the
+            # lowest segment simply starts there, with no special case. This used to need a
+            # Kelvin/Celsius fallback: conds[0] read as 0 C while holding 0 K, which floored
+            # Ti's spurious P6/mmm ground state (ceiling -93.15 C) above its own ceiling and
+            # inverted the segment.
+            base = self.conds[0]
             for _, row in grp.sort_values("T").iterrows():
                 floor_rows.append(
                     {"x0": x0, "x1": x1, "T": base, "Phase": row["Phase"], "Colors": row["Colors"]}
@@ -1117,7 +1136,6 @@ class TLIPlotter:
             self.color_map,
             self.components,
             self.conds,
-            self.temp_slider,
         )
 
     def get_inter_melting_temps(self, interphases_for_melting: list[str]):
