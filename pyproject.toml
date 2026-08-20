@@ -87,11 +87,21 @@ editor = [
     "ipython>=8.0",
 ]
 models = [
-    # The pickled estimators in the external data corpus unpickle against the versions
-    # that wrote them. Pinning EXACTLY here rather than in [project.dependencies] keeps
-    # the constraint off every consumer of the library.
+    # ONLY for LEGACY joblib bundles (dev/model_bundles/, cache/<timestamp>/model/). The
+    # bundle shipped inside the wheel at gliquid/models/ is pickle-free -- XGBoost UBJSON
+    # plus JSON scaler coefficients -- and needs none of this: it loads on the base
+    # dependencies at any version, which is the entire point of spec 07.
+    #
+    # A pickled estimator unpickles against the versions that wrote it, hence the exact
+    # pins; keeping them here rather than in [project.dependencies] keeps the constraint
+    # off every consumer of the library.
     "scikit-learn==1.7.1",
     "xgboost==3.1.3",
+    # Needed only to read a legacy bundle's prediction_dataset_*.xlsx feature sheets.
+    # It used to be required by an UNCONDITIONAL pd.read_excel in ProductionModelRunner's
+    # constructor, so a bare `pip install gliquid` imported fine and then died on
+    # instantiation; the feature corpus now comes from the cache and the xlsx read is
+    # reached only by a legacy bundle that actually ships them.
     "openpyxl>=3.1.5",
 ]
 test = [
@@ -136,20 +146,22 @@ version-file = "src/gliquid/_version.py"
 
 [tool.hatch.build.targets.wheel]
 # Maps the src layout to a top-level `gliquid` in the wheel. Every non-VCS-ignored file
-# under src/gliquid/ ships, so the reference tables in src/gliquid/data/ need no
-# package-data declaration of their own.
+# under src/gliquid/ ships, so the reference tables in src/gliquid/reference/ (and the
+# model bundle in src/gliquid/models/) need no package-data declaration of their own.
 packages = ["src/gliquid"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/tests",
     "/tests_internal",
-    # NOT optional. Hatchling's sdist default is "everything not VCS-ignored", which is
-    # BROADER than the setuptools default this replaced: setuptools omitted data/ by
-    # accident, hatchling would ship all ~10 MB of it. That directory is the external
-    # corpus (per-system DFT caches, MPDS diagrams, the model bundle) reached through
-    # config.set_data_dir()/GLIQUID_DATA_DIR -- a distribution does not carry it.
-    "/data",
+    # NOT optional, and PATH-ANCHORED -- it must be renamed whenever the directory is.
+    # Hatchling's sdist default is "everything not VCS-ignored", which is BROADER than
+    # the setuptools default this replaced: setuptools omitted the corpus by accident,
+    # hatchling would ship all ~10 MB of it. That directory (named data/ until it became
+    # cache/) is the external corpus -- per-system DFT caches, MPDS diagrams, the model
+    # bundle -- reached through config.set_cache_dir()/GLIQUID_CACHE_DIR. A distribution
+    # does not carry it.
+    "/cache",
 ]
 
 [tool.ruff]
@@ -203,6 +215,7 @@ markers = [
     "needs_cache: needs the workspace matrix_data/ store. Skips (does not fail) without it.",
     "needs_network: needs NEW_MP_API_KEY and a live Materials Project connection.",
     "slow: a multi-second Nelder-Mead fit or hull build. Deselect with -m 'not slow'.",
+    "directory_only: needs a DIRECTORY cache store (on-disk filenames, dir_structure, the atomic-write or cold-fetch write path). Skipped when GLIQUID_TEST_SQLITE_STORE swaps in a single-file store; see conftest.py.",
 ]
 # Fail on an undeclared marker rather than silently treating the typo as no marker.
 addopts = "--strict-markers"

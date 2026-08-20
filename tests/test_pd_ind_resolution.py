@@ -2,7 +2,7 @@
 
 Two cache namings coexist in this project: indexed ``<sys>_MPDS_PD_<n>.json`` inside the
 research cache, and indexless ``<sys>.json`` everywhere a store holds one diagram per system
-(the shipped ``gliquid_python/data``, ``Gliquid_oxides``, ``case_studies``). ``load_mpds_data``
+(the shipped ``gliquid_python/cache``, ``Gliquid_oxides``, ``case_studies``). ``load_mpds_data``
 has to serve both, and each naming has a silent-wrong-answer trap the other does not:
 
 * ``pd_ind=None`` prefers the indexless file, so an indexless sibling SHADOWS PD_0. That
@@ -52,7 +52,7 @@ def flat_store(tmp_path, monkeypatch):
 
 def _shipped_fixture() -> Path:
     """The shipped indexless Ag-V json, anchored by project root rather than by depth."""
-    return Path(config.project_root) / "data" / f"{SYSTEM}.json"
+    return Path(config.project_root) / "cache" / f"{SYSTEM}.json"
 
 
 def _put_indexless(store: Path) -> None:

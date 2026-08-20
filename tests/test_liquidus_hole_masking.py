@@ -322,14 +322,17 @@ class TestRealDisjointSystems:
         from pathlib import Path
 
         import gliquid.api as api
+        from gliquid.cache import CacheKey
 
         name = f"{system}_MPDS_PD_0.json"
-        candidates = [Path(api._resolve_sys_dir(system)) / name]
+        candidates = [api.resolve_cache_path(CacheKey(system, "mpds", "0"))]
         candidates += [
             parent / "matrix_data" / system / name
             for parent in Path(config.project_root).resolve().parents
         ]
-        path = next((p for p in candidates if p.exists()), None)
+        # resolve_cache_path answers None for a store with no filesystem paths — a real
+        # answer, so it is filtered rather than assumed away.
+        path = next((p for p in candidates if p is not None and p.exists()), None)
         if path is None:
             pytest.skip(f"{system} not in the local MPDS cache")
         return json.loads(path.read_text())

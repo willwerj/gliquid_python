@@ -86,8 +86,8 @@ _STRUCTURAL = (
         "needs network access",
     ),
     (
-        re.compile(r"ConfigError|GLIQUID_DATA_DIR"),
-        "needs the external data corpus (set GLIQUID_DATA_DIR)",
+        re.compile(r"ConfigError|GLIQUID_(?:CACHE|DATA)_DIR"),
+        "needs the external cache corpus (set GLIQUID_CACHE_DIR)",
     ),
 )
 
@@ -129,7 +129,7 @@ def run_one(path: Path, timeout: int) -> tuple[str, str, float]:
         notebook = nbformat.read(path, as_version=4)
         executor = ExecutePreprocessor(timeout=timeout, kernel_name="python3")
         # Run with the notebook's own directory as cwd: several notebooks reach the corpus
-        # through a relative path (`Path.cwd().parent / 'data'`).
+        # through a relative path (`Path.cwd().parent / 'cache'`).
         executor.preprocess(notebook, {"metadata": {"path": str(path.parent)}})
     except CellTimeoutError:
         return FAIL, f"exceeded the {timeout}s timeout", time.monotonic() - started

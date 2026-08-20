@@ -3,13 +3,13 @@
 gliquid's data comes in two kinds and they resolve differently:
 
   BUNDLED   phase_transitions.json, omegas_hcp.json, spurious_structures.json ship inside
-            the package (src/gliquid/data/). An installed gliquid always has them, so it
-            can never reach the state where the unary registry is empty and every element
-            reference evaluates to zero.
+            the package (src/gliquid/reference/). An installed gliquid always has them, so
+            it can never reach the state where the unary registry is empty and every
+            element reference evaluates to zero.
   EXTERNAL  the per-system DFT entry caches, MPDS diagrams and the model bundle. Not
             shipped. Reachable only through set_data_dir() or GLIQUID_DATA_DIR.
 
-Resolution order is set_data_dir() -> GLIQUID_DATA_DIR -> a source checkout's data/ (found
+Resolution order is set_data_dir() -> GLIQUID_DATA_DIR -> a source checkout's cache/ (found
 by walking __file__'s parents for 'gliquid_python') -> bundled -> ConfigError. There is no
 working-directory branch at any step: config used to walk up from Path.cwd() and fall back
 to cwd itself, so a consumer running outside gliquid_python/ silently got data_dir=<cwd>/data.
@@ -50,7 +50,15 @@ def _run_probe(
     code: str, cwd: Path, pkg_path: Path, env_extra: dict | None = None
 ) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": str(pkg_path)}
-    env.pop("GLIQUID_DATA_DIR", None)  # a developer's own export must not leak into the probe
+    # BOTH spellings, and this is not belt-and-braces. These tests assert on what an
+    # installed gliquid resolves with NOTHING configured, so any inherited corpus variable
+    # makes them assert the opposite of their point. Popping only the legacy name is exactly
+    # how every tox env broke when tox.ini moved to GLIQUID_CACHE_DIR: the probe silently
+    # inherited a configured corpus, config.data_dir came back a Path instead of None, and
+    # the failure surfaced as "WindowsPath is not JSON serializable" — nothing that names
+    # the real cause. Add any future corpus variable here at the same time it is introduced.
+    for _corpus_var in ("GLIQUID_CACHE_DIR", "GLIQUID_DATA_DIR"):
+        env.pop(_corpus_var, None)
     env.update(env_extra or {})
     return subprocess.run(
         [sys.executable, "-c", code],
@@ -78,7 +86,7 @@ def _bundled_dir() -> Path:
     """
     import gliquid.config as config
 
-    return Path(config._BUNDLED_DATA_DIR)
+    return Path(config._BUNDLED_REFERENCE_DIR)
 
 
 @pytest.fixture(scope="module")
@@ -102,9 +110,9 @@ def installed_pkg(tmp_path_factory) -> Path:
 
 
 def test_data_dir_resolves_from_foreign_cwd(tmp_path):
-    """Importing from an unrelated cwd must still find the checkout's data directory."""
+    """Importing from an unrelated cwd must still find the checkout's cache directory."""
     probe = _probe_from(tmp_path)
-    assert Path(probe["data_dir"]) == _PKG_ROOT / "data"
+    assert Path(probe["data_dir"]) == _PKG_ROOT / "cache"
     assert probe["n_elements"] > 50, "unary registry silently loaded empty"
     assert probe["al_t_fusion"] == 933.5
 
@@ -112,7 +120,7 @@ def test_data_dir_resolves_from_foreign_cwd(tmp_path):
 def test_data_dir_resolves_from_package_cwd():
     """The historical good case (cwd inside gliquid_python) keeps working."""
     probe = _probe_from(_PKG_ROOT)
-    assert Path(probe["data_dir"]) == _PKG_ROOT / "data"
+    assert Path(probe["data_dir"]) == _PKG_ROOT / "cache"
     assert probe["n_elements"] > 50
 
 
@@ -163,21 +171,23 @@ def test_installed_package_ships_working_reference_data(installed_pkg, tmp_path)
 
 
 def test_installed_package_never_falls_back_to_cwd(installed_pkg, tmp_path):
-    """A cwd holding a plausible data/ must NOT be adopted. This is the deleted behavior.
+    """A cwd holding a plausible cache/ must NOT be adopted. This is the deleted behavior.
 
-    Run from a directory named 'gliquid_python' with a populated data/ underneath — the
-    exact shape the old cwd walk searched for and returned.
+    Run from a directory named 'gliquid_python' with a populated cache/ underneath — the
+    exact shape the old cwd walk searched for and returned. The decoy has to carry the
+    CURRENT corpus directory name; spelled 'data' it would be a decoy nothing looks for,
+    and the assertions below would pass without exercising anything.
     """
     decoy = tmp_path / "gliquid_python"
-    (decoy / "data").mkdir(parents=True)
-    (decoy / "data" / "phase_transitions.json").write_text('{"elements": {}}')
+    (decoy / "cache").mkdir(parents=True)
+    (decoy / "cache" / "phase_transitions.json").write_text('{"elements": {}}')
 
     probe = _probe_from(decoy, pkg_path=installed_pkg)
-    assert probe["data_dir"] is None, "cwd was adopted as the data directory"
+    assert probe["data_dir"] is None, "cwd was adopted as the cache directory"
     assert probe["project_root"] is None
     # and the decoy's empty table must not have displaced the real bundled one
     assert probe["n_elements"] > 50
-    assert Path(probe["phase_transitions_file"]).parent == installed_pkg / "gliquid" / "data"
+    assert Path(probe["phase_transitions_file"]).parent == installed_pkg / "gliquid" / "reference"
 
 
 def test_installed_package_corpus_access_raises_config_error(installed_pkg, tmp_path):
@@ -185,8 +195,9 @@ def test_installed_package_corpus_access_raises_config_error(installed_pkg, tmp_
     code = (
         "import gliquid.config as config\n"
         "from gliquid import api\n"
+        "from gliquid.cache import CacheKey\n"
         "try:\n"
-        "    api._resolve_sys_dir('Cu-Mg')\n"
+        "    api.resolve_cache_path(CacheKey('Cu-Mg', 'dft_entries', 'GGA'))\n"
         "except config.ConfigError as exc:\n"
         "    print('CONFIG_ERROR:' + str(exc))\n"
         "else:\n"
@@ -203,9 +214,9 @@ def test_installed_package_corpus_access_raises_config_error(installed_pkg, tmp_
 def test_gliquid_data_dir_env_var_supplies_the_corpus(installed_pkg, tmp_path):
     """GLIQUID_DATA_DIR is the environment-level equivalent of set_data_dir()."""
     probe = _probe_from(
-        tmp_path, pkg_path=installed_pkg, env_extra={"GLIQUID_DATA_DIR": str(_PKG_ROOT / "data")}
+        tmp_path, pkg_path=installed_pkg, env_extra={"GLIQUID_DATA_DIR": str(_PKG_ROOT / "cache")}
     )
-    assert Path(probe["data_dir"]) == _PKG_ROOT / "data"
+    assert Path(probe["data_dir"]) == _PKG_ROOT / "cache"
     assert probe["n_elements"] > 50
 
 
@@ -218,11 +229,11 @@ def test_env_var_loses_to_an_explicit_set_data_dir(installed_pkg, tmp_path):
         "print(json.dumps({'before': before, 'after': str(config.data_dir)}))\n"
     )
     result = _run_probe(
-        code, tmp_path, installed_pkg, env_extra={"GLIQUID_DATA_DIR": str(_PKG_ROOT / "data")}
+        code, tmp_path, installed_pkg, env_extra={"GLIQUID_DATA_DIR": str(_PKG_ROOT / "cache")}
     )
     assert result.returncode == 0, result.stderr
     probe = json.loads(result.stdout.strip().splitlines()[-1])
-    assert Path(probe["before"]) == _PKG_ROOT / "data"
+    assert Path(probe["before"]) == _PKG_ROOT / "cache"
     assert Path(probe["after"]) == tmp_path / "chosen"
 
 

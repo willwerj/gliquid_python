@@ -30,6 +30,7 @@ def _no_mpds_client(*args, **kwargs):
 
 
 class TestCanonicalCacheKeys:
+    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_dft_cache_reversed_binary_hits_canonical_file(self, tmp_path, monkeypatch):
         src = Path(config.data_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Hf-Zr_ENTRIES_MP_GGA.json")
@@ -39,6 +40,7 @@ class TestCanonicalCacheKeys:
         assert [str(el) for el in ch.elements] == ["Zr", "Hf"]
         assert len(ch.stable_entries) >= 2
 
+    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_dft_cache_reversed_ternary_hits_canonical_file(self, tmp_path, monkeypatch):
         src = Path(config.data_dir) / "Al-Mg-Si_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Al-Mg-Si_ENTRIES_MP_GGA.json")
@@ -142,6 +144,7 @@ class TestLowTempPhaseDataFrame:
             ],
         }
 
+    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_mpds_side_follows_hull_frame(self, tmp_path, monkeypatch):
         src = Path(config.data_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Hf-Zr_ENTRIES_MP_GGA.json")
@@ -163,6 +166,7 @@ class TestLowTempPhaseDataFrame:
             assert (r1, r2) == (pytest.approx(1 - c2), pytest.approx(1 - c1))
             assert tr == pytest.approx(t, rel=RTOL)
 
+    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_component_phases_are_not_melting_compounds(self, tmp_path, monkeypatch):
         """A pure component is neither congruent nor incongruent, and must not set the
         temperature scale either. '(Zr) rt' here is the frame edge spanning the full
