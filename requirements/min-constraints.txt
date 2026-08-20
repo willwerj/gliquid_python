@@ -34,7 +34,7 @@
 
 plotly==5.24.0
 nbformat==4.2.0
-mp-api==0.45.1
+mp-api==0.45.15
 matplotlib==3.10.0
 sympy==1.13
 scikit-learn==1.7.1
