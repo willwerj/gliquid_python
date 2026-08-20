@@ -1,0 +1,37 @@
+{
+  "timestamp": "20260817_112204",
+  "best_cv_score": 0.7159251450273911,
+  "best_objective_mode": "mean_skill_huber",
+  "best_objective_value": 0.2980817114654607,
+  "best_skill_score": 0.2980817114654607,
+  "n_trials": 500,
+  "n_cv_folds": 5,
+  "random_state": 42,
+  "model_types": {
+    "L0_a": "xgboost",
+    "L0_b": "xgboost",
+    "L1_a": "xgboost"
+  },
+  "transform_targets": {
+    "L0_a": "standard",
+    "L0_b": "standard",
+    "L1_a": "standard"
+  },
+  "loss_by_target": {
+    "L0_a": null,
+    "L0_b": null,
+    "L1_a": null
+  },
+  "rf_loss_by_target": {
+    "L0_a": null,
+    "L0_b": null,
+    "L1_a": null
+  },
+  "disable_sample_weights": false,
+  "fit_weight_source": "weighted",
+  "use_pd_weight": true,
+  "xgb_device": "cpu",
+  "parsimony_mode": "off",
+  "parsimony_strength": 0.0,
+  "parsimony_selection_info": null
+}
