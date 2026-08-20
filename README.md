@@ -19,10 +19,6 @@ GLiquid is on PyPI:
 pip install gliquid
 ```
 
-That is the whole installation. The unary reference tables ship inside the package, so element
-free energies work immediately (see step 3); the per-system **data corpus** is external and is
-what step 2 is for.
-
 Optional extras:
 
 ```bash
@@ -35,7 +31,7 @@ pip install gliquid[models]    # ...plus the exact scikit-learn / xgboost versio
 pip install gliquid[notebook]  # local Jupyter tooling -- not a base dependency
 ```
 
-The machine-learning stack is **not** a base dependency. Nothing outside
+The machine-learning stack is not a base dependency. Nothing outside
 `gliquid.production_model_runner` imports it — fitting, the convex hull, the phase diagrams
 and the ternary interpolation all run without it — and as a base dependency it cost roughly
 935 MB of installed packages to anyone who never predicted a parameter. `import gliquid` and
@@ -74,7 +70,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process # As needed
 gliquid-env\Scripts\Activate.ps1      
 ```                       
 
-### **2. Clone the repository — for the data corpus, the notebooks, or development**
+### **2. Clone the repository — for the binary liquidus data, the notebooks, or development**
 A `pip install` gets you the library. Clone the repository when you want the external data
 corpus (the per-system DFT caches and digitized phase diagrams), the demonstration notebooks, or
 a checkout to develop against:
@@ -99,17 +95,17 @@ directory. See step 3.
 ### **3. Point GLiquid at its data**
 GLiquid's data comes in two kinds, and only one of them is installed with the package.
 
-**Reference tables — shipped, nothing to do.** `phase_transitions.json` (the unary element
+**Reference tables** `phase_transitions.json` (the unary element
 database), `omegas_hcp.json` and `spurious_structures.json` live inside the package at
 `gliquid/reference/`. They are what element free-energy references are built from, so a
 `pip install gliquid` is immediately able to compute:
 
 ```python
 from gliquid import phase
-print(phase.UNARY["Fe"].t_fusion)   # 1811.0 — works straight after pip install
+print(phase.UNARY["Fe"].t_fusion)  
 ```
 
-**The data corpus — external, you provide it.** The per-system DFT entry caches
+**Binary liquidus & phase data** The per-system DFT entry caches
 (`<System>_ENTRIES_MP_GGA.json`), the digitized MPDS phase diagrams and the trained model
 bundle are megabytes of per-system data that no distribution carries. Anything that reads a
 cached system needs a data directory. Point at one either way:
@@ -199,7 +195,7 @@ For a more detailed walkthrough, including raw data inspection and batch fitting
 For a ready-to-run Colab workflow, use [notebooks/colab_demo.ipynb](notebooks/colab_demo.ipynb).
 
 Key points for Colab use:
-- The reference tables ship with the package; the **data corpus** does not, and must come from
+- The reference tables ship with the package; the **jSON data** does not, and must come from
   a cloned repository or your own mounted path (see step 3 above).
 - Either `cfg.set_data_dir(...)` in Python or `os.environ["GLIQUID_DATA_DIR"] = ...` before
   importing `gliquid` will do. The Python call is easier to see and to change in a notebook.

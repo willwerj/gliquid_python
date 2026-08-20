@@ -38,40 +38,29 @@ _POLYMORPH_BASE_RANK = {"lt": 0, "rt": 10, "": 10, "ht": 20, "hp": 90}
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 # extract_digitized_liquidus linearly interpolates across any consecutive-point composition
-# gap wider than _FILL_GAP_X, inserting synthetic points at _FILL_STEP_X spacing -- but only
-# WITHIN a covered region (see extract_digitized_liquidus). The liquidus_coverage hole
-# tolerance (config.liquidus_gap_tol) is deliberately LOOSER than _FILL_GAP_X: uniform
-# 0.06-0.10 digitization spacing is common and benign to fill.
+# gap wider than _FILL_GAP_X, inserting synthetic points at _FILL_STEP_X spacing, but only
+# WITHIN a covered region. The liquidus_coverage hole tolerance (config.liquidus_gap_tol)
+# is deliberately looser than _FILL_GAP_X.
 #
-# Because every within-region gap is filled down to <= _FILL_STEP_X spacing, ANY consecutive
-# gap wider than _FILL_GAP_X surviving in the returned curve is an undigitized hole between
-# disjoint liquid regions. Plotters use exactly that to decide where to break the trace.
+# So any consecutive gap wider than _FILL_GAP_X surviving in the returned curve is an
+# undigitized hole between disjoint liquid regions, which is what plotters break on.
 _FILL_GAP_X = 0.06
 _FILL_STEP_X = 0.03
 
 # ---------------------------------------------------------------------------------------
-# Lean records: an MPDS diagram reduced to what a fit + a liquidus plot need.
+# Lean records: an MPDS diagram reduced to what a fit and a liquidus plot need.
 #
-# ``shapes`` is 93-97% of every MPDS json, and a deployed liquidus viewer never reads it.
-# A LEAN record drops it and carries the already-stitched liquidus instead, under one
-# reserved key. Everything else the package reads is KEPT: ``reference`` (``_stitched_
-# liquidus`` bails on None, and it is the figure-caption provenance), ``chemical_elements``
-# (frame), ``temp`` (temp_range, low_temp_threshold), ``comp_range``, ``labels`` (1-5%, and
-# the full-composition-SS / miscibility-gap / polymorph logic reads it), and the
-# ``entry``/``jcode``/``year`` citation fields (~20 B).
+# A LEAN record drops ``shapes`` and carries the already-stitched liquidus under one
+# reserved key. Kept: ``reference``, ``chemical_elements``, ``temp``, ``comp_range``,
+# ``labels`` and the ``entry``/``jcode``/``year`` citation fields.
 #
-# It is a reserved KEY rather than a new class on purpose: ``load_mpds_data`` returns
-# ``(dict, (curve, is_partial))`` and 100+ sites treat that first element as an MPDS json.
-# A new type breaks all of them; a dict with one extra private key preserves the shape and
-# lets every ``shapes`` consumer detect the reduction (:func:`record_mode`).
+# A reserved KEY rather than a new class, so ``load_mpds_data``'s ``(dict, (curve,
+# is_partial))`` shape is unchanged and every ``shapes`` consumer can detect the
+# reduction (:func:`record_mode`).
 #
-# WHAT IS STORED IS THE **PRE-FILL** CURVE, and that is the load-bearing decision here.
-# ``extract_digitized_liquidus`` linearly densifies every in-region gap wider than 0.06, so
-# its output cannot tell a digitized point from synthetic fill. Storing THAT would make
-# ``liquidus_coverage`` report ``max_gap <= 0.06`` for every system in the corpus, and the
-# interior-sparsity gate in ``BinaryLiquid.from_cache`` would never fire again -- silently,
-# for every system, with the metrics still looking plausible. So the reduction stores
-# ``_stitched_liquidus``'s own output, and the fill happens at read time exactly as before.
+# Stores the PRE-fill curve; callers densify at read time. Storing the filled curve would
+# make ``liquidus_coverage`` report max_gap <= 0.06 for every system and silently disable
+# the interior-sparsity gate in ``BinaryLiquid.from_cache``.
 _GLIQUID_KEY = "_gliquid"
 
 #: Bumped when the shape of the ``_gliquid`` block changes.
@@ -462,10 +451,8 @@ def extract_digitized_liquidus(mpds_json: dict) -> tuple[list[list] | None, bool
     than ``_FILL_GAP_X`` — but **only within a single covered region**. Densification is
     interpolation between two digitized points on the same liquid field; across the hole
     between two disjoint 'L' shapes there is no curve to interpolate, and filling it would
-    fabricate a liquidus (Bi-Si used to come back span-complete with ~86% of its interior
-    invented). Such a hole is therefore left open: ``is_partial`` is True, the two branch
-    endpoints stay adjacent in the returned list, and :func:`liquidus_coverage` measures
-    the hole exactly as it did before.
+    fabricate a liquidus. Such a hole is left open: ``is_partial`` is True, the two branch
+    endpoints stay adjacent in the returned list, and :func:`liquidus_coverage` measures it.
 
     Consumers that draw the curve must break the line at any surviving gap wider than
     ``_FILL_GAP_X`` — within a region nothing that wide can survive the fill, so such a gap
@@ -1303,9 +1290,8 @@ def assess_solid_coverage(
       line compound is an adequate stand-in.
     * A wider field whose spacegroup matches a loaded solid-solution model is supported.
     * A wider field whose spacegroup is one of the solid-solution structures but has **no**
-      loaded model is unsupported over its whole composition range. This is the case the
-      label-string full-composition check used to miss: Lu-Nd's HCP field is labelled
-      ``(Lu)`` yet measurably spans the entire axis.
+      loaded model is unsupported over its whole composition range. A label-string check
+      cannot see this: such a field may be labelled ``(A)`` yet span the entire axis.
     * A field whose structure MPDS did not resolve falls back to "supported if any model is
       loaded" -- this is what keeps genuine ``(A, B)`` solid solutions (Os-Re) fittable.
     * A field that is really an ordered compound with a homogeneity range (its spacegroup is

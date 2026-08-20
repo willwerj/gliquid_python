@@ -33,9 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 # --- Solid-solution envelope geometry -------------------------------------------------
-# A continuous SS field is drawn as a closed, hatch-filled polygon. Both of its boundaries
-# come from the same branch split, so an upper and a lower boundary can never disagree
-# about where a composition gap falls (the Hf-Y / Ru-Y / Hf-W / Cr-W disconnection class).
+# A continuous SS field is drawn as a closed, hatch-filled polygon. Both boundaries come
+# from the same branch split, so they cannot disagree about where a composition gap falls.
 _SS_PINCH_FRAC = 0.05  # terminal spread <= this fraction of the widest -> single apex
 _SS_EDGE_STEPS = 1.5  # a terminus this close (in grid steps) to 0/100 is an axis end
 _SS_APEX_STEPS = 3.0  # cap on how far past the terminus an extrapolated apex may land
@@ -51,9 +50,8 @@ _SS_TIE_T_FRAC = 0.005  # temperature tolerance when matching a tie to a field v
 # artificial minimum sitting there, not a physical one.
 _SS_TIE_FRAME_FRAC = 0.025  # how close to the plotted T range counts as "at its edge"
 # Half-width of the "at the minimum" temperature window used when reading the assemblage
-# on either side of it, as a fraction of the plotted span. The facets bracketing a
-# eutectoid can be a few hundredths of a kelvin away (Y-Zr: 768.0015 -> 768.0507), so this
-# only has to exclude the invariant's OWN facets, never a neighbouring equilibrium.
+# on either side of it, as a fraction of the plotted span. Sized to exclude the
+# invariant's own facets, never a neighbouring equilibrium.
 _SS_MIN_T_EPS_FRAC = 1e-6
 # Three-phase invariants put a participating solution phase at its solubility limit by
 # definition, so they bypass the SS admission filter entirely.
@@ -64,25 +62,20 @@ _TIE_INV_KEYS = ("Eutectics", "Peritectics", "Misc Gaps", "Solid Ties")
 # L1+L2 (monotectic) horizontal, which is admitted regardless of any SS field it touches.
 _LIQUID_LABEL = "L"
 # Minimum separation (at.%) between the two solid vertices of an L + S1 + S2 invariant for
-# them to be two distinct compositions of the field rather than adjacent samples of one
-# continuous boundary. Mirrors the width gate hsx.liquidus_invariants already applies to a
-# 'Misc Gaps' entry (comp_diff > 0.012 mole fraction), which for this topology measures the
-# LIQUID-to-solid distance and so never rejects a collapsed solid pair.
+# them to be two distinct compositions rather than adjacent samples of one continuous
+# boundary. hsx.liquidus_invariants' own width gate measures liquid-to-solid distance and
+# so never rejects a collapsed solid pair.
 _SS_TIE_SOLID_GAP_PCT = 1.2
-# Two sources can emit the SAME physical horizontal with slightly different extents (an
-# invariant tie and the polymorph/safety-net tie at the same temperature -- Cu-Ir). Ties
-# within this fraction of the plotted temperature span whose composition spans touch or
-# overlap are merged into one trace spanning their union. Kept small: merging genuinely
-# distinct invariants that happen to sit close in temperature is the failure mode.
+# Ties within this fraction of the plotted temperature span whose composition spans touch
+# or overlap are merged into one trace spanning their union. Keep small: merging distinct
+# invariants that happen to sit close in temperature is the failure mode.
 _TIE_MERGE_T_FRAC = 0.005  # ~10 K on a 2000 K diagram
 
 
 # --- Tie-line instrumentation ---------------------------------------------------------
-# Read-only diagnostics tooling needs to know WHICH source emitted each drawn tie.
-# While a sink is installed, plot_tx appends one mutable record per DRAWN tie --
-# ``{'temp', 'x0', 'x1', 'sources'}`` -- and a merge updates the
-# record already there rather than adding another, so the sink always mirrors fig.data.
-# Production never installs one; the hook is inert when it is None.
+# While a sink is installed, plot_tx appends one mutable record per drawn tie --
+# ``{'temp', 'x0', 'x1', 'sources'}`` -- and a merge updates the record already there, so
+# the sink mirrors fig.data. Inert when None.
 _TIE_SINK: list | None = None
 
 
@@ -314,14 +307,11 @@ def _ss_terminus(
     if abs(x_end - edge) <= _SS_EDGE_STEPS * step:
         snapped = None
         if abs(x_end - edge) > 1e-9:
-            # The branch stops short of the axis, so the corner would be EXTRAPOLATED --
-            # and a steep boundary overshoots the component's transition temperature
-            # (Hf-Y's HCP reaches 1861 C at x=0, 118 K above the alpha->beta transition at
-            # 1742.9 C, i.e. inside the beta field). At the axis a solid solution IS the
-            # pure component in that structure, so snap to the stability interval of the
-            # matching polymorph instead. Match by overlap rather than by name: the branch
-            # rides the polymorph it degenerates into. Corners that are actually SAMPLED at
-            # the axis are left exactly as the hull produced them.
+            # The branch stops short of the axis, so the corner would be extrapolated and a
+            # steep boundary can overshoot the component's transition temperature. At the
+            # axis a solid solution IS the pure component in that structure, so snap to the
+            # stability interval of the matching polymorph, matched by overlap rather than
+            # by name. Corners actually sampled at the axis are left as the hull produced.
             snapped = _match_edge_interval(edge_intervals, edge, t_lo_end, t_hi_end)
         if snapped is not None:
             t_lo_edge, t_hi_edge = snapped
@@ -492,16 +482,12 @@ def _ss_regions(
         ]
 
         # Interior temperature extrema are critical points too: the coldest point of a
-        # field is where it meets the invariant that terminates it (Hf-W BCC bottoms out
-        # at 1228.3 C @ x=11.8, exactly the alpha-Hf + BCC + HfW2 peritectoid; Y-Zr BCC at
-        # 768.0 C @ x=91.0 and Hf-Y BCC at 733.2 C @ x=61.4, both eutectoids). Anchoring
-        # only on composition extrema drops those ties.
+        # field is where it meets the invariant that terminates it, so anchoring only on
+        # composition extrema drops those ties.
         #
-        # 'kind' names WHICH extremum an anchor marks, because they are not
-        # interchangeable: 'lower_min' is the branch's coldest sampled point and the only
-        # one _ss_minimum_tie_allowed will draw a horizontal at. A terminus anchor keeps
-        # the terminus' own kind ('apex'/'blunt'), so a minimum that merely sits at the end
-        # of the branch is never mistaken for an interior one.
+        # 'kind' names WHICH extremum an anchor marks: 'lower_min' is the branch's coldest
+        # sampled point and the only one _ss_minimum_tie_allowed draws a horizontal at. A
+        # terminus anchor keeps its own kind ('apex'/'blunt').
         vertex_anchors = left["vertex_anchors"] + right["vertex_anchors"]
         for kind, arr, idx in (
             ("lower_min", lo, int(np.argmin(lo))),
@@ -525,11 +511,8 @@ def _ss_regions(
                 "x": np.array([p[0] for p in ring], dtype=float),
                 "t": np.array([p[1] for p in ring], dtype=float),
                 "vertices": left["vertices"] + right["vertices"],
-                # 'vertex_anchors'/'edge_tol' are load-bearing: plot_tx reads the
-                # 'lower_min' anchor (and 'edge_tol' as its interiority window) to place the
-                # eutectoid horizontal at the branch's temperature minimum. 'edge_anchors'
-                # stays fixture-only -- no production code consults it, since _ss_tie_allowed
-                # still rejects every 'Misc Gaps'/'Solid Ties' entry at a composition extremum.
+                # plot_tx reads the 'lower_min' anchor, with 'edge_tol' as its interiority
+                # window, to place the eutectoid horizontal. 'edge_anchors' is fixture-only.
                 "edge_anchors": [a for a in (left["edge_anchor"], right["edge_anchor"]) if a],
                 "vertex_anchors": vertex_anchors,
                 "edge_tol": _SS_EDGE_STEPS * step,
@@ -811,11 +794,9 @@ def _split_segments(
     return segments
 
 
-# Assessed (digitized) liquidus break, in at.%. mpds.extract_digitized_liquidus densifies
-# every gap INSIDE a digitized liquid region down to <= 3 at.% spacing and refuses to fill
-# across the hole between two disjoint 'L' regions, so any surviving gap wider than
-# mpds._FILL_GAP_X is an undigitized hole and must not be drawn through. Kept as a literal
-# because this module takes no model imports; test_multi_l_liquidus pins the two in sync.
+# Assessed (digitized) liquidus break, in at.%. Any gap wider than mpds._FILL_GAP_X is an
+# undigitized hole and must not be drawn through. A literal because this module takes no
+# model imports; test_multi_l_liquidus pins the two in sync.
 _ASSESSED_GAP_PCT = 6.0
 # A gap sitting exactly ON the fill threshold is legitimate in-region sampling that the
 # extractor declined to densify (Hf-Zr's widest is 5.96 at.%). x*100 - x'*100 can land a
@@ -841,15 +822,12 @@ def _assessed_liquidus_segments(points) -> list[list[list[float]]]:
 
 
 # ======================================================================================
-# Binary TX plot stack (migrated from gliquid/hsx.py: plot-geometry constants, label
-# helpers, and plot_tx as a module function over an HSX instance). hsx.py keeps the
-# dimension-agnostic hull/compute machinery only.
+# Binary TX plot stack: plot-geometry constants, label helpers, and plot_tx over an HSX.
 # ======================================================================================
 
 # ---------------------------------------------------------------------------
-# Plotting geometry constants (must match the layout used in HSX.plot_tx).
-# These are the single source of truth for the pixel<->data conversions used
-# by label-collision detection; the tests import them from this module.
+# Plotting geometry constants; must match the layout plot_tx builds. The single
+# source of truth for the pixel<->data conversions label-collision detection uses.
 # ---------------------------------------------------------------------------
 _FIG_W_PX = 750
 _FIG_H_PX = 600
@@ -976,11 +954,9 @@ def _parse_elemental_phase(name: str):
     s = str(name).strip()
     greek_word = None
     struct_prefix = None
-    # "<Structure words> <Element>" form (e.g. "Diamond cubic Si", "Face centered cubic Al"):
-    # a capitalised structure name preceding a trailing element symbol. The element is the last
-    # token; everything before it is the structure. Only fires when the leading token is a
-    # capitalised, non-greek word (so "alpha Mn" stays a greek polymorph and a hypothetical
-    # "Na Cl" — an element-symbol prefix — is not misread as element Cl).
+    # "<Structure words> <Element>" form ("Diamond cubic Si"): a capitalised structure name
+    # preceding a trailing element symbol. Only fires when the leading token is capitalised
+    # and non-greek, so "alpha Mn" stays a greek polymorph.
     toks = s.split()
     if (
         len(toks) >= 2
@@ -1009,14 +985,9 @@ def _parse_elemental_phase(name: str):
     element = m2.group(1)
     struct = (m2.group(2) or "").strip() or struct_prefix
     tag = (m2.group(3) or "").strip() or None
-    # Reject compounds: ANY trailing remainder that is not a temperature tag means this is
+    # Reject compounds: any trailing remainder that is not a temperature tag means this is
     # a formula, not an elemental phase -- "ZrMn2" parses as element "Zr" + remainder
     # "Mn2", and "Ce(FeSi)2" as element "Ce" + "structure" FeSi + remainder "2".
-    #
-    # The remainder used to be rejected only when it contained LETTERS, which let the bare
-    # stoichiometric "2" of a parenthesised ternary compound through and rendered
-    # Ce(FeSi)2 as "Ce (FeSi) 2". No binary system has a parenthesised formula, so this
-    # only ever surfaced once the ternary legend started using this formatter.
     if tag and not re.fullmatch(_TAG_PHASE_TAG_RE, tag, re.IGNORECASE):
         return None
     return greek_word, element, struct, tag
@@ -1245,11 +1216,9 @@ def _resolve_label_collisions(
         if lbl.get("pin") or lbl.get("above_liquidus") or not tie_segments:
             return
         cx, cy, half_w, half_h = _estimate_label_box(lbl, xlim, ylim)
-        # Only a tie that genuinely bisects the box counts: a tie sitting *above* the box top
-        # does not cross the label, and lifting toward it (then having ``apply_ceiling`` pull the
-        # box back down) lands the label straddling that tie -- the deep-eutectic failure on
-        # Au-Sm/SmAu6 and Er-Rh/Er3Rh, where the liquidus ceiling sits just above the eutectic
-        # tie. The strict ``< cy + half_h`` upper bound keeps such a placement intact.
+        # Only a tie that genuinely bisects the box counts. A tie above the box top does not
+        # cross the label, and lifting toward it lands the label straddling that tie once
+        # ``apply_ceiling`` pulls the box back down.
         blocking = [
             T
             for (x0, x1, T) in tie_segments
@@ -1638,10 +1607,9 @@ def plot_tx(
     liq_df.sort_values(by=["x", "t"], inplace=True)
     liq_df.drop_duplicates(subset="x", keep="first", inplace=True)
 
-    # Use raw compute_tx scatter points for solids so polymorphs at identical
-    # composition are preserved (invariant-derived groupings can collapse them).
-    # Solid-solution phases never enter the line-compound machinery below — they are
-    # rendered separately as envelope branches (see the ss_phases block near the end).
+    # Raw compute_tx scatter points for solids, so polymorphs at identical composition are
+    # preserved. Solid-solution phases never enter the line-compound machinery below --
+    # they render as envelope branches (see the ss_phases block near the end).
     solid_df = hsx.df_tx[hsx.df_tx["label"] != "L"].copy()
     if ss_phases:
         solid_df = solid_df[~solid_df["label"].isin(ss_phases)].copy()
@@ -1653,10 +1621,8 @@ def plot_tx(
     # phase's df_tx extents, so the conds adjustments that follow cannot invalidate it.
     ss_regions: dict[str, list[dict]] = {}
     if ss_phases:
-        # Stability intervals of the component polymorphs sitting on each composition axis
-        # (Hf-Y x=0: alpha-Hf 733-1743, beta-Hf 1743-2233). An SS branch that stops short
-        # of an axis snaps its corner onto whichever of these it overlaps, instead of
-        # extrapolating past the component's transition temperature.
+        # Stability intervals of the component polymorphs on each composition axis. An SS
+        # branch stopping short of an axis snaps its corner onto whichever it overlaps.
         edge_intervals: dict[float, list[tuple[float, float]]] = {}
         for edge in (0.0, 100.0):
             at_edge = solid_df[np.isclose(solid_df["x"], edge)]
@@ -1675,13 +1641,10 @@ def plot_tx(
                     if phase in ss_phases:
                         ss_invariants[phase].append((float(comp) * 100, float(temp)))
 
-        # The composition grid is a property of the HULL SAMPLING, not of any one phase's
-        # stability range, so measure it ONCE here over the axis every phase was sampled
-        # on. Inferred per field it degenerates: a field supported at exactly two
-        # compositions has only one spacing -- the gap itself -- so no gap can exceed
-        # 1.5x it, the branch splitter never fires, and the two terminal branches weld
-        # into a single quadrilateral spanning the diagram. Mo-Y and W-Y are that case:
-        # BCC at 0.2 at.% (BCC-Mo/W) and at 100 at.% (beta-Y), nothing in between.
+        # The composition grid is a property of the hull sampling, not of any one phase's
+        # stability range, so measure it once over the axis every phase was sampled on.
+        # Inferred per field it degenerates: a field supported at two compositions has one
+        # spacing, so no gap exceeds 1.5x it and the two terminal branches weld together.
         grid_step = _hull_grid_step(hsx.df_tx["x"].to_numpy(dtype=float) * 100.0)
 
         ss_df = hsx.df_tx[hsx.df_tx["label"].isin(ss_phases)].copy()
@@ -1987,9 +1950,8 @@ def plot_tx(
         return float(left), float(right)
 
     # --- Solid-solution eutectoid horizontals. The invariant emitter hands a solvus over as
-    # one entry per grid slice and _ss_tie_allowed rejects the lot; the genuine reaction
-    # hiding in that fan is the ONE at the field's interior temperature minimum, which the
-    # branch's own geometry locates and the hull's facets confirm. At most one per branch. ---
+    # one entry per grid slice and _ss_tie_allowed rejects the lot; the genuine reaction is
+    # the one at the field's interior temperature minimum. At most one per branch. ---
     if ss_regions:
         ss_assemblages = _facet_assemblages(hsx.df_tx)
         for ss_name in sorted(ss_regions):
@@ -2110,11 +2072,9 @@ def plot_tx(
             }
             _, _, half_w, hh = _estimate_label_box(probe, xlim, (hsx.conds[0], hsx.conds[1]))
             half_hs_frac.append(hh / (hsx.conds[1] - hsx.conds[0]))
-        # Dodge compound columns: a floated/relocated polymorph label sits at ``fx`` with a leader
-        # arrow back to the element edge. If a compound shares that composition (e.g. Be12V at
-        # 8 at.% vs the side-0 default fx=8) the float lands on top of the compound label. Shift
-        # fx to the nearest compound-free x (keeping clear of the in-band element label too) so
-        # neither the box nor the arrow collides; an empty same-side gap leaves fx at default.
+        # Dodge compound columns: a floated polymorph label sits at ``fx`` with a leader arrow
+        # back to the element edge, and a compound sharing that composition would collide.
+        # Shift fx to the nearest compound-free x; an empty same-side gap leaves it at default.
         obstacles = [label_x] + [
             cp["comp"] for cp in compound_phase_list if (cp["comp"] < 50) == (side_comp == 0)
         ]
@@ -2453,9 +2413,8 @@ def plot_tx(
     fig.update_traces(line=dict(width=4), showlegend=False)
 
     # --- Solid-solution fields: one closed, '/'-hatched polygon per composition branch,
-    # outlined uniformly in the phase color over a clear fill. The line-compound machinery
-    # above never saw these labels; they render here (after the global width/legend reset
-    # so their styling survives) with reserved colors and one legend entry each. ---
+    # outlined in the phase color over a clear fill. Rendered here, after the global
+    # width/legend reset, with reserved colors and one legend entry each. ---
     for ss_name in [p for p in hsx.phases if p in ss_regions]:
         color = phase_colors.get(ss_name, "#555555")
         display = format_phase_display_name(ss_name, ss_phases, hsx.comps)

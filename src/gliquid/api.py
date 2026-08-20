@@ -187,12 +187,10 @@ def get_mpds_client(dtype: str = "PEER_REVIEWED"):
 
 
 # --------------------------------------------------------------------------------------
-# DFT entry cache/load — n-component Materials Project entries and convex hulls.
-# Records are addressed as ``CacheKey(sys_name, 'dft_entries', dft_type)`` and resolved by a
-# ``gliquid.cache`` backend: the configured store, or the one named by an explicit
-# ``data_dir`` override such as TernaryLiquidInterpolation's. Under the DirectoryBackend
-# that is still ``{sys_name}_ENTRIES_MP_{dft_type}.json`` under the system directory
-# (``config.dir_structure`` flat/nested, or flat inside an explicit override).
+# DFT entry cache/load -- n-component Materials Project entries and convex hulls.
+# Records are addressed as ``CacheKey(sys_name, 'dft_entries', dft_type)`` and resolved by
+# a ``gliquid.cache`` backend: the configured store, or the one named by an explicit
+# ``data_dir`` override.
 # --------------------------------------------------------------------------------------
 
 _LEGACY_MONTY_MODULES = {
@@ -203,12 +201,9 @@ _LEGACY_MONTY_MODULES = {
 # The dft_type names this package recognizes -- not the same thing as the ones that WORK.
 SUPPORTED_DFT_TYPES = ("GGA", "R2SCAN", "MIXED")
 
-# Two of the three recognized names cannot be fetched at all, each for an UPSTREAM reason
-# gliquid cannot fix from here. They are rejected at the entry points below, before any
-# network call, rather than left to fail deep inside a fetch with an error that points
-# nowhere near the cause. Each string is the one-line diagnosis a user needs to check
-# whether the upstream fix has landed; when one has, delete its entry and the
-# tests_internal/test_dft_data_loading.py canary for it turns XPASS.
+# Names that cannot be fetched, for upstream reasons. Rejected at the entry points below,
+# before any network call. Each string is the one-line diagnosis; when an upstream fix
+# lands, delete the entry and its tests_internal/test_dft_data_loading.py canary turns XPASS.
 _BLOCKED_DFT_TYPES = {
     "R2SCAN": (
         "the Materials Project stores this thermo type as the literal 'r2SCAN' while "
@@ -304,27 +299,20 @@ def _computed_entry_from_dict(entry: dict):
     return ComputedEntry.from_dict(entry)
 
 
-# Tier A spurious-structure blacklist (``config.spurious_structures_file``). Two sibling
-# blocks, two policies:
-#   'elements' — elemental MP structures with no stability field at any T at 1 atm.
-#   'compounds' — non-elemental artifacts (MP composition artifacts and the like), which
-#     the elemental block structurally cannot express because that path refuses any entry
-#     of arity != 1.
-# Both are filtered at fetch AND at cache read, so every hull references formation
-# energies to the same surviving elemental ground states as the unary DB — old caches
-# included, without rewriting them. Elemental matching is two-path because entry ids
-# changed generations: classic string ids ('mp-8566-GGA') match the blacklist's
-# material_ids; new-API alpha ids ({'identifier': 'mp-aaaaaaeu', ...}) are unmappable, so
-# elemental entries fall back to the (element, spacegroup) of their structure
-# (symprec=0.1, the MP convention).
+# Tier A spurious-structure blacklist (``config.spurious_structures_file``). Two blocks:
+#   'elements'  -- elemental MP structures with no stability field at any T at 1 atm.
+#   'compounds' -- non-elemental artifacts; the elemental path refuses arity != 1.
+# Both are filtered at fetch AND at cache read, so every hull references the same
+# surviving elemental ground states as the unary DB, old caches included, without
+# rewriting them. Elemental matching is two-path because entry ids changed generations:
+# classic string ids ('mp-8566-GGA') match material_ids; new-API alpha ids are unmappable
+# and fall back to the (element, spacegroup) of their structure (symprec=0.1).
 _MP_ID_RE = re.compile(r"(mp-[a-z0-9]+)")
 _spurious_cache: tuple | None = None  # (path, mtime, ids, pairs, expected_gs, compounds)
 
-# Compound-rule predicate forms, in EVALUATION PRECEDENCE. A record's ``match`` object may
-# name several; the highest-precedence form present decides that record. 'composition' is
-# the preferred shape for new records — it pins every element and so cannot over-match.
-# 'element_count' constrains only the elements it names and leaves the rest free, which is
-# what makes it the exact translation of a legacy ``comp.get(el, 0) != n`` literal.
+# Compound-rule predicate forms, in EVALUATION PRECEDENCE; the highest-precedence form
+# present decides a record. 'composition' pins every element and cannot over-match;
+# 'element_count' constrains only the elements it names and leaves the rest free.
 _COMPOUND_MATCH_FORMS = ("material_id", "composition", "element_count")
 
 
@@ -525,12 +513,10 @@ def _get_dft_entries_from_components(
     components: list[str], dft_type: str, keep_data=False
 ) -> list[dict]:
     """Fetches DFT entries for the specified components and DFT functional type."""
-    # THE remote DFT path. Refused first, above the credential lookup and above the import
-    # of anything that can open a socket, so offline mode is a property of the
-    # configuration and not of whether a key happens to be installed (see
-    # config.OfflineError). Every cache miss for a system the store does not cover arrives
-    # here, so this one guard covers get_dft_convexhull, get_dft_structure_entries and
-    # cache_imputed_entries alike.
+    # THE remote DFT path. Refused first, above the credential lookup and above importing
+    # anything that can open a socket, so offline mode is a property of the configuration
+    # rather than of whether a key is installed. Covers get_dft_convexhull,
+    # get_dft_structure_entries and cache_imputed_entries alike.
     config.require_online(
         f"Fetching Materials Project DFT entries for '{'-'.join(components)}' "
         f"(dft_type={dft_type!r})"
@@ -541,15 +527,11 @@ def _get_dft_entries_from_components(
 
     entries = []
 
-    # The chemsys query is expressed in ELEMENT symbols, not in components.
+    # The chemsys query is expressed in ELEMENT symbols, not components.
     # ``MPRester.get_entries_in_chemsys`` enumerates every chemsys substring of
-    # ``set(elements)``, so a compound component is queried as a chemsys that does not
-    # exist ('CuMg') and silently contributes nothing -- a PARTIAL fetch that then gets
-    # written to the cache, and whose CompoundPhaseDiagram fails downstream with
-    # "Missing terminal entries" rather than at the fetch. A hull over compound terminals
-    # needs the whole spanned elemental chemsys anyway (CompoundPhaseDiagram drops what
-    # its terminal basis cannot express). For elemental components this is the identity:
-    # get_entries_in_chemsys de-duplicates and re-derives the order itself.
+    # ``set(elements)``, so a compound component would be queried as a chemsys that does
+    # not exist ('CuMg') and silently contribute nothing. For elemental components this is
+    # the identity: get_entries_in_chemsys de-duplicates and re-derives the order itself.
     elements = sorted({str(el) for c in components for el in Composition(c).elements})
 
     def fetch_entries(api_key, thermo_type=None):
@@ -592,12 +574,9 @@ def _get_dft_entries_from_components(
         for e in computed_entry_dicts:
             e.pop("data", None)
 
-    # A fetch that yields nothing must RAISE here, above every cache-write site, rather
-    # than return [] for a caller to persist. A 2-byte '[]' cache file is indistinguishable
-    # from a real one on the next read, so one bad fetch is served warm forever -- the same
-    # defect shape as the partial-chemsys fetch, and this half is gliquid's own. Returning
-    # empty without raising is not an option either: the caller then fails somewhere far
-    # less legible (PhaseDiagram's "Unable to build phase diagram without entries").
+    # A fetch yielding nothing must RAISE here, above every cache-write site: a 2-byte '[]'
+    # cache file is indistinguishable from a real one on the next read, so one bad fetch
+    # would be served warm forever.
     if not computed_entry_dicts:
         raise ValueError(
             f"The Materials Project returned no usable entries for "
@@ -654,8 +633,7 @@ def _resolve_sys_dir(sys_name: str, data_dir=None) -> str:
     ``config.dir_structure`` decides.
 
     Side effect, deliberately preserved: in nested mode this CREATES the system directory,
-    on the read path as much as the write path. ``dev/scripts/Fit_Binary_Systems.py``
-    relies on it for cold fetches into the workspace ``matrix_data`` store.
+    on the read path as much as the write path. Campaign drivers rely on it for cold fetches.
 
     Raises:
         CacheModeError: under ``cache_mode='sqlite'``, where the question "which directory"
@@ -838,10 +816,8 @@ def get_dft_convexhull(
     if not include_imputed:
         computed_entry_dicts = [e for e in computed_entry_dicts if not _is_imputed_entry_dict(e)]
 
-    # Read-time Tier A guard (blacklist + anchor consistency): caches of any age
-    # may hold blacklisted elemental structures, sub-anchor elemental structures,
-    # or the blacklisted MP composition artifacts old ternary caches predate;
-    # filter in memory, never rewrite the cache file.
+    # Read-time Tier A guard (blacklist + anchor consistency): caches of any age may hold
+    # blacklisted or sub-anchor elemental structures. Filter in memory, never rewrite.
     computed_entry_dicts = _filter_spurious_entries(computed_entry_dicts)
 
     if any(len(Composition(c).elements) > 1 for c in components):
@@ -881,10 +857,8 @@ def get_dft_convexhull(
 
 
 # --------------------------------------------------------------------------------------
-# Hull seams — the ONLY sanctioned ways to read component identities, axis fractions,
-# and display names off a hull, valid for both PhaseDiagram and CompoundPhaseDiagram.
-# Consumers written against these helpers need no changes when pseudo-binary
-# (compound end-member) systems land.
+# Hull seams -- the only sanctioned ways to read component identities, axis fractions and
+# display names off a hull, valid for both PhaseDiagram and CompoundPhaseDiagram.
 # --------------------------------------------------------------------------------------
 
 

@@ -140,13 +140,10 @@ xb_sym = comp_symbols(2)[0]  # the binary composition symbol (fraction of compon
 
 
 # --------------------------------------------------------------------------------------
-# Redlich-Kister parameter formats — the single, centralized registry of the L-term
-# formalisms. A ParamFormat declares, per RK order L0..L3: the subterm roles
-# ('a', 'b', ...), the functional form L_k(T), which parameters are pinned to zero
-# during fitting, and the fitting topology (Nelder-Mead guess parameters, how many
-# invariant-derived constraints the format consumes, penalty policy). Consumers across
-# binary.py/ternary.py read this metadata rather than branching on the raw param_format
-# string.
+# Redlich-Kister parameter formats -- the registry of L-term formalisms. A ParamFormat
+# declares, per RK order L0..L3: the subterm roles ('a', 'b', ...), the functional form
+# L_k(T), which parameters are pinned to zero during fitting, and the fitting topology.
+# Consumers read this metadata rather than branching on the raw param_format string.
 # --------------------------------------------------------------------------------------
 
 RK_MAX_ORDER = 3  # Highest supported Redlich-Kister order (L0..L3)
@@ -516,10 +513,9 @@ class SolutionModel:
         self.interp_scheme = interp_scheme
         self.ideal = ideal
         self._grid_fns: dict = {}
-        # (dh_a, dh_b, ds_a, ds_b, omega) for the binary pure-regular case — set by
-        # from_ss_model so h_s_grid can reproduce the legacy arithmetic bit-exactly
-        # (the hull goldens pin exact simplex sets; the sympy-lambdified path differs
-        # at ~1e-16, enough to flip a degenerate facet).
+        # (dh_a, dh_b, ds_a, ds_b, omega) for the binary pure-regular case, set by
+        # from_ss_model so h_s_grid reproduces the legacy arithmetic bit-exactly: the hull
+        # goldens pin exact simplex sets and the sympy-lambdified path differs at ~1e-16.
         self._binary_regular: tuple | None = None
 
     def _interaction_key(self, key) -> tuple[int, ...]:
@@ -1255,10 +1251,9 @@ def _resolve_refs_db(
             p_poly = _find_matching_polymorph(ss_phase, ref)
             if p_poly is None:
                 continue
-            # CUMULATIVE above the ground state (Phase.enthalpy/entropy), not the single-transition
-            # steps (Phase.delta_h/delta_s) -- see the module docstring's REFERENCE FRAME note. The
-            # elemental polymorph line compounds this phase replaces carry cumulative values, and
-            # the hull compares the two directly.
+            # CUMULATIVE above the ground state (Phase.enthalpy/entropy), not the
+            # single-transition steps -- see the module docstring's REFERENCE FRAME note.
+            # The elemental polymorph line compounds this replaces carry cumulative values.
             phase_refs.setdefault(ss_phase, {})[el] = _make_phase_ref(
                 ss_phase=ss_phase,
                 material_id=p_poly.material_id or "unknown",
@@ -1276,10 +1271,8 @@ def _resolve_refs_db(
                 symbol=p_poly.spacegroup_symbol or SS_SYMBOLS[ss_phase],
             )
 
-        # Tier B: structures the ladder lacks come from the builder-baked
-        # lattice_stabilities block (cumulative above the same anchor) — this
-        # supersedes the runtime omegas fallback for from_unary_db, whose
-        # conflict guard now lives in the BUILDER as a hard error.
+        # Tier B: structures the ladder lacks come from the builder-baked lattice_stabilities
+        # block, cumulative above the same anchor.
         for ss_phase in ALL_SS_PHASES:
             if el in phase_refs.get(ss_phase, {}):
                 continue
@@ -1304,17 +1297,11 @@ def _resolve_refs_db(
                     else p_ls.enthalpy / EV_ATOM_TO_J_MOL
                 ),
                 delta_h_jmol=p_ls.enthalpy,
-                # Normally 0.0 — a structure with no stability field has no
-                # transition temperature, so S = sum(dH_i / T_i) is undefined and
-                # the convention returns 0.0. The builder's scoped metastable-
-                # entropy exception emits a NEGATIVE SGTE value on a few HCP
-                # entries; publish what it wrote rather than re-flattening it.
-                # A negative delta_s only enlarges the (s_liq - dS) denominator of
-                # the endpoint melting reconstruction, so the element's own melting
-                # point is preserved by construction. These phases still have no
-                # transition temperature, so _ordered_solid_steps skips them and
-                # the liquid reconciliation is untouched (which from_unary_db does
-                # not run anyway — see load_solid_solution_models).
+                # Normally 0.0 -- a structure with no stability field has no transition
+                # temperature, so S = sum(dH_i / T_i) is undefined. The builder's scoped
+                # metastable-entropy exception emits a negative SGTE value on a few HCP
+                # entries; publish what it wrote. These phases have no transition
+                # temperature, so _ordered_solid_steps skips them.
                 delta_s_jmol_k=p_ls.entropy if p_ls.entropy is not None else 0.0,
                 spacegroup=p_ls.spacegroup_number,
                 symbol=p_ls.spacegroup_symbol or SS_SYMBOLS[ss_phase],
@@ -1361,12 +1348,8 @@ def _ordered_solid_steps(
         if el not in refs:
             continue
         # _find_matching_polymorph, not ComponentRef.solid_phase: an element may carry
-        # SEVERAL polymorphs of one spacegroup (alpha-Fe and delta-Fe are both Im-3m/229),
-        # and solid_phase returns the FIRST. For Fe that is alpha-Fe at T_tr = 0, which the
-        # filter below then discards -- so delta-Fe, the phase actually stable just under
-        # the melt, vanished from the reconciled ladder entirely. Every other SS site in
-        # this module already resolves through _find_matching_polymorph, whose docstring
-        # names this exact case; this was the last first-match holdout.
+        # several polymorphs of one spacegroup, and solid_phase returns the FIRST, which the
+        # filter below can then discard.
         p = _find_matching_polymorph(ss_phase, ref) if ss_phase in SS_SPACEGROUPS else None
         t_trans = p.t_transition if p else None
         if t_trans is None or t_trans <= 0 or t_trans >= t_melt:
@@ -1541,14 +1524,10 @@ def load_solid_solution_models(
         # component_data is byte-identical to the SS-off path. Same predicate for every ref_mode.
         return {}
 
-    # Reconcile ONLY when the resolver's zero differs from the stored ladder's. 'from_unary_db'
-    # refs ARE the stored ladder (cumulative, same ground state), so the liquid reference already
-    # shares their frame; re-deriving it from the SS-spacegroup SUBSET would drop every polymorph
-    # whose spacegroup is not BCC/FCC/HCP -- beta-Mn (sg 213) is such a step, and losing it left
-    # Mn's endpoint ~118 K high. The other two frames need the re-derivation and get it.
-    #
-    # _package_ss_models never mutates phase_refs/component_data, so for a covered system this
-    # always runs with the full, unfiltered phase_refs.
+    # Reconcile ONLY when the resolver's zero differs from the stored ladder's.
+    # 'from_unary_db' refs ARE the stored ladder, so re-deriving from the SS-spacegroup
+    # subset would drop every polymorph whose spacegroup is not BCC/FCC/HCP. The other two
+    # frames need the re-derivation and get it.
     if ref_mode != "from_unary_db":
         _reconcile_liquid_refs(components, component_data, phase_refs)
     return ss_models

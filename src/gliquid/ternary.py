@@ -126,20 +126,17 @@ class TernaryLiquidInterpolation:
         order: str | list | None = None,
     ):
         validate_and_format_system(list(components))  # compound components raise NIE here
-        # Construction order is authoritative (matches BinaryLiquid): this class keeps
-        # the components exactly as given (order=None == 'given'). The GTX plotter
-        # subclass defaults order='alphabetical' instead — presentation classes
-        # alphabetize unless told otherwise; mixing keys must match the RESOLVED
-        # order's cyclic edges.
+        # Construction order is authoritative (matches BinaryLiquid): this class keeps the
+        # components exactly as given (order=None == 'given'). The GTX plotter subclass
+        # defaults to order='alphabetical'. Mixing keys must match the RESOLVED order's
+        # cyclic edges.
         self.components = resolve_component_order(
             order if order is not None else "given", components
         )
         self.binary_systems = ordered_binary_systems(self.components)
-        # A cache BACKEND, not a path: a single-file store cannot be named by a directory,
-        # and this attribute is threaded straight through to ``api.get_dft_convexhull``.
-        # ``cfg.cache_dir`` is passed positionally when the caller gave nothing, which keeps
-        # the historical semantics exactly — the ternary cache has always been FLAT inside
-        # whatever directory it was handed, even when config.dir_structure is 'nested'.
+        # A cache BACKEND, not a path: a single-file store cannot be named by a directory.
+        # Threaded straight through to ``api.get_dft_convexhull``. The ternary cache is FLAT
+        # inside whatever directory it is handed, even when config.dir_structure is 'nested'.
         self.data_dir = cache.resolve_backend(data_dir if data_dir is not None else cfg.cache_dir)
         self.delta = delta
         self.comp_grid = generate_comp_grid(self.delta)
@@ -151,9 +148,8 @@ class TernaryLiquidInterpolation:
         self.fit_or_pred = fit_or_pred or {}  # dict of 'fit' or 'pred' per binary system
 
         # Excess-mixing models keyed by the cyclic ``binary_systems`` pair names, plus an
-        # optional 'A-B-C' TRIPLET entry (the ternary interaction term, part of the
-        # solution model — not a separate field). Plain parameter lists coerce through
-        # (param_format, tau) for pairs and the 'regular' format for the triplet.
+        # optional 'A-B-C' triplet entry (the ternary interaction term). Plain parameter
+        # lists coerce through (param_format, tau) for pairs, 'regular' for the triplet.
         def _coerce(key, val):
             if isinstance(val, RKPolyExp):
                 return val
@@ -517,29 +513,15 @@ class TernaryLiquidInterpolation:
 
         # ONE temperature window, TWO units, converted in exactly one place -- here.
         #
-        # T_grid is KELVIN: ``G = H - T * S`` needs an absolute temperature, and _eval_hull /
-        # get_convex_hull key their per-temperature slices by it. It is anchored at ABSOLUTE
-        # ZERO -- every solid is stable there, so no phase's stability window can fall off the
-        # bottom of it -- and runs to 200 K above the highest melting point.
+        # T_grid is KELVIN, since ``G = H - T * S`` needs an absolute temperature, and
+        # _eval_hull / get_convex_hull key their slices by it. Anchored at absolute zero,
+        # where every solid is stable, and running to 200 K above the highest melting point.
+        # The floor is CLAMPED at 0 K: below it the entropy term flips sign and those hull
+        # slices are meaningless. A negative temp_slider[0] therefore RAISES the floor.
         #
-        # The floor is CLAMPED at 0 K, so no margin can push the grid to a negative absolute
-        # temperature, where ``H - T * S`` would flip the sign of the entropy term and the hull
-        # for those slices would be meaningless. Two ways in, both now closed: the retired lower
-        # bound ``np.min([0, min_temp - 200])`` did it for any system containing an element that
-        # melts below 200 K (10 of the 86 with a t_fusion in the unary registry -- He, H, Ne, F,
-        # O, N, Ar, Kr, Xe, Cl), and ``temp_slider[0]`` did it for any caller asking to extend
-        # the window downward. There is nothing below 0 K to reveal, so a lower margin is
-        # clamped away rather than honoured; a NEGATIVE temp_slider[0] still RAISES the floor,
-        # which is a coherent request and is preserved.
-        #
-        # conds is the SAME window in CELSIUS, because Celsius is the frame the data ends up
-        # in: _eval_hull and _process_data_hsx both convert every equilibrium frame with
-        # ``temp_df["T"] - 273.15``, and every consumer of conds compares it against those
-        # frames -- the solid-segment floor in TLIPlotter._plot_tx, and the base triangle and
-        # z-axis range in gliquid.plotting.ternary_surface.render_tx_surface. It is DERIVED
-        # from the grid rather than computed alongside it, so the two cannot drift apart and no
-        # gtx hull temperature can land outside the plotted range. gliquid.binary sets
-        # HSX.conds the same way (``temp_range - 273.15``), so the ternary HSX agrees with it.
+        # conds is the SAME window in Celsius, derived from the grid so the two cannot
+        # drift: _eval_hull and _process_data_hsx convert every frame with ``T - 273.15``,
+        # and every conds consumer compares against those frames.
         tern_temp = self.ref_data["T"]  # UNARY t_fusion per component, KELVIN
         max_temp = round(np.max(tern_temp) + 200)
         t_floor = max(0, -self.temp_slider[0])  # absolute zero, or above it on request
@@ -1056,12 +1038,9 @@ class TLIPlotter:
 
         self.liq_plotting_df = self.plotting_df[self.plotting_df["Phase"] == "L"]
         self.solid_plotting_df = self.plotting_df[self.plotting_df["Phase"] != "L"]
-        # Dedupe PER PHASE, not per composition. Every polymorph of an element sits at that
-        # element's vertex, so a ["x0", "x1"] key kept only the highest-temperature one and
-        # deleted the rest of the ladder -- and with it every solid-solid transition -- before
-        # the figure was ever built. Same defect class the hull side already guards against,
-        # where get_ternary_form_en's groupby("Phase Name")["H"].idxmin() would drop the
-        # high-temperature polymorph unless the names are forced distinct.
+        # Dedupe PER PHASE, not per composition: every polymorph of an element sits at that
+        # element's vertex, so an ["x0", "x1"] key keeps only the highest-temperature one
+        # and deletes the rest of the ladder.
         self.solid_plotting_df = self.solid_plotting_df.sort_values("T").drop_duplicates(
             subset=["x0", "x1", "Phase"], keep="last"
         )
@@ -1070,17 +1049,13 @@ class TLIPlotter:
 
         # Each phase draws as a vertical segment from a floor up to its stability ceiling.
         # The lowest phase at a composition starts at the plot floor; every phase above it
-        # starts where the one below it ends, so a transition renders as the join between two
-        # coloured segments. Flooring them all at conds[0] instead would stack overlapping
-        # full-height lines and hide the transition even with the phases present.
+        # starts where the one below ends, so a transition renders as the join between two
+        # coloured segments.
         floor_rows = []
         for (x0, x1), grp in self.solid_plotting_df.groupby(["x0", "x1"], sort=False):
-            # conds[0] is the bottom of the temperature grid in Celsius (_init_sys) -- the same
-            # frame as this one -- so it is at or below EVERY phase's stability ceiling and the
-            # lowest segment simply starts there, with no special case. This used to need a
-            # Kelvin/Celsius fallback: conds[0] read as 0 C while holding 0 K, which floored
-            # Ti's spurious P6/mmm ground state (ceiling -93.15 C) above its own ceiling and
-            # inverted the segment.
+            # conds[0] is the bottom of the temperature grid in Celsius (_init_sys) -- the
+            # same frame as this one -- so it is at or below every phase's stability ceiling
+            # and the lowest segment simply starts there.
             base = self.conds[0]
             for _, row in grp.sort_values("T").iterrows():
                 floor_rows.append(

@@ -69,12 +69,10 @@ from pymatgen.core import Composition
 
 from gliquid.phase import Phase
 
-# ipywidgets/IPython are the optional `editor` extra, NOT base dependencies. Importing
-# them unguarded here would break a bare `pip install gliquid`: gliquid/__init__.py
-# exposes ConvexHullEditor through its lazy __getattr__, so merely *naming* the export
-# would die with a raw ModuleNotFoundError that points at no remedy. Both names below
-# fall back to a placeholder that raises a message naming the extra at first USE, which
-# keeps the export resolvable and every `widgets.*` call site below unchanged.
+# ipywidgets/IPython are the optional `editor` extra, not base dependencies. Unguarded
+# imports would break a bare `pip install gliquid`, since __init__.py exposes
+# ConvexHullEditor through a lazy __getattr__. Both names fall back to a placeholder that
+# raises a message naming the extra at first USE.
 _EDITOR_EXTRA_HINT = (
     "ConvexHullEditor needs the notebook widget stack (ipywidgets and IPython), which "
     "gliquid ships as an optional extra. Install it with `pip install gliquid[editor]` "
@@ -121,11 +119,9 @@ if TYPE_CHECKING:
     pass
 
 
-# Conversion between per-atom electronvolts and per-mole-of-atoms joules
-# (1 eV/atom = 96485 J/mol).  The editor stores everything internally in eV:
-# energies in eV/atom and entropies in eV/atom/K.  This factor converts to/from
-# the J/mol basis used by BinaryLiquid.phases and offered as an optional input /
-# display unit (1 eV/atom/K = 96485 J/mol-atom/K).
+# Per-atom electronvolts <-> per-mole-of-atoms joules (1 eV/atom = 96485 J/mol). The editor
+# stores energies in eV/atom and entropies in eV/atom/K; BinaryLiquid.phases uses the J/mol
+# basis, offered here as an optional input / display unit.
 J_PER_MOL_PER_EV = 96485
 
 
@@ -216,12 +212,9 @@ class ConvexHullEditor:
         # Working state: entries + a parallel entropy list (eV/atom/K).
         self._entries: list[PDEntry] = _copy_entries(phase_diagram.all_entries)
         self._entropies: list[float] = [0.0] * len(self._entries)
-        # Seed entropies from an existing BinaryLiquid phase list (matched by
-        # composition) so the editor reflects the current model state.  The
-        # model stores entropy in J/mol-atom/K, so convert to eV/atom/K.
-        # Both sides key on each composition's own fraction of the ALPHABETICAL second
-        # element (_el_b) — keying the phase side by construction-order fraction instead
-        # mirrored the seeds for reversed-order BinaryLiquids.
+        # Seed entropies from an existing BinaryLiquid phase list, matched by composition.
+        # The model stores entropy in J/mol-atom/K, so convert to eV/atom/K. Both sides key
+        # on each composition's fraction of the ALPHABETICAL second element (_el_b).
         if self._bl is not None:
             comp_to_s = {
                 round(p.composition.get_atomic_fraction(self._el_b), 4): float(p.entropy or 0)
