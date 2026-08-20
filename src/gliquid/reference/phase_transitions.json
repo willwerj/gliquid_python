@@ -1,9 +1,9 @@
 {
   "metadata": {
     "description": "Phase-transition database for elemental systems.  For each element the ordered phase sequence (solid polymorphs → liquid → gas) is listed with cumulative enthalpies and entropies relative to the DFT ground state (H = 0, S = 0).  Only solid polymorphs possessing BOTH a DFT energy (from Materials Project) AND a known transition temperature (from literature) are retained.  Liquid and gas phases are always included.",
-    "created_date": "2026-08-08",
+    "created_date": "2026-08-14",
     "derived_from": "elements_database.json",
-    "policy": "Tiered unary data policy (2026-08-04): Tier A removes spurious MP structures (no ambient-pressure stability field at any T; see gliquid_python/data/spurious_structures.json) before ground-state selection; Tier B emits a per-element 'lattice_stabilities' block (BCC/FCC/HCP cumulative enthalpies above the anchor, no transition temperature required; MP primary, omegas-file fallback); Tier C re-anchors elements where GGA misranks two real phases (Co, Sm) and substitutes SGTE lattice stabilities for the displaced phases, with machine-readable provenance. Metastable-entropy exception (2026-08-07): six HCP lattice stabilities (Au, Li, Ba, Ca, Cu, Ag) carry an imported SGTE entropy instead of the convention's 0.0 -- see the 'metastable_entropy_exception' convention below. Virtual-polymorph injection (2026-08-07): four real equilibrium phases absent from Materials Project entirely (beta-Y bcc, beta-Sc bcc, gamma-Sm bcc, gamma-Mn fcc) are injected onto their ladders, closing the Tier A/B/C gap for a structure that is real but has no MP record -- see the 'virtual_polymorphs' convention below.",
+    "policy": "Tiered unary data policy (2026-08-04): Tier A removes spurious MP structures (no ambient-pressure stability field at any T; see gliquid_python/src/gliquid/reference/spurious_structures.json) before ground-state selection; Tier B emits a per-element 'lattice_stabilities' block (BCC/FCC/HCP cumulative enthalpies above the anchor, no transition temperature required; MP primary, omegas-file fallback); Tier C re-anchors elements where GGA misranks two real phases (Co, Sm) and substitutes SGTE lattice stabilities for the displaced phases, with machine-readable provenance. Metastable-entropy exception (2026-08-07): six HCP lattice stabilities (Au, Li, Ba, Ca, Cu, Ag) carry an imported SGTE entropy instead of the convention's 0.0 -- see the 'metastable_entropy_exception' convention below. Virtual-polymorph injection (2026-08-07): four real equilibrium phases absent from Materials Project entirely (beta-Y bcc, beta-Sc bcc, gamma-Sm bcc, gamma-Mn fcc) are injected onto their ladders, closing the Tier A/B/C gap for a structure that is real but has no MP record -- see the 'virtual_polymorphs' convention below.",
     "conventions": {
       "reference_state": "The DFT ground state (lowest T = 0 K energy per atom from Materials Project after the Tier A blacklist and Tier C re-anchoring) defines H = 0, S = 0 for each element. After the 2026-08-04 audit the anchor matches the experimentally stable structure; audited real low-T allotropes (Na hP4, Li 9R, alpha-Sn, omega-Ti) keep the low-T structure as anchor.",
       "lattice_stabilities": "Per-element block of cumulative BCC/FCC/HCP enthalpies above the anchor for structures NOT on the phase ladder, with no transition temperature -- solid-solution end-member references only; they never enter the ladder, the liquid stacking, or the hull line compounds. delta_S = 0 by the recalculation convention (no transition temperature to divide by), EXCEPT for the six entries listed under 'metastable_entropy_exception'. Sources: MP polymorph energies (primary), omegas_hcp.json (fallback, anchored per gliquid.solution._apply_omegas_fallback's math).",
@@ -5583,7 +5583,7 @@
       "name": "Tin",
       "atomic_number": 50,
       "reference_state": {
-        "common_name": "alpha-Sn (gray tin)",
+        "common_name": "alpha-Sn",
         "spacegroup_symbol": "Fd-3m",
         "spacegroup_number": 227,
         "crystal_system": "Cubic",
@@ -5595,7 +5595,7 @@
       "phases": [
         {
           "phase_type": "solid",
-          "common_name": "alpha-Sn (gray tin)",
+          "common_name": "alpha-Sn",
           "spacegroup_symbol": "Fd-3m",
           "spacegroup_number": 227,
           "crystal_system": "Cubic",
@@ -5614,7 +5614,7 @@
         },
         {
           "phase_type": "solid",
-          "common_name": "beta-Sn (white tin)",
+          "common_name": "beta-Sn (bct)",
           "spacegroup_symbol": "I4_1/amd",
           "spacegroup_number": 141,
           "crystal_system": "Tetragonal",
