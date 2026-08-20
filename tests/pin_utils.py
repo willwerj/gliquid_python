@@ -33,8 +33,7 @@ _REF_MODE_RELABEL = {old: new for new, old in FIXTURE_REF_MODE.items()}
 # keep their original labels.
 _UNARY_FALLBACK_SOURCE_PREFIX = "from_unary_db+omegas_fallback"
 _LATTICE_STABILITY_SOURCE = (
-    "from_unary_db:lattice_stability (omegas_hcp.json "
-    "(matrix_data, WHSun-lab DFT SS end-member energies))"
+    "from_unary_db:lattice_stability (omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023))"
 )
 
 

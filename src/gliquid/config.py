@@ -18,9 +18,7 @@ CACHE_DIR_ENV_VAR = "GLIQUID_CACHE_DIR"
 OFFLINE_ENV_VAR = "GLIQUID_OFFLINE"
 
 # Recognized spellings for OFFLINE_ENV_VAR. Anything else FAILS CLOSED (offline on) with a
-# warning: someone who sets the variable at all is trying to switch offline mode ON, and
-# reading 'GLIQUID_OFFLINE=yse' as "stay online" would silently reach the network in the
-# one deployment whose whole point is that it cannot.
+# warning: setting the variable at all is an attempt to switch offline mode ON.
 _OFFLINE_TRUE = frozenset({"1", "true", "yes", "on"})
 _OFFLINE_FALSE = frozenset({"", "0", "false", "no", "off"})
 
@@ -34,18 +32,14 @@ _LEGACY_DIR_ENV_VAR = "GLIQUID_DATA_DIR"
 # ``set_cache_dir`` infers the mode from the shape of the argument.
 _SQLITE_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 
-# gliquid's data comes in two kinds, and they live in two different places.
+# gliquid's data comes in two kinds, in two places.
 #
-#   BUNDLED (here, inside the wheel) -- the three reference tables below. Small, and the
-#   library cannot compute anything without them, so an installed gliquid is never in the
-#   zero-energy state where every element reference evaluates to 0.
+#   BUNDLED (inside the wheel) -- the three reference tables below. Small, and the library
+#   cannot compute anything without them.
 #
 #   EXTERNAL (``cache_dir``) -- the per-system DFT entry caches, the MPDS diagrams and the
-#   model bundle. Megabytes of corpus, not shipped, reachable only through an explicit
+#   model bundle. Megabytes of corpus, not shipped, reachable only through
 #   ``set_cache_dir()`` or ``GLIQUID_CACHE_DIR``. In a source checkout it is ``cache/``.
-#
-# The two used to be two directories both named ``data``, told apart only by which variable
-# named them; they are now ``src/gliquid/reference/`` and ``<checkout>/cache/``.
 _BUNDLED_REFERENCE_DIR = Path(__file__).resolve().parent / "reference"
 _PHASE_TRANSITIONS_NAME = "phase_transitions.json"
 _OMEGAS_NAME = "omegas_hcp.json"
@@ -471,9 +465,8 @@ def set_dir_structure(structure: str):
 
     A ``DirectoryBackend``-only knob, orthogonal to :func:`set_cache_mode`. Under
     ``cache_mode='sqlite'`` there are no directories to arrange, and this call LOGS and
-    returns rather than raising: 20+ driver scripts under ``dev/scripts`` call it
-    unconditionally at import, and an exception there would make a single-file store
-    unusable from any of them for a setting that simply does not apply.
+    returns rather than raising: driver scripts call it unconditionally at import, and an
+    exception would make a single-file store unusable for a setting that does not apply.
     """
     global dir_structure
     if structure not in _DIR_STRUCT_OPTS:
