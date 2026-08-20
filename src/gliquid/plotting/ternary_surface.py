@@ -2,7 +2,8 @@
 
 Extracted from TLIPlotter: the liquidus-surface figure, the single-slice hull figure,
 and the isothermal contour machinery. Pure presentation --
-numpy/plotly only, no gliquid imports; TLIPlotter passes model-computed dataframes,
+numpy/plotly plus the leaf display module gliquid.plotting.style -- no MODEL imports;
+TLIPlotter passes model-computed dataframes,
 hull data, colors, and axis conditions in.
 """
 
@@ -10,6 +11,12 @@ from __future__ import annotations
 
 import numpy as np
 import plotly.graph_objects as go
+
+# The SAME formatter the binary field labels use, so a phase reads identically in both
+# figures: greek word -> symbol, structure abbreviated inside the parentheses, formula
+# digits subscripted. binary_tx imports only from plotting.style, and ternary.py already
+# imports it, so this adds no cycle and no load.
+from gliquid.plotting.binary_tx import _abbreviate_phase_name
 
 # Plotly CLIPS 3-D geometry at the axis bounds, and the base triangle is drawn on the floor.
 # Placed exactly at ``conds[0]`` its two back edges land on the clip plane and disappear, so it
@@ -95,6 +102,12 @@ def render_hull_slice(hull_data, components) -> go.Figure:
     fig.update_layout(
         title=f"Single-slice lower hull at T = {T_celsius_exact:.2f} C",
         scene=dict(
+            # A 3 % left inset inside the plot area: the z tick labels are drawn INSIDE the
+            # gl canvas, hanging left of the axis line, so with the scene flush against the
+            # canvas edge the leading digit of "1500" was clipped. Insetting the SCENE (not
+            # the margin) is what gives them room, since widening the margin just moves the
+            # canvas and takes the axis with it.
+            domain=dict(x=[0.09, 1.0], y=[0.0, 1.0]),
             xaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
             yaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
             zaxis=dict(title="G"),
@@ -276,6 +289,11 @@ def render_tx_surface(
     """
     fig = go.Figure()
 
+    # _abbreviate_phase_name drops a greek prefix when the element has only ONE phase in
+    # the figure (nothing to tell apart), so it needs the full name list, not just the one
+    # being labelled. color_map's keys are exactly the phases this figure draws.
+    phase_names = list(color_map)
+
     for label, group in solid_df.groupby("Phase"):
         fig.add_trace(
             go.Scatter3d(
@@ -286,7 +304,8 @@ def render_tx_surface(
                 line=dict(color=group["Colors"], width=10),
                 showlegend=False,
                 opacity=1,
-                hovertemplate=f"<b>Phase: {label}</b><br>" + "<extra></extra>",
+                hovertemplate=f"<b>Phase: {_abbreviate_phase_name(label, phase_names)}</b>"
+                + "<br><extra></extra>",
             )
         )
 
@@ -326,7 +345,7 @@ def render_tx_surface(
                 z=[None],
                 mode="markers",
                 marker=dict(color=color, size=10, opacity=1.0),
-                name=phase,
+                name=_abbreviate_phase_name(phase, phase_names),
                 textfont=dict(size=8),
                 showlegend=True,
             )
@@ -382,9 +401,29 @@ def render_tx_surface(
             bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
         ),
         autosize=True,
-        # A 3D scene draws its own axis titles and ticks INSIDE the canvas, so outer margins
-        # buy nothing here; t leaves room for the title.
-        margin=dict(l=0, r=0, b=0, t=40),
+        # The z-axis title, rotated so it reads upwards and the unit lands at the top of
+        # the axis, matching the binary figures. textangle=-90 is a screen-space rotation:
+        # it does NOT follow the axis if the user orbits the scene, which is the cost of
+        # plotly not exposing an angle on the built-in title.
+        annotations=[
+            dict(
+                text="Temperature (°C)",
+                textangle=-90,
+                # NEGATIVE paper x: paper coordinates span the area INSIDE the margins,
+                # so x=0 still sits over the scene's own tick labels. -0.035 of a ~660 px
+                # plot area is ~23 px, which lands the text in the left margin beside them.
+                xref="paper", yref="paper",
+                x=-0.03, y=0.5,
+                xanchor="center", yanchor="middle",
+                showarrow=False,
+                font=dict(size=17, color="black"),
+            )
+        ],
+        # A 3D scene draws its own ticks INSIDE the canvas, so r/b margins buy nothing; t
+        # leaves room for the figure title. l is the ONE exception: the z-axis title is a
+        # paper annotation now (see below) and at l=0 it lands on top of the scene's own
+        # tick labels. 32 px is what clears them, and costs 5 points of the 96% area.
+        margin=dict(l=30, r=0, b=0, t=40),
         scene=dict(
             zaxis=dict(
                 # Exactly the plotted window: conds IS the temperature grid in Celsius, so the
@@ -393,7 +432,12 @@ def render_tx_surface(
                 # folded into the grid, hence into conds, by _init_sys; the retired
                 # ``- 200 - temp_slider[0]`` / ``- 200 + temp_slider[1]`` counted it twice.
                 range=[conds[0], conds[1]],
-                title="Temperature (C)",
+                # Blank, and drawn as a paper annotation below instead. plotly renders a
+                # gl3d axis title inside the WebGL layer and its schema exposes only
+                # `text` and `font` for it -- there is no angle attribute (checked against
+                # plotly 2.35.2), and it comes out reading downwards, putting the unit at
+                # the BOTTOM of the axis. An annotation is the only way to set the angle.
+                title="",
             ),
             xaxis=dict(
                 title=" ",
