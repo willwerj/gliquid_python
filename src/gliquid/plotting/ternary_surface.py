@@ -101,8 +101,13 @@ def render_hull_slice(hull_data, components) -> go.Figure:
             bgcolor="white",
             camera=dict(projection=dict(type="orthographic")),
         ),
-        margin=dict(l=40, r=40, b=40, t=60),
-        legend=dict(x=0.95, y=0.95, xanchor="left", yanchor="top"),
+        # Same anchoring as render_tx_surface: anchored 'left' at x=0.95 the legend runs off
+        # the paper and plotly reserves its width out of the 3D scene. See the note there.
+        margin=dict(l=0, r=0, b=0, t=60),
+        legend=dict(
+            x=0.99, y=0.99, xanchor="right", yanchor="top",
+            bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
+        ),
     )
 
     return fig
@@ -362,9 +367,24 @@ def render_tx_surface(
     )
 
     fig.update_layout(
-        legend=dict(x=0.95, y=0.95, xanchor="left", yanchor="top"),
+        # The legend is anchored INSIDE the paper (xanchor='right' at x=0.99), not started
+        # at x=0.95 and left to run off the edge. Anchored 'left' there, plotly treats the
+        # box as sitting outside the plot area and reserves its full width -- measured at
+        # 178 px of a 700 px figure -- which it takes off the 3D scene. Together with the
+        # margins below that left the WebGL canvas at 484x800 in a 700x900 figure, 61% of
+        # the area, and it is that canvas (not the figure) that clips the view when the
+        # user zooms. Anchored right and overlaid, the same legend costs nothing: 700x860,
+        # 96%. `scene.domain` and `aspectmode` are NOT involved -- domain already spans
+        # [0,1]x[0,1] and aspectratio only moves the cube around inside the canvas; both
+        # were measured to change nothing (dev/scripts/_generated/probe_ternary_scene_sizing.py).
+        legend=dict(
+            x=0.99, y=0.99, xanchor="right", yanchor="top",
+            bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
+        ),
         autosize=True,
-        margin=dict(l=50, r=50, b=50, t=50),
+        # A 3D scene draws its own axis titles and ticks INSIDE the canvas, so outer margins
+        # buy nothing here; t leaves room for the title.
+        margin=dict(l=0, r=0, b=0, t=40),
         scene=dict(
             zaxis=dict(
                 # Exactly the plotted window: conds IS the temperature grid in Celsius, so the
