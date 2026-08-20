@@ -3,7 +3,16 @@
 # These pin each package to the lowest version permitted by pyproject.toml.
 #
 # Notes:
-#   - scikit-learn and xgboost are exactly pinned in pyproject.toml; no variation.
+#   - The ML stack is no longer a base dependency; it reaches these environments through
+#     the `test` extra, which pulls gliquid[ml] plus unpinned scikit-learn/joblib/openpyxl.
+#     scikit-learn stays pinned at 1.7.1 here (NOT at the 1.4 floor of the range) so the
+#     -min envs keep resolving exactly what they resolved before this split.
+#   - xgboost-cpu, not xgboost: the `ml` extra asks for xgboost-cpu everywhere except macOS
+#     (no macOS wheels are published for it), so the constraint has to name that
+#     distribution or it silently applies to nothing and the -min envs float to the latest
+#     release. Both lines are carried for the same reason. 3.1.3 exists on both.
+#   - shap is deliberately ABSENT: no test exercises a SHAP path, so the matrix no longer
+#     installs it. A pin here would constrain a package that is never resolved.
 #   - plotly 5.24.0 is the minimum: 5.18's express layer calls grouped.get_group(s[0]),
 #     which pandas 3.x rejects (KeyError). Measured in the compat matrix on every -min
 #     env at py311+, where pandas 3 is installable; py310-min escapes on pandas 2.3.3.
@@ -16,10 +25,12 @@
 #     'np.float64(x)' instead of 'x', which breaks sympy's string-to-mpmath conversion.
 #   - matplotlib 3.10.0 is the minimum for Python 3.13: 3.9.0 has no cp313 wheel, forcing
 #     a from-source build that fails without a C compiler. 3.10.0+ ships cp313 wheels.
-#   - numpy>=2.0 is required to keep pip from backtracking through old pymatgen versions:
-#     shap==0.48.0 pulls in numba which otherwise resolves numpy to 1.26.4, but modern
-#     pymatgen cp310/cp313 wheels require numpy>=2.0. Forcing numpy>=2.0 avoids the
-#     conflict and ensures py313 gets a binary wheel (no C-compiler needed).
+#   - numpy>=2.0 keeps pip from backtracking through old pymatgen versions, and ensures
+#     py313 gets a binary wheel (no C-compiler needed): modern pymatgen cp310/cp313 wheels
+#     require numpy>=2.0. The ORIGINAL trigger was shap==0.48.0 pulling numba, which
+#     resolved numpy back to 1.26.4; shap is no longer installed here, so that particular
+#     backtracking path is gone, but the pymatgen-wheel reason stands on its own and the
+#     pin stays. Removing it is a matrix experiment, not a cleanup.
 
 plotly==5.24.0
 nbformat==4.2.0
@@ -27,8 +38,8 @@ mp-api==0.45.1
 matplotlib==3.10.0
 sympy==1.13
 scikit-learn==1.7.1
-shap==0.48.0
 joblib==1.3.0
+xgboost-cpu==3.1.3
 xgboost==3.1.3
 openpyxl==3.1.5
 numpy>=2.0

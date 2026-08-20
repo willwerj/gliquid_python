@@ -28,10 +28,28 @@ Optional extras:
 ```bash
 pip install gliquid[mpds]      # retrieve live MPDS phase-diagram data, not just cached files
 pip install gliquid[editor]    # the interactive ConvexHullEditor (ipywidgets)
-pip install gliquid[models]    # exact scikit-learn / xgboost versions the serialized
-                               # production model artifacts were pickled against
+pip install gliquid[ml]        # ProductionModelRunner against the model bundle in the wheel
+pip install gliquid[shap]      # ...plus SHAP explanations and their figures
+pip install gliquid[models]    # ...plus the exact scikit-learn / xgboost versions a LEGACY
+                               # joblib bundle was pickled against
 pip install gliquid[notebook]  # local Jupyter tooling -- not a base dependency
 ```
+
+The machine-learning stack is **not** a base dependency. Nothing outside
+`gliquid.production_model_runner` imports it — fitting, the convex hull, the phase diagrams
+and the ternary interpolation all run without it — and as a base dependency it cost roughly
+935 MB of installed packages to anyone who never predicted a parameter. `import gliquid` and
+`gliquid.ProductionModelRunner` both still resolve on a bare install; *constructing* a runner
+is what asks for `[ml]`, and says so.
+
+`[ml]` installs `xgboost-cpu` rather than `xgboost` (on macOS, where no `xgboost-cpu` wheels
+are published, it installs `xgboost`). They are the same library under the same import name;
+`xgboost` additionally declares NVIDIA's NCCL on Linux, which unpacks to ~300 MB that this
+package has no way to use — gliquid runs single-row inference over three small boosted-tree
+models and has no GPU code path. If you want the CUDA-capable build for something else,
+install `gliquid[ml-gpu]` **instead of** `[ml]`, never alongside it: both distributions
+install a package directory named `xgboost`, so an environment holding both keeps whichever
+was written last.
 
 Python 3.10–3.13 are supported. Installing into an isolated environment is recommended.
 With `conda`:
@@ -185,9 +203,11 @@ Key points for Colab use:
   a cloned repository or your own mounted path (see step 3 above).
 - Either `cfg.set_data_dir(...)` in Python or `os.environ["GLIQUID_DATA_DIR"] = ...` before
   importing `gliquid` will do. The Python call is easier to see and to change in a notebook.
-- `scikit-learn` and `xgboost` are version-*ranged* in the base dependencies. If you load the
-  serialized production model artifacts, install `gliquid[models]`, which pins the exact
-  versions they were written with.
+- The ML stack is **not** installed by `pip install .` — see step 1. `gliquid[ml]` is enough to
+  run `ProductionModelRunner()` against the pickle-free bundle that ships in the wheel. The
+  three notebooks that point at a **legacy** `cache/<timestamp>/` joblib bundle need
+  `gliquid[models]`, which pins the exact scikit-learn / xgboost versions those artifacts were
+  written with, and adds the `openpyxl` their feature sheets are read through.
 
 Typical Colab setup:
 
