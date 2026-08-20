@@ -1360,7 +1360,14 @@ def _ordered_solid_steps(
     for ss_phase, refs in phase_refs.items():
         if el not in refs:
             continue
-        p = ref.solid_phase(SS_SPACEGROUPS.get(ss_phase, -1))
+        # _find_matching_polymorph, not ComponentRef.solid_phase: an element may carry
+        # SEVERAL polymorphs of one spacegroup (alpha-Fe and delta-Fe are both Im-3m/229),
+        # and solid_phase returns the FIRST. For Fe that is alpha-Fe at T_tr = 0, which the
+        # filter below then discards -- so delta-Fe, the phase actually stable just under
+        # the melt, vanished from the reconciled ladder entirely. Every other SS site in
+        # this module already resolves through _find_matching_polymorph, whose docstring
+        # names this exact case; this was the last first-match holdout.
+        p = _find_matching_polymorph(ss_phase, ref) if ss_phase in SS_SPACEGROUPS else None
         t_trans = p.t_transition if p else None
         if t_trans is None or t_trans <= 0 or t_trans >= t_melt:
             continue
