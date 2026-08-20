@@ -30,13 +30,18 @@ src/gliquid/_version.py
 # compat matrix from requirements/min-constraints.txt, so ignoring it would leave the
 # matrix unreproducible from a clone -- the same reason tox.ini itself is tracked.
 CONTEXT.md
-data/fit_results_cache_*
+# These two patterns are PATH-ANCHORED to the external cache corpus, which was named data/
+# until it became cache/ (the package's own reference tables moved to src/gliquid/reference/
+# at the same time). A path-anchored pattern stops matching SILENTLY when its directory is
+# renamed -- nothing errors, the repo just starts tracking megabytes of fetched cache. Keep
+# these in step with the directory name.
+cache/fit_results_cache_*
 figures/benchmark_*/
 # Per-system DFT entry caches fetched on demand from the Materials Project. A hand-picked
 # set of these IS tracked (the fixtures the test suite reads); this pattern only stops
 # NEWLY fetched ones showing up as untracked noise. Ignoring a path does not untrack
 # anything already in the index, so the committed corpus is unaffected.
-data/*_ENTRIES_MP_GGA.json
+cache/*_ENTRIES_MP_GGA.json
 
 # Local secrets (API keys) - never commit
 .env

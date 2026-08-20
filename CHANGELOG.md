@@ -9,6 +9,18 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Two directories no longer share the name `data`.** The bundled reference tables moved
+  from `src/gliquid/data/` to `src/gliquid/reference/` (in the wheel: `gliquid/data/` →
+  `gliquid/reference/`), and a source checkout's external corpus moved from `data/` to
+  `cache/`. Nothing about how either is *reached* changed: the reference tables still ship
+  and still load with no configuration, and the corpus is still found through
+  `set_cache_dir()` / `GLIQUID_CACHE_DIR` (or the deprecated `set_data_dir()` /
+  `GLIQUID_DATA_DIR`), with a checkout's own `cache/` as the last fallback. A clone that
+  predates this rename should rename its `data/` directory to `cache/`.
+- Added an empty `src/gliquid/models/` for the portable model bundle.
+
 ## [0.1.0] - 2026-08-12
 
 First public release. `gliquid` was developed privately before this point, so there are no

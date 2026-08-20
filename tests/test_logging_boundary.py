@@ -6,14 +6,20 @@ to the application. ``dev/scripts/Fit_Binary_Systems.py::_attach_gliquid_log_han
 the driver-side half, deliberately attached AFTER its stdout tee/queue swap so library
 records land in fit logs exactly where the prints used to.
 
-Two ``print()`` sites survive that conversion on purpose, each carrying an in-code
+Three ``print()`` sites survive that conversion on purpose, each carrying an in-code
 "documented logging exemption" comment:
 
   * ``mpds.print_phase_mismatch_chart`` -- the function *is* a console chart renderer; the
     aligned monospace rows are the product, not diagnostics.
   * ``hull_editor._log`` -- writes into an ``ipywidgets`` Output pane. Widget UI.
+  * ``cache._emit`` -- the single output site of ``python -m gliquid.cache``. A CLI's
+    stdout is its product, and the alternative is worse: a library may not call
+    ``basicConfig``/``addHandler`` (see ``TestLibraryConfiguresNoLogging`` below), so a
+    ``logger`` call there would print nothing at all under the default configuration.
+    Library code in that module still reports through ``logger``; only the CLI section
+    below the marked divider uses ``_emit``.
 
-``EXEMPT`` below is deliberately a short, explicit list: adding a third exemption requires
+``EXEMPT`` below is deliberately a short, explicit list: adding a fourth exemption requires
 editing this file, which is the point. These tests scan the SOURCE TREE, not the import
 graph, so a print added inside a branch no test happens to execute is still caught.
 """
@@ -33,6 +39,7 @@ SRC = _REPO_SRC if _REPO_SRC.is_dir() else Path(gliquid.__file__).resolve().pare
 EXEMPT = {
     ("mpds.py", "print_phase_mismatch_chart"),
     ("hull_editor.py", "_log"),
+    ("cache.py", "_emit"),
 }
 
 # Names that would mean the library configured logging for its application -- the thing a

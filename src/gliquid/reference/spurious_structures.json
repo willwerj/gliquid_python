@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "description": "Tier A blacklist of the tiered unary data policy: elemental Materials Project structures with NO equilibrium stability field at any temperature at 1 atm (high-pressure-only, thin-film-only, stacking-variant, impurity-artifact, or purely computational structures). Consumed by BOTH phase database/build_element_database.py (removed before ground-state selection, so the experimental structure becomes the DFT anchor) and gliquid.api (entries filtered at fetch time and at cache read, so every hull references formation energies to the same surviving elemental ground states). Matching is by material_id (classic ids) AND by (element, spacegroup_number) computed from the entry structure (covers new-generation alpha-id caches; also intentionally catches future re-relaxations of the same spurious symmetry - note this means e.g. ANY P6_3/mmc Ag entry is refused and Ag's HCP solid-solution reference must come from the omegas file).",
+    "description": "Tier A blacklist of the tiered unary data policy. TWO SIBLING BLOCKS, deliberately not nested. (1) 'elements': elemental Materials Project structures with NO equilibrium stability field at any temperature at 1 atm (high-pressure-only, thin-film-only, stacking-variant, impurity-artifact, or purely computational structures), keyed by element symbol. Consumed by BOTH phase database/build_element_database.py (removed before ground-state selection, so the experimental structure becomes the DFT anchor) and gliquid.api (entries filtered at fetch time and at cache read, so every hull references formation energies to the same surviving elemental ground states). Matching is by material_id (classic ids) AND by (element, spacegroup_number) computed from the entry structure (covers new-generation alpha-id caches; also intentionally catches future re-relaxations of the same spurious symmetry - note this means e.g. ANY P6_3/mmc Ag entry is refused and Ag's HCP solid-solution reference must come from the omegas file). (2) 'compounds': a FLAT LIST of rules for non-elemental artifacts, which the 'elements' block structurally cannot express (it is an elemental ground-state policy and gliquid.api refuses any entry of arity != 1 on that path). Each record carries a 'match' object naming one predicate, evaluated by gliquid.api in this precedence: 'material_id' (same mp-id prefix match as the elemental path), 'composition' (exact per-element atom counts after int cast - PREFERRED for new records, since it cannot over-match), 'element_count' (a partial constraint: the named elements must have exactly these atom counts, all other elements unconstrained). Compound rules apply to entries of ANY arity, elemental included. The block MUST stay a sibling of 'elements': build_element_database.py iterates every record inside 'elements' doing unguarded r['material_id'] and int(r['spacegroup_number']), so a compound record nested there would crash the unary database build.",
     "policy": "Every entry was verified against the criterion 'no reported or credibly proposed ambient-pressure stability field at any temperature' by a 2026-08-04 literature review (three web-research passes + one targeted adjudication), anchored on NIST TN 2312 (D.R. Burgess Jr., 'Phase Transition Temperatures of the Solid Elements at Atmospheric Pressure', 2025). Real low-T allotropes (alpha-Sn, Na hP4, Li 9R) and genuinely misranked real phases (Co HCP/FCC, Sm alpha/beta - handled as Tier C ground-state overrides in the builder) are NOT listed here.",
     "created_date": "2026-08-04",
     "signed_off_by": "J. Willwerth (audit table + literature cross-check sign-off, 2026-08-04)",
@@ -169,5 +169,18 @@
         "date": "2026-08-04"
       }
     ]
-  }
+  },
+  "compounds": [
+    {
+      "match": {
+        "element_count": {
+          "Mg": 149
+        }
+      },
+      "common_name": "Mg149-X (MP composition artifact)",
+      "reason": "Any Materials Project entry reporting exactly 149 Mg atoms in its cell is a composition artifact, not a phase: it is a pathological giant-cell record that lands far off the real Mg-X hull and displaces genuine line compounds. gliquid has filtered it since the pre-package Data_Management.py era ('Remove problematic Mg149 phase if present'); this record is the verbatim migration of that filter out of two hardcoded api.py literals (fetch time and cache read) into the audited blacklist, so the rule now carries a reason and a source like every other entry here. It is expressed as element_count rather than an exact composition because the original literal constrained ONLY the Mg count and left the other elements free; narrowing it to a single composition would silently change what is filtered.",
+      "source": "gliquid legacy filter, in continuous use since the pre-package Data_Management.py / ternary_HSX.py code (still visible at dev/scripts/old/Data_Management.py:572 and dev/scripts/Generate_ML_Dataset.py:174); migrated into this file on 2026-08-14 with bit-exact parity verified element-wise over all 70 matrix_data Mg entry caches plus injected synthetic Mg149 entries. No upstream MP ticket is on record; the original literal carries no citation.",
+      "date": "2026-08-14"
+    }
+  ]
 }

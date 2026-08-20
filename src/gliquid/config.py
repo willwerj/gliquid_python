@@ -1,14 +1,38 @@
 import logging
 import os
+import sys
+import warnings
 from pathlib import Path
+from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
 _DIR_STRUCT_OPTS = ["flat", "nested"]
+_CACHE_MODE_OPTS = ["directory", "sqlite"]
 _SS_REF_MODE_OPTS = ["from_omegas_file", "from_dft_entries", "from_unary_db"]
 
-#: Environment variable naming the external data corpus. See ``set_data_dir``.
-DATA_DIR_ENV_VAR = "GLIQUID_DATA_DIR"
+#: Environment variable naming the external cache corpus. See ``set_cache_dir``.
+CACHE_DIR_ENV_VAR = "GLIQUID_CACHE_DIR"
+
+#: Environment variable that turns OFFLINE mode on at import. See :func:`set_offline`.
+OFFLINE_ENV_VAR = "GLIQUID_OFFLINE"
+
+# Recognized spellings for OFFLINE_ENV_VAR. Anything else FAILS CLOSED (offline on) with a
+# warning: someone who sets the variable at all is trying to switch offline mode ON, and
+# reading 'GLIQUID_OFFLINE=yse' as "stay online" would silently reach the network in the
+# one deployment whose whole point is that it cannot.
+_OFFLINE_TRUE = frozenset({"1", "true", "yes", "on"})
+_OFFLINE_FALSE = frozenset({"", "0", "false", "no", "off"})
+
+#: The pre-0.2 spelling of :data:`CACHE_DIR_ENV_VAR`. Still honored, deprecated. Served to
+#: consumers as ``config.DATA_DIR_ENV_VAR`` (with a ``DeprecationWarning``) rather than as a
+#: plain global, so the package's own uses of it stay silent.
+_LEGACY_DIR_ENV_VAR = "GLIQUID_DATA_DIR"
+
+# Suffixes that name a SINGLE-FILE cache store rather than a directory tree. Handing
+# someone one file and having it just work is the point of the sqlite format, so
+# ``set_cache_dir`` infers the mode from the shape of the argument.
+_SQLITE_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 
 # gliquid's data comes in two kinds, and they live in two different places.
 #
@@ -16,26 +40,116 @@ DATA_DIR_ENV_VAR = "GLIQUID_DATA_DIR"
 #   library cannot compute anything without them, so an installed gliquid is never in the
 #   zero-energy state where every element reference evaluates to 0.
 #
-#   EXTERNAL (``data_dir``) -- the per-system DFT entry caches, the MPDS diagrams and the
+#   EXTERNAL (``cache_dir``) -- the per-system DFT entry caches, the MPDS diagrams and the
 #   model bundle. Megabytes of corpus, not shipped, reachable only through an explicit
-#   ``set_data_dir()`` or ``GLIQUID_DATA_DIR``.
-_BUNDLED_DATA_DIR = Path(__file__).resolve().parent / "data"
+#   ``set_cache_dir()`` or ``GLIQUID_CACHE_DIR``. In a source checkout it is ``cache/``.
+#
+# The two used to be two directories both named ``data``, told apart only by which variable
+# named them; they are now ``src/gliquid/reference/`` and ``<checkout>/cache/``.
+_BUNDLED_REFERENCE_DIR = Path(__file__).resolve().parent / "reference"
 _PHASE_TRANSITIONS_NAME = "phase_transitions.json"
 _OMEGAS_NAME = "omegas_hcp.json"
 _SPURIOUS_STRUCTURES_NAME = "spurious_structures.json"
 
 
 class ConfigError(RuntimeError):
-    """The external data corpus is needed and no data directory is configured.
+    """The external cache corpus is needed and no cache location is configured.
 
-    Raised in place of guessing a location. Fix with ``gliquid.config.set_data_dir(...)``
-    or by setting ``GLIQUID_DATA_DIR``.
+    Raised in place of guessing a location. Fix with ``gliquid.config.set_cache_dir(...)``
+    or by setting ``GLIQUID_CACHE_DIR``.
     """
 
 
+class CacheModeError(ConfigError):
+    """The requested operation needs a capability the configured store does not have.
+
+    Raised in place of inventing an answer. Three situations reach it, and they share a
+    shape -- *the store you configured cannot answer this question, and guessing would be
+    worse than stopping*:
+
+    * ``api._resolve_sys_dir`` asks "which DIRECTORY holds this system", which is
+      unanswerable once the store is a single file;
+    * a write against a read-only single-file store (the default and the design);
+    * a **lean** MPDS record reaching a consumer that needs the digitized ``shapes`` --
+      see :func:`gliquid.mpds.record_mode`. That one is the dangerous case, because the
+      shapeless record does not crash anything: ``identify_mpds_phases`` would return
+      ``[]``, the solid-coverage gate would read "no unsupported compounds", and the gate
+      would PASS. The raise exists so a reduced store cannot silently answer a question it
+      threw the evidence away for.
+
+    Lives here rather than in ``gliquid.cache`` because it is a *configuration* fault --
+    the store, or the mode it was built in, does not match what the caller needs -- and so
+    that ``except gliquid.config.ConfigError`` catches every "gliquid is pointed at the
+    wrong data" failure in one place. ``gliquid.cache.CacheModeError`` is this same class,
+    re-exported, so existing imports and ``except`` clauses are unaffected.
+    """
+
+
+class OfflineError(ConfigError):
+    """A remote fetch was attempted while gliquid is in OFFLINE mode.
+
+    Offline mode exists because "has no API key" is not a property anything enforces. A
+    deployment that simply *never sets* ``NEW_MP_API_KEY`` still runs every network code
+    path: ``api.get_api_key`` falls through to a gitignored ``.env``, an operator's shell
+    may export the variable, and a cache miss on one uncovered system then reaches out --
+    slowly, and to an endpoint the deployment has no credentials for. The failure surfaces
+    as a timeout or a 401 raised deep inside ``mp_api``, naming nothing about the cause.
+
+    With :func:`set_offline` on, every remote path raises THIS instead, at the call site,
+    naming the system it was asked to fetch. A missing record then reads as "this store
+    does not cover that system", which is a fact about the store and is actionable, rather
+    than as an opaque client error. A ``ConfigError`` because it is a deliberate
+    configuration of the package, not a fault in the data.
+    """
+
+
+# ---------------------------------------------------------------------------------------
+# Deprecated ``data_*`` spellings of the ``cache_*`` names.
+#
+# 0.1.0 is public and the old names are everywhere -- hundreds of driver scripts, the
+# notebooks and the test suites -- so they stay WORKING aliases rather than becoming
+# errors. Each one announces itself once per process; see ``_ConfigModule`` at the bottom
+# of this file for why a bare module ``__getattr__`` is not enough to implement them.
+# ---------------------------------------------------------------------------------------
+
+# old name -> (the global that actually holds the value, the name to recommend instead).
+# The two differ for DATA_DIR_ENV_VAR: its VALUE is still the legacy 'GLIQUID_DATA_DIR'
+# string (it names a different environment variable, so it cannot simply forward to
+# CACHE_DIR_ENV_VAR), but the name to migrate to is CACHE_DIR_ENV_VAR.
+_DEPRECATED_ATTRS = {
+    "data_dir": ("cache_dir", "cache_dir"),
+    "DATA_DIR_ENV_VAR": ("_LEGACY_DIR_ENV_VAR", "CACHE_DIR_ENV_VAR"),
+}
+
+_DEPRECATION_WARNED: set[str] = set()
+
+
+def _warn_deprecated(key: str, message: str) -> None:
+    """Emit ``message`` as a ``DeprecationWarning`` the first time ``key`` is used.
+
+    Once per process, not once per call: ``config.data_dir`` is read inside loops over
+    thousands of systems, and a warning per read would bury everything else.
+    """
+    if key in _DEPRECATION_WARNED:
+        return
+    _DEPRECATION_WARNED.add(key)
+    warnings.warn(message, DeprecationWarning, stacklevel=3)
+
+
+def _warn_deprecated_attr(old: str, new: str) -> None:
+    _warn_deprecated(
+        old,
+        f"gliquid.config.{old} is deprecated and will be removed in a future release; "
+        f"use gliquid.config.{new} instead. The old name still works and stays in sync "
+        f"with the new one.",
+    )
+
+
 project_root = None
-data_dir = None
+cache_dir = None
+cache_mode = None
 dir_structure = None
+offline = None
 phase_transitions_file = None
 omegas_file = None
 spurious_structures_file = None
@@ -58,57 +172,168 @@ def set_project_root(path: Path):
 
 
 def _reference_file(name: str) -> Path:
-    """Resolve one reference table: ``data_dir/name`` if that file exists, else bundled.
+    """Resolve one reference table: ``cache_dir/name`` if that file exists, else bundled.
 
-    The existence check is what lets ``data_dir`` point at a PARTIAL corpus -- a directory
+    The existence check is what lets ``cache_dir`` point at a PARTIAL corpus -- a directory
     holding only per-system caches still yields a working unary registry -- while a
     directory that does carry its own copy keeps overriding the shipped one, which is how
     the reference tables are iterated on during development.
     """
-    if data_dir is not None:
-        candidate = Path(data_dir) / name
+    if cache_dir is not None:
+        candidate = Path(cache_dir) / name
         if candidate.exists():
             return candidate
-    return _BUNDLED_DATA_DIR / name
+    return _BUNDLED_REFERENCE_DIR / name
 
 
-def set_data_dir(path: Path | str | None):
-    """Point gliquid at an external data corpus (per-system DFT caches, MPDS diagrams).
+def _is_file_store(path: Path) -> bool:
+    """Whether ``path`` names a single-file cache store rather than a directory tree."""
+    return path.suffix.lower() in _SQLITE_SUFFIXES or path.is_file()
+
+
+def set_cache_mode(mode: str):
+    """Select the cache backend: ``'directory'`` (a tree of JSON files) or ``'sqlite'``.
+
+    Orthogonal to :func:`set_dir_structure`, which describes one particular on-disk
+    arrangement WITHIN the directory backend and means nothing to a single-file store.
+    """
+    global cache_mode
+    if mode not in _CACHE_MODE_OPTS:
+        raise ValueError(f"cache_mode must be one of {_CACHE_MODE_OPTS}")
+    cache_mode = mode
+
+
+def set_cache_dir(path: Path | str | None):
+    """Point gliquid at an external cache corpus (per-system DFT caches, MPDS diagrams).
+
+    Accepts a directory OR a single file. A path that is an existing file, or whose suffix
+    is one of ``.sqlite`` / ``.sqlite3`` / ``.db``, sets ``cache_mode='sqlite'``; anything
+    else sets ``cache_mode='directory'``. Being handed one file and having it just work is
+    the point of the single-file format, so the shape of the argument decides rather than a
+    second call the caller has to remember.
 
     Also re-resolves the three reference tables, each taken from ``path`` when a file of
     that name exists there and from the copy shipped inside the package otherwise. Passing
-    ``None`` unsets the corpus: reference tables then come from the package, and any read
-    of the corpus raises ``ConfigError`` rather than guessing.
+    ``None`` unsets the corpus (leaving ``cache_mode`` alone): reference tables then come
+    from the package, and any read of the corpus raises ``ConfigError`` rather than
+    guessing.
     """
-    global data_dir
+    global cache_dir
     global phase_transitions_file
     global omegas_file
     global spurious_structures_file
 
-    data_dir = Path(path) if path is not None else None
+    cache_dir = Path(path) if path is not None else None
+    if cache_dir is not None:
+        set_cache_mode("sqlite" if _is_file_store(cache_dir) else "directory")
     phase_transitions_file = _reference_file(_PHASE_TRANSITIONS_NAME)
     omegas_file = _reference_file(_OMEGAS_NAME)
     spurious_structures_file = _reference_file(_SPURIOUS_STRUCTURES_NAME)
 
 
-def require_data_dir(purpose: str = "This operation") -> Path:
-    """The external corpus directory, or ``ConfigError`` naming how to configure one.
+def require_cache_dir(purpose: str = "This operation") -> Path:
+    """The external corpus location, or ``ConfigError`` naming how to configure one.
 
     Every read of the external corpus resolves through here rather than reading
-    ``data_dir`` directly, so an unconfigured corpus is a loud error instead of a path
+    ``cache_dir`` directly, so an unconfigured corpus is a loud error instead of a path
     built from a guess. There is deliberately no working-directory fallback: guessing is
     what turned a configuration error into wrong numbers.
     """
-    if data_dir is None:
+    if cache_dir is None:
         raise ConfigError(
             f"{purpose} needs the gliquid data corpus (per-system DFT entry caches and "
             f"digitized MPDS diagrams), which is not shipped with the package. Point "
-            f"gliquid at a copy with gliquid.config.set_data_dir('/path/to/data'), or set "
-            f"the {DATA_DIR_ENV_VAR} environment variable before importing gliquid. "
+            f"gliquid at a copy with gliquid.config.set_cache_dir('/path/to/cache'), or "
+            f"set the {CACHE_DIR_ENV_VAR} environment variable before importing gliquid. "
+            f"(The former spellings set_data_dir(...) and {_LEGACY_DIR_ENV_VAR} still work "
+            f"and are deprecated.) "
             f"The reference tables ({_PHASE_TRANSITIONS_NAME}, {_OMEGAS_NAME}, "
             f"{_SPURIOUS_STRUCTURES_NAME}) ship with the package and are already loaded."
         )
-    return Path(data_dir)
+    return Path(cache_dir)
+
+
+def set_offline(enabled: bool):
+    """Turn OFFLINE mode on or off. On, every remote fetch raises :class:`OfflineError`.
+
+    Two paths are covered, and they are the only two in the package that talk to a remote
+    host: the Materials Project DFT-entry fetch (``api._get_dft_entries_from_components``,
+    plus the client constructors that reach it) and the MPDS live diagram fetch
+    (``mpds.load_mpds_data``'s cache-miss branch, plus ``api.get_mpds_client``).
+
+    RAISES rather than degrades, deliberately, and the MPDS path is why. On a cache miss
+    with no ``MPDS_API_KEY`` that function already logs a warning and returns
+    ``{"reference": None}`` -- a record shaped exactly like "this system has no digitized
+    diagram". A silent skip under offline mode would be indistinguishable from that real
+    answer, and a fit would proceed against a diagram that was never consulted.
+
+    Also settable at import with ``GLIQUID_OFFLINE=1`` (see :data:`OFFLINE_ENV_VAR`),
+    which is how a container turns it on without editing code.
+    """
+    global offline
+    offline = bool(enabled)
+
+
+def require_online(purpose: str) -> None:
+    """Raise :class:`OfflineError` naming ``purpose`` when offline mode is on.
+
+    Called at the top of every remote path, BEFORE any credential lookup or client
+    construction, so offline mode is decided by configuration rather than by whether a key
+    happens to be installed.
+    """
+    if not offline:
+        return
+    raise OfflineError(
+        f"{purpose} needs a network fetch, and gliquid is in OFFLINE mode. Nothing was "
+        f"requested. This means the configured cache store does not cover what was asked "
+        f"for: either point gliquid at a store that does "
+        f"(gliquid.config.set_cache_dir(...)), or -- if reaching out is genuinely wanted "
+        f"here -- turn offline mode off with gliquid.config.set_offline(False) or by "
+        f"unsetting {OFFLINE_ENV_VAR}."
+    )
+
+
+def _initial_offline() -> bool:
+    """Offline mode at import, from :data:`OFFLINE_ENV_VAR`. Unset means online."""
+    raw = os.environ.get(OFFLINE_ENV_VAR)
+    if raw is None:
+        return False
+    value = raw.strip().lower()
+    if value in _OFFLINE_TRUE:
+        return True
+    if value in _OFFLINE_FALSE:
+        return False
+    logger.warning(
+        "%s is set to %r, which is not one of %s or %s. Treating it as ON: setting the "
+        "variable at all is an attempt to switch offline mode on, and reading an "
+        "unrecognized value as 'stay online' would silently permit the network fetches "
+        "this mode exists to forbid.",
+        OFFLINE_ENV_VAR,
+        raw,
+        sorted(_OFFLINE_TRUE),
+        sorted(_OFFLINE_FALSE - {""}),
+    )
+    return True
+
+
+def set_data_dir(path: Path | str | None):
+    """Deprecated alias of :func:`set_cache_dir`."""
+    _warn_deprecated(
+        "set_data_dir",
+        "gliquid.config.set_data_dir() is deprecated and will be removed in a future "
+        "release; use gliquid.config.set_cache_dir() instead. The old name still works.",
+    )
+    set_cache_dir(path)
+
+
+def require_data_dir(purpose: str = "This operation") -> Path:
+    """Deprecated alias of :func:`require_cache_dir`."""
+    _warn_deprecated(
+        "require_data_dir",
+        "gliquid.config.require_data_dir() is deprecated and will be removed in a future "
+        "release; use gliquid.config.require_cache_dir() instead. The old name still works.",
+    )
+    return require_cache_dir(purpose)
 
 
 def set_omegas_file(path: Path):
@@ -242,9 +467,24 @@ def set_liquidus_coverage_thresholds(
 
 
 def set_dir_structure(structure: str):
+    """How the DIRECTORY backend arranges files: ``'flat'`` or ``'nested'`` per system.
+
+    A ``DirectoryBackend``-only knob, orthogonal to :func:`set_cache_mode`. Under
+    ``cache_mode='sqlite'`` there are no directories to arrange, and this call LOGS and
+    returns rather than raising: 20+ driver scripts under ``dev/scripts`` call it
+    unconditionally at import, and an exception there would make a single-file store
+    unusable from any of them for a setting that simply does not apply.
+    """
     global dir_structure
     if structure not in _DIR_STRUCT_OPTS:
         raise ValueError(f"dir_structure must be one of {_DIR_STRUCT_OPTS}")
+    if cache_mode == "sqlite":
+        logger.info(
+            "Ignoring set_dir_structure('%s'): cache_mode is 'sqlite', which stores every "
+            "record in one file and has no directory layout to choose.",
+            structure,
+        )
+        return
     dir_structure = structure
 
 
@@ -256,7 +496,7 @@ def find_project_root(dirname="gliquid_python") -> Path | None:
     ``__file__``. Installed into site-packages nothing matches and the answer is ``None``.
 
     There is deliberately no working-directory walk and no bare ``Path.cwd()`` fallback:
-    either would silently resolve ``data_dir`` to ``<cwd>/data`` for an installed
+    either would silently resolve ``cache_dir`` to ``<cwd>/cache`` for an installed
     package, the unary registry would then load empty and every element reference would
     evaluate to zero — a configuration error rendered as wrong numbers.
     """
@@ -266,33 +506,78 @@ def find_project_root(dirname="gliquid_python") -> Path | None:
     return None
 
 
-def _initial_data_dir() -> Path | None:
-    """Corpus location at import: ``GLIQUID_DATA_DIR`` -> a checkout's ``data/`` -> none.
+def _initial_cache_dir() -> Path | None:
+    """Corpus at import: ``GLIQUID_CACHE_DIR`` -> ``GLIQUID_DATA_DIR`` (deprecated) ->
+    a checkout's ``cache/`` -> none.
 
-    ``set_data_dir()`` sits above both and is applied by the caller afterwards.
+    ``set_cache_dir()`` sits above all of them and is applied by the caller afterwards.
     """
-    env_value = os.environ.get(DATA_DIR_ENV_VAR)
-    if env_value:
+    for var in (CACHE_DIR_ENV_VAR, _LEGACY_DIR_ENV_VAR):
+        env_value = os.environ.get(var)
+        if not env_value:
+            continue
+        if var == _LEGACY_DIR_ENV_VAR:
+            _warn_deprecated(
+                _LEGACY_DIR_ENV_VAR,
+                f"The {_LEGACY_DIR_ENV_VAR} environment variable is deprecated and will be "
+                f"removed in a future release; use {CACHE_DIR_ENV_VAR} instead. "
+                f"{_LEGACY_DIR_ENV_VAR} is still honored.",
+            )
         candidate = Path(env_value)
-        if not candidate.is_dir():
+        if not candidate.is_dir() and not _is_file_store(candidate):
             # Loud (WARNING reaches stderr through logging.lastResort even with no handler
             # configured) but not fatal: an unreadable corpus should fail where it is read.
             logger.warning(
                 "%s is set to '%s', which is not a directory. gliquid will use "
                 "it anyway; reads of the data corpus will fail there.",
-                DATA_DIR_ENV_VAR,
+                var,
                 candidate,
             )
         return candidate
     root = find_project_root()
-    if root is not None and (root / "data").is_dir():
-        return root / "data"
+    if root is not None and (root / "cache").is_dir():
+        return root / "cache"
     return None
 
 
+class _ConfigModule(ModuleType):
+    """Module type that keeps the deprecated ``data_*`` names ALIASES, not copies.
+
+    A bare PEP 562 module-level ``__getattr__`` is not sufficient here and fails
+    silently. ``__getattr__`` fires only for attributes that are MISSING from the module
+    dict, so the first ``config.data_dir = X`` -- which real callers do, e.g.
+    ``tests_internal/test_dft_data_loading.py`` and ``monkeypatch.setattr(config,
+    "data_dir", ...)`` -- creates a genuine global that SHADOWS the alias. From then on
+    reads of ``data_dir`` return the shadow and reads of ``cache_dir`` return the old
+    value, the two names have silently diverged, and nothing raises.
+
+    Overriding ``__setattr__`` as well is what makes them one variable in both directions.
+    """
+
+    def __getattr__(self, name):
+        alias = _DEPRECATED_ATTRS.get(name)
+        if alias is not None and alias[0] in self.__dict__:
+            _warn_deprecated_attr(name, alias[1])
+            return self.__dict__[alias[0]]
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
+    def __setattr__(self, name, value):
+        alias = _DEPRECATED_ATTRS.get(name)
+        if alias is not None:
+            _warn_deprecated_attr(name, alias[1])
+            name = alias[0]
+        super().__setattr__(name, value)
+
+
 set_project_root(find_project_root())
-set_data_dir(_initial_data_dir())
+# cache_mode and dir_structure both before set_cache_dir(): it INFERS the mode from the
+# shape of its argument, and set_dir_structure() is a no-op once the mode is 'sqlite'.
+set_cache_mode(_CACHE_MODE_OPTS[0])
 set_dir_structure(_DIR_STRUCT_OPTS[0])
+set_cache_dir(_initial_cache_dir())
+set_offline(_initial_offline())
+
+sys.modules[__name__].__class__ = _ConfigModule
 set_solid_solutions(False)
 set_ss_ref_mode("from_unary_db")
 # missing_frac 0.50 -> 0.60, calibrated on the 1457-system coverage sweep (2026-08-08):

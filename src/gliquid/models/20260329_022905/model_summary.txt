@@ -1,0 +1,50 @@
+Joint Bayesian Optimization Results
+==================================================
+
+Timestamp: 20260329_022905
+Best CV Score (mean R²): 0.6919
+
+Model Configuration:
+  L0_a: XGBOOST, target_transform=standard
+  L0_b: XGBOOST, target_transform=standard
+  L1_a: XGBOOST, target_transform=standard
+
+XGBoost device: cpu
+Inner CV stratification: GMM on training-set groups only
+
+Pruning Parameters:
+  Redundancy %: 0
+  Error %: 0
+  Error recursions: 0
+  Samples removed: 0
+  Samples kept: 5411
+
+L0_a Hyperparameters (XGBOOST):
+  n_estimators: 400
+  learning_rate: 0.027168747745876933
+  max_depth: 7
+  min_child_weight: 3
+  colsample_bytree: 0.952078236849131
+  subsample: 0.6437875800543305
+  reg_alpha: 0.2495173404318102
+  reg_lambda: 6.846946116925141e-05
+
+L0_b Hyperparameters (XGBOOST):
+  n_estimators: 275
+  learning_rate: 0.01162074232623085
+  max_depth: 5
+  min_child_weight: 3
+  colsample_bytree: 0.9358563834588058
+  subsample: 0.6166941756815888
+  reg_alpha: 3.767456996433107e-07
+  reg_lambda: 6.64136583651821e-08
+
+L1_a Hyperparameters (XGBOOST):
+  n_estimators: 188
+  learning_rate: 0.06401519084025467
+  max_depth: 10
+  min_child_weight: 4
+  colsample_bytree: 0.583398360263651
+  subsample: 0.8351099539641338
+  reg_alpha: 4.2141525131127455e-07
+  reg_lambda: 6.592393462787543

@@ -106,6 +106,7 @@ class TestReversedDirectConstruction:
 class TestTernaryCacheDataDir:
     """The ternary DFT cache read honors the instance's own data_dir (flat layout)."""
 
+    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_get_ternary_form_en_reads_instance_data_dir(self, tmp_path, monkeypatch):
         src = Path(config.data_dir) / "Al-Mg-Si_ENTRIES_MP_GGA.json"
         assert src.exists(), f"fixture missing: {src}"

@@ -1025,7 +1025,16 @@ class BinaryLiquid:
         Args:
             **overrides: Passed through (``ss_narrow_tol``, ``dft_cover_tol``,
                 ``ss_rescue_max_width``, ``thresholds``); ``None`` values defer to ``config``.
+
+        Raises:
+            config.CacheModeError: when ``self.mpds_json`` is a LEAN record. THE
+                highest-value guard in the lean-mode contract: a lean record has no
+                ``shapes``, an empty phase list scores as "zero reported compounds, nothing
+                unsupported", and this gate would PASS — a silent wrong answer of exactly
+                the class it was built to prevent. Guarded here, before the call, so the
+                message names this method rather than ``identify_mpds_phases``.
         """
+        mpds._require_full_record(self.mpds_json, "BinaryLiquid.assess_solid_coverage")
         # Pass components explicitly: '(X)' component-phase recognition needs the element
         # symbols, and ~13% of cached jsons carry no 'chemical_elements' block. Only the SET
         # is read, so supplying them before the frame mirror below is safe.
@@ -1586,6 +1595,12 @@ class BinaryLiquid:
 
         Returns:
             list[dict]: Parameter fitting data containing results of all optimization attempts.
+
+        Raises:
+            TypeError: on an unrecognized keyword argument.
+            config.CacheModeError: when ``self.mpds_json`` is a LEAN record (see
+                ``mpds.record_mode``) and the two checks it cannot support have not both
+                been switched off explicitly.
         """
 
         # Unrecognized keywords are a caller error, not a no-op: **kwargs used to swallow a
@@ -1598,6 +1613,38 @@ class BinaryLiquid:
                 f"{'unexpected keyword arguments' if len(unknown) > 1 else 'an unexpected keyword argument'}: "
                 f"{', '.join(repr(key) for key in unknown)}. Accepted: "
                 f"{', '.join(sorted(FIT_KWARGS))}."
+            )
+
+        # A LEAN MPDS record (liquidus only, no digitized 'shapes') cannot support either
+        # invariant constraints or the solid-coverage gate. Checked UP FRONT, before
+        # anything is mutated and before any optimization runs, because the dangerous
+        # outcome is not a crash: without shapes the invariant list and the phase list both
+        # come back empty, the coverage gate reads "nothing unsupported" and PASSES, and the
+        # caller gets a plausible-looking fit that was never constrained. There is no
+        # auto-degrade — a fit without invariant constraints and without the coverage gate
+        # is a DIFFERENT fit, and returning it silently under the same call is the failure
+        # mode. Asking for it explicitly is fine, which is what the two kwargs below are.
+        # getattr, not self.mpds_json: this check is deliberately the FIRST thing after the
+        # kwarg gate, which puts it ahead of the retired-kwarg notice and of every other
+        # diagnostic. A bare BinaryLiquid.__new__ instance has no attributes at all, and an
+        # AttributeError raised from here would swallow those diagnostics instead of the
+        # object's own later failure reporting them (tests/test_notebook_imports.py pins
+        # exactly that). record_mode(None) is 'empty', so an unbuilt object falls through.
+        if mpds.record_mode(getattr(self, "mpds_json", None)) == "lean" and not (
+            kwargs.get("disable_inv_constrs", False)
+            and not kwargs.get("check_solid_coverage", True)
+        ):
+            raise config.CacheModeError(
+                f"[{self.sys_name}] cannot be fit from a LEAN MPDS record: it carries the "
+                f"digitized liquidus but not the 'shapes' block, so neither the invariant "
+                f"constraints nor the solid free-energy coverage gate can be evaluated. "
+                f"Both would come back EMPTY, which the coverage gate reads as 'nothing "
+                f"unsupported' and passes — a silently unconstrained fit. The real fix is "
+                f"a full MPDS store: rebuild it with `python -m gliquid.cache migrate "
+                f"--mpds-mode full`, or point gliquid at the directory corpus. To fit "
+                f"anyway, on a liquidus alone and with both checks knowingly off, pass "
+                f"fit_parameters(disable_inv_constrs=True, check_solid_coverage=False) — "
+                f"that is a different fit, not the same one."
             )
 
         if kwargs.get("ignore_ss", False):
