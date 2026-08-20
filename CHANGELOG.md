@@ -9,7 +9,37 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-20
+
+### Added
+
+- **A pluggable cache layer.** A cached record is now named by a `CacheKey` and read through a
+  `CacheBackend`, rather than by resolving a directory. `DirectoryBackend` is the per-system
+  JSON tree gliquid has always used, with identical filenames; `SqliteBackend` is a
+  single-file, read-mostly store you can ship. `set_cache_dir()` accepts either — a path
+  ending in `.sqlite` selects the single-file mode. `python -m gliquid.cache --help` migrates,
+  verifies and inspects a store.
+- **A pickle-free model bundle.** The shipped bundle is XGBoost's own forward-compatible
+  UBJSON plus JSON scaler coefficients, so it carries no scikit-learn or joblib version
+  coupling. Legacy joblib bundles still load unchanged.
+- **Polymorph transitions in the ternary figure.** Each elemental corner now draws its full
+  polymorph ladder, one coloured segment per phase, joined at the transition temperatures.
+
 ### Changed
+
+- **The v24.01 model is the default bundle**, trained on a corpus fitted without solid
+  solutions. Three targets (`L0_a`, `L0_b`, `L1_a`); `L1_b` is pinned to zero by the comb-exp
+  parameter format.
+- **One naming convention for elemental polymorphs.** Every solid phase in
+  `phase_transitions.json` now reads `<name>-<El> (<structure>)`, or `<El> (<structure>)`
+  where the phase has no name — so `hcp-Cd` is `Cd (hcp)`, `Diamond cubic Si` is
+  `Si (diamond cubic)`, and `Graphite` is `C (graphite)`. 56 of 120 names changed. Code
+  matching on these strings must be updated.
+- **The binary and ternary figures share one phase-label formatter**, so a phase reads the
+  same in both: greek symbol, structure abbreviated in parentheses, formula digits
+  subscripted (`α-Fe (bcc)`, `Si (dc)`, `Ce(FeSi)₂`). Phase *colours* are assigned in
+  phase-name order, so the renaming above changes the palette assignment for some systems.
+
 
 - **The machine-learning stack is now an optional extra, not a base dependency.**
   `scikit-learn`, `shap`, `joblib` and `xgboost` left `[project.dependencies]` for the new
@@ -49,7 +79,30 @@ source tree carries a version literal that could disagree with this file.
   `set_cache_dir()` / `GLIQUID_CACHE_DIR` (or the deprecated `set_data_dir()` /
   `GLIQUID_DATA_DIR`), with a checkout's own `cache/` as the last fallback. A clone that
   predates this rename should rename its `data/` directory to `cache/`.
-- Added an empty `src/gliquid/models/` for the portable model bundle.
+- The portable model bundle ships in the wheel at `gliquid/models/<bundle_id>/`. Exactly one
+  bundle ships at a time; the feature tables it predicts from live in the cache store, not the
+  wheel.
+
+### Fixed
+
+- **Elemental corners of a ternary melted below their own melting point.** The ternary hull
+  took its solid side from the DFT stable entries alone, so a component whose polymorph ladder
+  carries a sub-melting transition had its corner set by `h_liq / s_liq` instead of
+  `t_fusion`. 27 of 84 elements with a liquid reference were affected.
+- **Solid-solution reconciliation picked the wrong polymorph.** Steps now resolve by the
+  polymorph stable just below the melt rather than by first spacegroup match, so an element
+  carrying several polymorphs of one spacegroup no longer loses the hot one.
+- **One temperature convention for the ternary**: `T_grid` is Kelvin, clamped at absolute
+  zero, and `conds` is the same window in Celsius derived from it, so the two cannot drift.
+- **The 3D ternary scene used 61% of its figure.** The legend was anchored so that plotly
+  reserved its width outside the plot area. The scene now fills the figure, and zooming is
+  bounded by the whole plot area rather than by a smaller inner rectangle.
+- **`Ce(FeSi)2` and other parenthesised formulas** rendered as `Ce (FeSi) 2` in figure labels.
+- **The shipped model bundle's checksums did not verify off Windows.** `manifest.json`
+  recorded each member's sha256 over CRLF bytes, while git hands the JSON and txt members
+  back with LF on checkout, so `ProductionModelRunner`'s integrity check failed on Linux and
+  macOS. The bundle is now excluded from end-of-line normalization and its checksums are
+  recorded over the bytes that ship.
 
 ## [0.1.0] - 2026-08-12
 
@@ -128,5 +181,6 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/willwerj/gliquid_python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/willwerj/gliquid_python/releases/tag/v0.1.0
