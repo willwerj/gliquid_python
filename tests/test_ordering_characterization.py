@@ -123,7 +123,16 @@ class TestTernaryCacheDataDir:
         assert not df.empty
         assert list(df.columns) == ["x0", "x1", "S", "H", "Phase Name"]
         assert (df["S"] == 0).all()
-        assert {"Al", "Mg", "Si"} <= set(df["Phase Name"])
+        # The pure-element vertices are the ladder's GROUND-STATE phases now (fcc-Al,
+        # hcp-Mg, Diamond cubic Si), not the bare element symbols: get_ternary_form_en
+        # replaces the DFT hull's elemental entry with the polymorph ladder, mirroring
+        # binary.build_phases_from_chull. Assert the vertex COORDINATES, which no naming
+        # convention can move, and derive the expected names from the registry rather than
+        # hardcoding them, so a future rename does not re-break this cache-routing test.
+        vertices = {(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)}
+        assert vertices <= {(round(r.x0, 6), round(r.x1, 6)) for r in df.itertuples()}
+        ground_states = {UNARY[el].polymorphs[0].name for el in ("Al", "Mg", "Si")}
+        assert ground_states <= set(df["Phase Name"])
 
 
 ZERO_EDGES = {"Hf-Ti": [0.0] * 4, "Ti-Zr": [0.0] * 4, "Zr-Hf": [0.0] * 4}

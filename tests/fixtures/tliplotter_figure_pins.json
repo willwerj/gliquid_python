@@ -1,1 +1,219 @@
-{"construction": {"components": ["Al", "Mg", "Si"], "delta": 0.1, "T_incr": 100, "xs_mix": {"Al-Mg": [-9000.0, 1.0, 2000.0, -0.5], "Mg-Si": [-20000.0, 3.0, -5000.0, 1.0], "Si-Al": [-4000.0, 0.5, 1000.0, 0.0]}}, "tx_n_traces": 64, "tx_trace_types": ["mesh3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d"], "ch_request_c": 700.0, "ch_temperature_c": 726.85, "ch_temperature_k": 1000.0, "ch_n_points": 72, "ch_canonical_simplices": [[9, 10, 20], [9, 19, 20], [9, 19, 71], [19, 20, 29], [19, 28, 29], [19, 28, 71], [28, 29, 37], [28, 36, 37], [28, 36, 69], [28, 69, 71], [36, 37, 44], [36, 44, 69], [44, 50, 69], [50, 55, 69], [55, 59, 69], [59, 62, 69], [62, 64, 69], [64, 65, 69]], "ch_data_keys_current": ["figure", "hull_points", "hull_simplices", "raw_slice_df", "requested_temperature_c", "requested_temperature_k", "simplex_df", "temperature_c", "temperature_k", "temperature_offset_c", "transformed_points_df"], "ch_figure_n_traces": 9, "ch_figure_trace_types": ["mesh3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d", "scatter3d"]}
+{
+  "construction": {
+    "components": [
+      "Al",
+      "Mg",
+      "Si"
+    ],
+    "delta": 0.1,
+    "T_incr": 100,
+    "xs_mix": {
+      "Al-Mg": [
+        -9000.0,
+        1.0,
+        2000.0,
+        -0.5
+      ],
+      "Mg-Si": [
+        -20000.0,
+        3.0,
+        -5000.0,
+        1.0
+      ],
+      "Si-Al": [
+        -4000.0,
+        0.5,
+        1000.0,
+        0.0
+      ]
+    }
+  },
+  "tx_n_traces": 64,
+  "tx_trace_types": [
+    "mesh3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d"
+  ],
+  "ch_request_c": 700.0,
+  "ch_temperature_c": 726.85,
+  "ch_temperature_k": 1000.0,
+  "ch_n_points": 72,
+  "ch_canonical_simplices": [
+    [
+      9,
+      10,
+      20
+    ],
+    [
+      9,
+      19,
+      20
+    ],
+    [
+      9,
+      19,
+      66
+    ],
+    [
+      19,
+      20,
+      29
+    ],
+    [
+      19,
+      28,
+      29
+    ],
+    [
+      19,
+      28,
+      66
+    ],
+    [
+      28,
+      29,
+      37
+    ],
+    [
+      28,
+      36,
+      37
+    ],
+    [
+      28,
+      36,
+      68
+    ],
+    [
+      28,
+      66,
+      68
+    ],
+    [
+      36,
+      37,
+      44
+    ],
+    [
+      36,
+      44,
+      68
+    ],
+    [
+      44,
+      50,
+      68
+    ],
+    [
+      50,
+      55,
+      68
+    ],
+    [
+      55,
+      59,
+      68
+    ],
+    [
+      59,
+      62,
+      68
+    ],
+    [
+      62,
+      64,
+      68
+    ],
+    [
+      64,
+      65,
+      68
+    ]
+  ],
+  "ch_data_keys_current": [
+    "figure",
+    "hull_points",
+    "hull_simplices",
+    "raw_slice_df",
+    "requested_temperature_c",
+    "requested_temperature_k",
+    "simplex_df",
+    "temperature_c",
+    "temperature_k",
+    "temperature_offset_c",
+    "transformed_points_df"
+  ],
+  "ch_figure_n_traces": 9,
+  "ch_figure_trace_types": [
+    "mesh3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d",
+    "scatter3d"
+  ]
+}
