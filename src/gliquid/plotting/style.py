@@ -8,6 +8,8 @@ depend on it without cycles.
 
 from __future__ import annotations
 
+import re
+
 # Fixed colors for solid-solution phases; reserved and never reused for hull phases.
 SS_FIXED_COLORS = {
     "BCC": "#d7263d",
@@ -97,3 +99,14 @@ def format_phase_display_name(phase_label: str, ss_names, comps) -> str:
     if phase_label in ss_names:
         return f"{phase_label} ({comps[0]}, {comps[1]})"
     return phase_label
+
+
+def subscript_formula(name: str) -> str:
+    """Wrap stoichiometric digit-runs (those following a letter or ')') in <sub> tags.
+
+    Lives here rather than in binary_tx because both plot stacks need it: the binary
+    field labels and the ternary legend and hover text all show the same formulas, and a
+    compound written Mg2Si in one figure and Mg<sub>2</sub>Si in the other is the sort of
+    difference a reader reads as significant.
+    """
+    return re.sub(r"(?<=[A-Za-z\)])(\d+)", r"<sub>\1</sub>", str(name))

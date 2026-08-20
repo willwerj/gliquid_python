@@ -26,6 +26,7 @@ from gliquid.plotting.style import (
     PREDICTED_LIQUIDUS_COLOR,
     build_phase_color_map,
     format_phase_display_name,
+    subscript_formula,
 )
 
 logger = logging.getLogger(__name__)
@@ -1008,13 +1009,15 @@ def _parse_elemental_phase(name: str):
     element = m2.group(1)
     struct = (m2.group(2) or "").strip() or struct_prefix
     tag = (m2.group(3) or "").strip() or None
-    # Reject compounds: a trailing remainder containing letters that is not a temperature tag
-    # means another element/formula followed (e.g. "ZrMn2" -> element "Zr", remainder "Mn2").
-    if (
-        tag
-        and re.search(r"[A-Za-z]", tag)
-        and not re.fullmatch(_TAG_PHASE_TAG_RE, tag, re.IGNORECASE)
-    ):
+    # Reject compounds: ANY trailing remainder that is not a temperature tag means this is
+    # a formula, not an elemental phase -- "ZrMn2" parses as element "Zr" + remainder
+    # "Mn2", and "Ce(FeSi)2" as element "Ce" + "structure" FeSi + remainder "2".
+    #
+    # The remainder used to be rejected only when it contained LETTERS, which let the bare
+    # stoichiometric "2" of a parenthesised ternary compound through and rendered
+    # Ce(FeSi)2 as "Ce (FeSi) 2". No binary system has a parenthesised formula, so this
+    # only ever surfaced once the ternary legend started using this formatter.
+    if tag and not re.fullmatch(_TAG_PHASE_TAG_RE, tag, re.IGNORECASE):
         return None
     return greek_word, element, struct, tag
 
@@ -1039,9 +1042,9 @@ def _abbrev_structure(struct: str) -> str:
     return ""  # unrecognised long descriptor -> omit
 
 
-def _subscript_formula(name: str) -> str:
-    """Wrap stoichiometric digit-runs (those following a letter or ')') in <sub> tags."""
-    return re.sub(r"(?<=[A-Za-z\)])(\d+)", r"<sub>\1</sub>", str(name))
+#: Shared with the ternary stack via plotting.style; kept under the old private name
+#: so binary.py's re-export and the call site below need no edit.
+_subscript_formula = subscript_formula
 
 
 def _abbreviate_phase_name(name: str, all_names: list[str]) -> str:
