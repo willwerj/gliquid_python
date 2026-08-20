@@ -25,7 +25,12 @@ import gliquid.plotting.ternary_surface as ternary_surface
 import gliquid.solution as solution
 from gliquid.binary import BinaryLiquid
 from gliquid.hsx import HSX, lower_convex_hull
-from gliquid.phase import UNARY, resolve_component_order, validate_and_format_system
+from gliquid.phase import (
+    EV_ATOM_TO_J_MOL,
+    UNARY,
+    resolve_component_order,
+    validate_and_format_system,
+)
 from gliquid.plotting.binary_tx import build_polymorph_transitions, plot_tx
 from gliquid.plotting.style import build_phase_color_map
 from gliquid.solution import DEFAULT_TAU, RKPolyExp, SolutionModel, t_sym
@@ -389,38 +394,86 @@ class TernaryLiquidInterpolation:
             self.hsx_df = pd.concat([self.hsx_df, *ss_frames], ignore_index=True)
 
     def get_ternary_form_en(self, sys):
-        # get the formation energies of the stable phases in the ternary system
-        tern_mp_dict = {}
+        """Solid side of the ternary hull: DFT stable entries PLUS the elemental polymorph ladders.
+
+        Mirrors :func:`binary.build_phases_from_chull` — a stable hull entry sitting at a
+        pure-element vertex is REPLACED by that element's polymorph ladder, whose ground state
+        is the same point (H = 0, S = 0) and whose higher-temperature polymorphs then compete
+        on the hull. Without them the liquid crosses the *extrapolated* ground state, so a pure
+        corner melts at ``h_liq / s_liq`` instead of ``t_fusion``: 74 K low for Sn, 870 K for
+        Ti, and depressed for all 27 elements whose ladder carries a sub-melting transition.
+
+        Polymorphs whose spacegroup a continuous solid-solution surface already covers are
+        excluded (the ternary counterpart of the binary's ``exclude_spacegroups``), so a
+        structure never appears as both an SS surface and a fixed-composition line compound.
+        """
+        components = list(sys)
         # Shared n-component DFT cache/loader (api.py); the instance's own data_dir keeps
         # winning (flat layout inside it — the historical ternary cache convention).
-        pdia, _ = api.get_dft_convexhull(list(sys), "GGA", data_dir=self.data_dir)
+        pdia, _ = api.get_dft_convexhull(components, "GGA", data_dir=self.data_dir)
         self.ternary_meta["n_ternary_compounds"] = sum(
             1 for e in pdia.stable_entries if len(api.entry_original(e).composition.elements) == 3
         )
-        entries = pdia.stable_entries
-        all_atm_fracs = []
-        all_form_ens = []
-        phases = []
-        for entry in entries:
-            form_en = pdia.get_form_energy_per_atom(entry)
-            all_form_ens.append(form_en * 96485)
-            all_atm_fracs.append(list(api.entry_frac_along(pdia, entry, list(sys))))
-            phases.append(api.entry_display_name(entry))
 
-        all_atm_fracs_arr = np.array(all_atm_fracs)
+        # ss_models is populated by append_solid_solution_surfaces, which interpolate() runs
+        # before this method; it is empty whenever solid_solutions is off.
+        exclude_spacegroups = {solution.SS_SPACEGROUPS[p] for p in self.ss_models}
+        component_data = UNARY.component_data(components)
 
-        for i, arr in enumerate(all_atm_fracs_arr.T):
-            tern_mp_dict[f"x{i}"] = arr
+        # Corner ladders first, so the hull-entry loop below knows which vertices they own.
+        ladder_rows = []
+        claimed_corners = {}  # element -> its (x0, x1) vertex on the components[1:] axes
+        for i, comp in enumerate(components):
+            polymorphs = [
+                p
+                for p in component_data[comp].polymorphs
+                if p.spacegroup_number not in exclude_spacegroups
+            ]
+            if not polymorphs:
+                # Every polymorph of this element is covered by an SS surface (or the registry
+                # has none): leave the DFT hull's own elemental entry in place.
+                continue
+            corner = tuple(1.0 if j == i else 0.0 for j in range(1, len(components)))
+            claimed_corners[comp] = corner
+            for p in polymorphs:
+                ladder_rows.append(
+                    {
+                        "x0": corner[0],
+                        "x1": corner[1],
+                        "S": p.entropy or 0.0,
+                        "H": p.enthalpy or 0.0,
+                        # Names must stay distinct per polymorph — the groupby below keeps only
+                        # the lowest H per name, which would silently drop the high-temperature
+                        # polymorph and reinstate the defect this method exists to fix.
+                        "Phase Name": p.name or f"{comp} (sg {p.spacegroup_number})",
+                    }
+                )
 
-        self.ternary_meta["deepest_formation_energy"] = min(all_form_ens)
-        tern_mp_dict["H"] = all_form_ens
-        tern_mp_dict["Phase Name"] = phases
+        hull_rows = []
+        deepest = []
+        for entry in pdia.stable_entries:
+            form_en = pdia.get_form_energy_per_atom(entry) * EV_ATOM_TO_J_MOL
+            deepest.append(form_en)
+            frac = tuple(api.entry_frac_along(pdia, entry, components))
+            if any(
+                np.allclose(frac, corner, atol=1e-9) for corner in claimed_corners.values()
+            ):
+                continue  # a polymorph ladder owns this vertex
+            hull_rows.append(
+                {
+                    "x0": frac[0],
+                    "x1": frac[1],
+                    "S": 0.0,
+                    "H": form_en,
+                    "Phase Name": api.entry_display_name(entry),
+                }
+            )
 
-        entropy = [0] * len(all_form_ens)
-        tern_mp_dict["S"] = entropy
+        # Computed over ALL stable entries, ladder or not, so the reported depth is the DFT
+        # hull's and does not move with the polymorph injection.
+        self.ternary_meta["deepest_formation_energy"] = min(deepest)
 
-        tern_mp_df = pd.DataFrame(tern_mp_dict)
-        tern_mp_df = tern_mp_df[["x0", "x1", "S", "H", "Phase Name"]]
+        tern_mp_df = pd.DataFrame(hull_rows + ladder_rows, columns=["x0", "x1", "S", "H", "Phase Name"])
         tern_mp_df = tern_mp_df.loc[tern_mp_df.groupby("Phase Name")["H"].idxmin()]
 
         return tern_mp_df
