@@ -132,13 +132,10 @@ class ComponentRef:
 
     symbol: str
     phases: list[Phase] = field(default_factory=list)
-    # Tier B solid-solution end-member references (BCC/FCC/HCP structures NOT on
-    # the phase ladder): cumulative enthalpy above the element anchor, no transition
-    # temperature, and S = 0 except for the builder's scoped metastable-entropy
-    # exception (a few HCP entries carry a negative SGTE entropy; see the database's
-    # 'metastable_entropy_exception' convention). Deliberately separate from
-    # ``phases`` so they never enter ``polymorphs`` (hence never the hull line
-    # compounds), ``solid_phase`` lookups, or liquid reconstruction.
+    # Tier B solid-solution end-member references (BCC/FCC/HCP structures NOT on the phase
+    # ladder): cumulative enthalpy above the element anchor, no transition temperature.
+    # Deliberately separate from ``phases`` so they never enter ``polymorphs``,
+    # ``solid_phase`` lookups, or liquid reconstruction.
     lattice_stabilities: list[Phase] = field(default_factory=list)
 
     def __post_init__(self):
@@ -297,11 +294,9 @@ class UnaryData:
                         composition=Composition(symbol),
                         t_transition=None,
                         enthalpy=entry.get("delta_H_J_per_mol"),
-                        # 0.0 by the recalculation convention (no transition temperature
-                        # to divide by), EXCEPT for the builder's scoped metastable-entropy
-                        # exception, which emits a negative SGTE value on a handful of HCP
-                        # entries. Read what the builder wrote; default to 0.0 so an older
-                        # database file (or one predating the field) is unchanged.
+                        # 0.0 by the recalculation convention (no transition temperature to
+                        # divide by), except for the builder's scoped metastable-entropy
+                        # exception. Default 0.0 so an older database file is unchanged.
                         entropy=entry.get("delta_S_J_per_mol_K")
                         if entry.get("delta_S_J_per_mol_K") is not None
                         else 0.0,

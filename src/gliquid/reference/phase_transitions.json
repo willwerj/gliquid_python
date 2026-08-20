@@ -3,7 +3,7 @@
     "description": "Phase-transition database for elemental systems.  For each element the ordered phase sequence (solid polymorphs → liquid → gas) is listed with cumulative enthalpies and entropies relative to the DFT ground state (H = 0, S = 0).  Only solid polymorphs possessing BOTH a DFT energy (from Materials Project) AND a known transition temperature (from literature) are retained.  Liquid and gas phases are always included.",
     "created_date": "2026-08-14",
     "derived_from": "elements_database.json",
-    "policy": "Tiered unary data policy (2026-08-04): Tier A removes spurious MP structures (no ambient-pressure stability field at any T; see gliquid_python/src/gliquid/reference/spurious_structures.json) before ground-state selection; Tier B emits a per-element 'lattice_stabilities' block (BCC/FCC/HCP cumulative enthalpies above the anchor, no transition temperature required; MP primary, omegas-file fallback); Tier C re-anchors elements where GGA misranks two real phases (Co, Sm) and substitutes SGTE lattice stabilities for the displaced phases, with machine-readable provenance. Metastable-entropy exception (2026-08-07): six HCP lattice stabilities (Au, Li, Ba, Ca, Cu, Ag) carry an imported SGTE entropy instead of the convention's 0.0 -- see the 'metastable_entropy_exception' convention below. Virtual-polymorph injection (2026-08-07): four real equilibrium phases absent from Materials Project entirely (beta-Y bcc, beta-Sc bcc, gamma-Sm bcc, gamma-Mn fcc) are injected onto their ladders, closing the Tier A/B/C gap for a structure that is real but has no MP record -- see the 'virtual_polymorphs' convention below.",
+    "policy": "Tiered unary data policy (2026-08-04): Tier A removes spurious MP structures (no ambient-pressure stability field at any T; see spurious_structures.json) before ground-state selection; Tier B emits a per-element 'lattice_stabilities' block (BCC/FCC/HCP cumulative enthalpies above the anchor, no transition temperature required; MP primary, omegas-file fallback); Tier C re-anchors elements where GGA misranks two real phases (Co, Sm) and substitutes SGTE lattice stabilities for the displaced phases, with machine-readable provenance. Metastable-entropy exception (2026-08-07): six HCP lattice stabilities (Au, Li, Ba, Ca, Cu, Ag) carry an imported SGTE entropy instead of the convention's 0.0 -- see the 'metastable_entropy_exception' convention below. Virtual-polymorph injection (2026-08-07): four real equilibrium phases absent from Materials Project entirely (beta-Y bcc, beta-Sc bcc, gamma-Sm bcc, gamma-Mn fcc) are injected onto their ladders, closing the Tier A/B/C gap for a structure that is real but has no MP record -- see the 'virtual_polymorphs' convention below.",
     "conventions": {
       "reference_state": "The DFT ground state (lowest T = 0 K energy per atom from Materials Project after the Tier A blacklist and Tier C re-anchoring) defines H = 0, S = 0 for each element. After the 2026-08-04 audit the anchor matches the experimentally stable structure; audited real low-T allotropes (Na hP4, Li 9R, alpha-Sn, omega-Ti) keep the low-T structure as anchor.",
       "lattice_stabilities": "Per-element block of cumulative BCC/FCC/HCP enthalpies above the anchor for structures NOT on the phase ladder, with no transition temperature -- solid-solution end-member references only; they never enter the ladder, the liquid stacking, or the hull line compounds. delta_S = 0 by the recalculation convention (no transition temperature to divide by), EXCEPT for the six entries listed under 'metastable_entropy_exception'. Sources: MP polymorph energies (primary), omegas_hcp.json (fallback, anchored per gliquid.solution._apply_omegas_fallback's math).",
@@ -1398,7 +1398,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -1.5826383
           }
@@ -1500,7 +1500,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -3.71740875
           }
@@ -1658,7 +1658,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.90610231
           }
@@ -1671,7 +1671,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.9170432
           }
@@ -2662,7 +2662,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -7.83418234
           }
@@ -2745,7 +2745,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -8.83576579
           }
@@ -2758,7 +2758,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -8.82900711
           }
@@ -2874,7 +2874,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -9.2464169
           }
@@ -3254,7 +3254,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -7.01997123
           }
@@ -3358,7 +3358,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -5.68845364
           }
@@ -3447,7 +3447,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.06406591
           }
@@ -3460,7 +3460,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.09342129,
             "entropy_source": "SGTE Unary v5.0 GHCPCU = 600+0.2*T+GHSERCU (ESTIMATE, round-number SER offset, not independently assessed); dS = -b vs the FCC anchor (= GHSERCU, so a no-op anchoring)",
@@ -3543,7 +3543,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -1.18989626
           }
@@ -3556,7 +3556,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -1.24423138
           }
@@ -3666,7 +3666,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.99314715
           }
@@ -3679,7 +3679,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -3.00816533
           }
@@ -3692,7 +3692,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -3.00379934
           }
@@ -3850,7 +3850,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.27700957
           }
@@ -3863,7 +3863,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -4.28896462
           }
@@ -3952,7 +3952,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -4.2135551
           }
@@ -3965,7 +3965,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -4.10865851
           }
@@ -3978,7 +3978,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -4.14565609
           }
@@ -4693,7 +4693,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -8.50764845
           }
@@ -4774,7 +4774,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -9.77232234
           }
@@ -4787,7 +4787,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -9.801991405
           }
@@ -4883,7 +4883,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -10.43337329
           }
@@ -4896,7 +4896,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -10.41612885
           }
@@ -5044,7 +5044,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -8.65259965
           }
@@ -5057,7 +5057,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -9.16331099
           }
@@ -5138,7 +5138,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -7.0141832
           }
@@ -5151,7 +5151,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -7.30322783
           }
@@ -5232,7 +5232,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -5.13401881
           }
@@ -5245,7 +5245,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -5.15348958
           }
@@ -5345,7 +5345,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -2.79769334
           }
@@ -5358,7 +5358,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -2.82584465,
             "entropy_source": "SGTE Unary v5.0 GHCPAG = 300+0.3*T+GHSERAG (ESTIMATE, round-number SER offset, not independently assessed); dS = -b vs the FCC anchor (= GHSERAG, so a no-op anchoring)",
@@ -5441,7 +5441,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -0.85363415
           }
@@ -5454,7 +5454,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -0.90142946
           }
@@ -5545,7 +5545,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.7131789
           }
@@ -5558,7 +5558,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.72390372
           }
@@ -5571,7 +5571,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.718581365
           }
@@ -5699,7 +5699,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -3.94381412
           }
@@ -5712,7 +5712,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -3.944786565
           }
@@ -5965,7 +5965,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.83402138
           }
@@ -5978,7 +5978,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.73015385
           }
@@ -5991,7 +5991,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -2.96474852
           }
@@ -8120,7 +8120,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -9.88467491
           }
@@ -8254,7 +8254,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -11.574978515
           }
@@ -8350,7 +8350,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -12.48270478
           }
@@ -8363,7 +8363,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -12.462878985
           }
@@ -8444,7 +8444,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -12.13307222
           }
@@ -8457,7 +8457,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -12.3833621
           }
@@ -8546,7 +8546,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -10.33874954
           }
@@ -8559,7 +8559,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on HCP",
             "energy_per_atom_eV": -11.08986704
           }
@@ -8648,7 +8648,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -8.23812772
           }
@@ -8661,7 +8661,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -8.774437375
           }
@@ -8742,7 +8742,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -5.95783949
           }
@@ -8755,7 +8755,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -6.002378695
           }
@@ -8836,7 +8836,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -3.2510069
           }
@@ -8849,7 +8849,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on FCC",
             "energy_per_atom_eV": -3.26898702,
             "entropy_source": "SGTE Unary v5.0 GHCPAU = 240.75+1.6*T+GHSERAU (assessed); dS = -b vs the FCC anchor (= GHSERAU, so a no-op anchoring)",
@@ -8974,7 +8974,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -0.30134668
           }
@@ -8987,7 +8987,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -0.29108111
           }
@@ -9000,7 +9000,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "omegas-file zero (no shared phase)",
             "energy_per_atom_eV": -0.30483304
           }
@@ -9368,7 +9368,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -3.69652588
           }
@@ -9381,7 +9381,7 @@
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
           "metadata": {
-            "source": "omegas_hcp.json (matrix_data, WHSun-lab DFT SS end-member energies)",
+            "source": "omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023)",
             "basis": "anchored on BCC",
             "energy_per_atom_eV": -3.73738839
           }

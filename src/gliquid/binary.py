@@ -59,10 +59,8 @@ _x_vals = solution.x_vals
 xb_sym = comp_symbols(2)[0]
 
 # Machine-readable causes of a BinaryLiquid ``init_error``. The bool stays the decision;
-# ``BinaryLiquid.skip_reason`` records WHICH of these set it, so downstream consumers
-# (campaign workbook, matrix colouring) can tell "no usable liquidus" from "not enough
-# liquidus" from "not enough solid free energy" instead of collapsing all five into one
-# string. Purely descriptive: adding or reading a reason never changes a fit outcome.
+# ``BinaryLiquid.skip_reason`` records which of these set it. Purely descriptive:
+# adding or reading a reason never changes a fit outcome.
 SKIP_NO_LIQUIDUS = "no_liquidus"  # from_cache: no digitized liquidus at all
 SKIP_NARROW_SPAN = "narrow_liquidus_span"  # from_cache: endpoint span < comp_range_fit_lim
 SKIP_SPARSE_LIQUIDUS = "sparse_liquidus_interior"  # from_cache: max_gap / covered_fraction gate
@@ -76,10 +74,9 @@ SKIP_REASONS = (
     SKIP_MASK_FRACTION,
 )
 
-# Every keyword ``BinaryLiquid.fit_parameters`` accepts through its ``**kwargs``: the options
-# it reads itself, plus everything it forwards to nelder_mead / f / calculate_deviation_metrics.
-# Anything outside this set and RETIRED_FIT_KWARGS raises, because a swallowed keyword reads
-# to the caller as a setting that took effect when it did not.
+# Every keyword ``BinaryLiquid.fit_parameters`` accepts through ``**kwargs``: the options it
+# reads plus everything it forwards to nelder_mead / f / calculate_deviation_metrics.
+# Anything outside this set and RETIRED_FIT_KWARGS raises rather than being swallowed.
 FIT_KWARGS = frozenset(
     {
         # read by fit_parameters itself
@@ -296,9 +293,8 @@ class BinaryLiquid:
         # Descriptive only — nothing branches on it inside the package.
         self.skip_reason = kwargs.get("skip_reason", None)
         # Set by find_invariant_points when MPDS labels report a full-composition solid
-        # solution. Informational only — it records that MPDS spelled the field '(A, B)'.
-        # The fit/skip decision belongs to the measured coverage report below, which catches
-        # the wide fields this label match misses (Lu-Nd's spans all x but is labelled '(Lu)').
+        # solution. Informational only; the fit/skip decision belongs to the measured
+        # coverage report below.
         self.full_comp_ss = False
         # Populated by assess_solid_coverage(); the basis of the fit/skip decision.
         self.coverage_report = None
@@ -317,11 +313,10 @@ class BinaryLiquid:
         )
         self.temp_range = kwargs.get("temp_range", [])
         self.comp_range_fit_lim = kwargs.get("comp_range_fit_lim", 0.7)
-        # mpds.liquidus_coverage metrics of the PRE-fill digitized liquidus (None when no
-        # liquidus was extracted); the basis of from_cache's interior-coverage init_error.
-        # Expected in THIS object's component frame: 'holes' are positions, so a caller
-        # passing a dict measured on a reversed-frame json must mirror it first
-        # (mpds.mirror_liquidus_coverage), exactly as it must mirror digitized_liq.
+        # mpds.liquidus_coverage metrics of the PRE-fill digitized liquidus (None when none
+        # was extracted); the basis of from_cache's interior-coverage init_error. Expected in
+        # THIS object's component frame -- 'holes' are positions, so a dict measured on a
+        # reversed-frame json must be mirrored first (mpds.mirror_liquidus_coverage).
         self.liq_coverage = kwargs.get("liq_coverage", None)
         self.ignored_comp_ranges = kwargs.get("ignored_comp_ranges", [])
         self.dft_type = kwargs.get("dft_type", "GGA")
@@ -334,11 +329,10 @@ class BinaryLiquid:
         self.ss_in_hull = True
         if self.ss_models:
             self._ensure_solid_solution_phases()
-        # exp(-T/tau) decay constant for the 'combined'/'comb-exp' mixing forms. Feeds the
-        # L expressions, the initial-simplex scaling, and the Lupis-Elliott hs_ratio default
-        # — matching the retired dev-script set_tau() that kept binary.tau in sync.
-        # The liquid's excess model: pass a prebuilt RKPolyExp via 'xs_mix' (from_cache
-        # does), or 'param_format'/'params'/'tau' for direct construction.
+        # exp(-T/tau) decay constant for the 'combined'/'comb-exp' mixing forms. Feeds the L
+        # expressions, the initial-simplex scaling and the Lupis-Elliott hs_ratio default.
+        # The liquid's excess model: pass a prebuilt RKPolyExp via 'xs_mix' (from_cache does),
+        # or 'param_format'/'params'/'tau' for direct construction.
         xs_mix = kwargs.get("xs_mix")
         if xs_mix is not None:
             self.xs_mix = xs_mix
@@ -520,10 +514,9 @@ class BinaryLiquid:
                 f"T_fusion = {ref.t_fusion} K, polymorphs = {len(ref.polymorphs)}"
             )
         mpds_json, (digitized_liq, is_partial) = mpds.load_mpds_data(components, pd_ind=pd_ind)
-        # The raw json (and thus the liquidus) is digitized in its own alphabetical frame;
-        # mirror the derived artifacts into the construction frame. mpds_json itself is
-        # kept as loaded — frame-sensitive consumers convert at use (identify_mpds_phases
-        # via mirror_mpds_phases, get_low_temp_phase_data internally).
+        # The raw json is digitized in its own alphabetical frame; mirror the derived
+        # artifacts into the construction frame. mpds_json itself is kept as loaded --
+        # frame-sensitive consumers convert at use.
         mpds_frame_reversed = not mpds.mpds_frame_matches(mpds_json, components)
         if digitized_liq and mpds_frame_reversed:
             digitized_liq = mpds.mirror_liquidus(digitized_liq)
@@ -538,10 +531,9 @@ class BinaryLiquid:
             if ss_kwargs.get("ref_mode") == "from_dft_entries" and "entries" not in ss_kwargs:
                 ss_kwargs["entries"] = api.get_dft_structure_entries(components, dft_type)
             # Reconciles the liquid references inside component_data in place, so the eqs
-            # built below automatically share the solid-solution reference frame — but only
-            # for systems the omegas file actually covers. An uncovered system returns {}
-            # here with component_data untouched (coverage gate in load_solid_solution_models),
-            # so resolved-True-but-uncovered is byte-identical to the SS-off path.
+            # built below share the solid-solution reference frame -- but only for systems
+            # the omegas file covers. An uncovered system returns {} with component_data
+            # untouched, so resolved-but-uncovered matches the SS-off path exactly.
             ss_models = solution.load_solid_solution_models(components, component_data, **ss_kwargs)
 
         phases = build_phases_from_chull(
@@ -597,14 +589,10 @@ class BinaryLiquid:
         if init_error:
             skip_reason = SKIP_NO_LIQUIDUS if not digitized_liq else SKIP_NARROW_SPAN
 
-        # Endpoint span alone cannot see interior holes: extract_digitized_liquidus
-        # linearly fills every gap wider than 0.06 before digitized_liq reaches this
-        # frame, so a liquidus digitized only near the pure ends (Bi-Si class) arrives
-        # span-complete with most of its interior fabricated. Measure the PRE-fill curve.
-        # The gate below reads only mirror-invariant scalars, so the raw-frame json is
-        # fine to measure -- but liq_coverage also carries 'holes', which are POSITIONS,
-        # so mirror the dict onto the construction frame exactly as digitized_liq was
-        # above. An unmirrored hole would mask the wrong end of the diagram, silently.
+        # Endpoint span alone cannot see interior holes: extract_digitized_liquidus fills
+        # every gap wider than 0.06 before digitized_liq reaches this frame, so measure the
+        # PRE-fill curve. liq_coverage carries 'holes', which are POSITIONS, so mirror the
+        # dict onto the construction frame as digitized_liq was above.
         liq_coverage = mpds.liquidus_coverage(mpds_json) if digitized_liq else None
         if liq_coverage is not None and mpds_frame_reversed:
             liq_coverage = mpds.mirror_liquidus_coverage(liq_coverage)
@@ -783,10 +771,9 @@ class BinaryLiquid:
         }
         for phase in self.phases:
             if phase.is_solution:
-                # A continuous solid phase contributes a full composition grid of rows, sharing
-                # the liquid's grid-evaluation shape; the 'L' sentinel (and any solution phase
-                # without a model) contributes nothing here. ss_in_hull=False (the
-                # fit_parameters ignore_ss option) drops the SS rows entirely.
+                # A continuous solid phase contributes a full composition grid of rows; the
+                # 'L' sentinel and any solution phase without a model contribute nothing.
+                # ss_in_hull=False (fit_parameters' ignore_ss) drops the SS rows entirely.
                 if phase.name != "L" and getattr(self, "ss_in_hull", True):
                     solution_h_s = self._solution_phase_h_s(phase.name, x_vals=ss_grid)
                     if solution_h_s is not None:
@@ -1298,17 +1285,14 @@ class BinaryLiquid:
         digitized = digitized[mask]
 
         digitized_liq_lims = [digitized[0, 0], digitized[-1, 0]]
-        # Composition intervals this comparison must not see, from two sources but through
-        # ONE mask -- the digitized array, the generated array and the evaluation mesh have
-        # to stay consistent with each other, so there is exactly one masking path:
-        #   * self.ignored_comp_ranges -- stretches fit_parameters judged un-modellable
-        #     (invariants it could not resolve, compounds with no DFT energy). Optional:
-        #     ignored_ranges=False asks for the metric without them.
-        #   * self.liquidus_holes -- stretches where MPDS digitized no liquidus at all,
-        #     between disjoint 'L' shapes. NOT optional, and not a judgement call: the
-        #     nearest-neighbour lookup below has nothing to return inside one but the
-        #     temperature of whichever region edge happens to be closer, a fabricated flat
-        #     step. Grading a fit against that measures the digitizer, not the model.
+        # Composition intervals this comparison must not see, from two sources through ONE
+        # mask, so the digitized array, the generated array and the evaluation mesh stay
+        # consistent:
+        #   * self.ignored_comp_ranges -- stretches fit_parameters judged un-modellable.
+        #     Optional: ignored_ranges=False asks for the metric without them.
+        #   * self.liquidus_holes -- stretches where MPDS digitized no liquidus at all.
+        #     NOT optional: inside one, the nearest-neighbour lookup below can only return
+        #     a fabricated flat step from whichever region edge is closer.
         masked_ranges = list(self.ignored_comp_ranges) if kwargs.get("ignored_ranges", True) else []
         masked_ranges += self.liquidus_holes
         if masked_ranges:
@@ -1603,8 +1587,8 @@ class BinaryLiquid:
                 been switched off explicitly.
         """
 
-        # Unrecognized keywords are a caller error, not a no-op: **kwargs used to swallow a
-        # misspelled or removed option and run on as if it had been applied. Checked before
+        # Unrecognized keywords are a caller error, not a no-op: a swallowed keyword reads
+        # to the caller as a setting that took effect. Checked before
         # anything else so nothing is mutated on the way to the raise.
         unknown = sorted(set(kwargs) - FIT_KWARGS - RETIRED_FIT_KWARGS)
         if unknown:
@@ -1615,21 +1599,15 @@ class BinaryLiquid:
                 f"{', '.join(sorted(FIT_KWARGS))}."
             )
 
-        # A LEAN MPDS record (liquidus only, no digitized 'shapes') cannot support either
-        # invariant constraints or the solid-coverage gate. Checked UP FRONT, before
-        # anything is mutated and before any optimization runs, because the dangerous
-        # outcome is not a crash: without shapes the invariant list and the phase list both
-        # come back empty, the coverage gate reads "nothing unsupported" and PASSES, and the
-        # caller gets a plausible-looking fit that was never constrained. There is no
-        # auto-degrade — a fit without invariant constraints and without the coverage gate
-        # is a DIFFERENT fit, and returning it silently under the same call is the failure
-        # mode. Asking for it explicitly is fine, which is what the two kwargs below are.
-        # getattr, not self.mpds_json: this check is deliberately the FIRST thing after the
-        # kwarg gate, which puts it ahead of the retired-kwarg notice and of every other
-        # diagnostic. A bare BinaryLiquid.__new__ instance has no attributes at all, and an
-        # AttributeError raised from here would swallow those diagnostics instead of the
-        # object's own later failure reporting them (tests/test_notebook_imports.py pins
-        # exactly that). record_mode(None) is 'empty', so an unbuilt object falls through.
+        # A LEAN MPDS record (liquidus only, no digitized 'shapes') cannot support invariant
+        # constraints or the solid-coverage gate: without shapes both lists come back empty,
+        # the coverage gate reads "nothing unsupported" and PASSES, and the caller gets a
+        # plausible-looking fit that was never constrained. There is no auto-degrade; the two
+        # kwargs below ask for it explicitly.
+        #
+        # getattr, not self.mpds_json: this runs FIRST after the kwarg gate, so an
+        # AttributeError from a bare __new__ instance cannot swallow later diagnostics.
+        # record_mode(None) is 'empty', so an unbuilt object falls through.
         if mpds.record_mode(getattr(self, "mpds_json", None)) == "lean" and not (
             kwargs.get("disable_inv_constrs", False)
             and not kwargs.get("check_solid_coverage", True)
@@ -1709,10 +1687,7 @@ class BinaryLiquid:
                 mpds.print_phase_mismatch_chart(self.low_t_exp_phases, self._interior_dft_comps())
 
         # Single measured admission criterion: how much of the liquidus is conjugate to a
-        # solid whose free energy we cannot evaluate. Supersedes the two gates it replaces —
-        # the count of near-liquidus MPDS compounds missing from DFT, and the '(A, B)'
-        # label-string full-composition-SS check — which disagreed with each other because
-        # they measured incommensurate things.
+        # solid whose free energy cannot be evaluated.
         if kwargs.get("check_solid_coverage", True):
             coverage = self.assess_solid_coverage(
                 ss_narrow_tol=kwargs.get("coverage_ss_narrow_tol"),
@@ -1764,12 +1739,10 @@ class BinaryLiquid:
             shifted from the measured ones but coverage is adequate)."""
             return any(abs(c - comp) <= dft_cover_tol for c in _dft_comps)
 
-        # A compound whose melting form is a DISTINCT high-temperature polymorph carries no
+        # A compound whose melting form is a distinct high-temperature polymorph carries no
         # usable solid reference: the DFT hull is a 0 K ground-state hull, so it holds the
-        # low-temperature form, whose enthalpy is not the melting form's. Composition is no
-        # defence here (both forms sit at the same x), so dft_covers cannot be consulted --
-        # C-La's hull has LaC2 and the liquidus from the C+LaC2 eutectic to the La2C3
-        # peritectic is nonetheless conjugate to LaC2 ht (cF36) the whole way across.
+        # low-temperature form, whose enthalpy is not the melting form's. Both forms sit at
+        # the same x, so dft_covers cannot be consulted.
         ht_polymorphs = {
             phase["name"]: phase
             for phase in (self.low_t_exp_phases or [])
@@ -1796,12 +1769,9 @@ class BinaryLiquid:
                 t_transition = phase.get("polymorph_transition_temp")
                 # Where the low-temperature form's own ceiling is known, only the liquidus
                 # ABOVE it is conjugate to the hotter form; below it the hull's ground state
-                # is the right reference and the branch stays fittable. Masking the whole
-                # flanking interval on the strength of a narrow window at the top costs real
-                # systems: Cr-Zr's ZrCr2 is C15 up to 1864 K and melts at 1945 K, so 81 K of
-                # ht stability would otherwise mask 60% of the liquidus and skip the system.
-                # A ceiling that reaches the melting point carries no information (C-Ce draws
-                # both CeC2 lines full height), so there the whole interval stays masked.
+                # is the right reference and the branch stays fittable. A ceiling reaching
+                # the melting point carries no information, so there the interval stays
+                # fully masked.
                 if t_transition is not None and t_transition < phase["tbounds"][1][1] - t_tol:
                     hot = [x for x, t in self.digitized_liq if lo <= x <= hi and t > t_transition]
                     if not hot:
@@ -1971,10 +1941,9 @@ class BinaryLiquid:
                 self._flag_skip(SKIP_MASK_FRACTION)
                 return []
 
-        # Test invariant-derived equations for validity as constraints. The format's
-        # topology decides how many invariant equations each candidate consumes: the
-        # remainder of the solve system comes from its identity constraints (pinned
-        # parameters, e.g. comb-exp's L1_b = 0).
+        # Test invariant-derived equations for validity as constraints. The format's topology
+        # decides how many invariant equations each candidate consumes; the remainder of the
+        # solve system comes from its identity constraints (comb-exp's L1_b = 0).
         fmt = self.xs_mix.format
         identity_entries = [
             [f"no1S - {p} = 0", "0th order", float("inf"), eq]
@@ -2321,10 +2290,8 @@ from gliquid.plotting.style import (  # noqa: F401
     format_phase_display_name,
 )
 
-# Composition-grid subdivision for the solid-solution presentation hull. 5 closes the
-# field termini that matter (Hf-Y and Ru-Y HCP reach a true apex; Cr-W and Hf-W BCC
-# converge) while keeping every three-phase invariant the coarse hull found -- 10 drops
-# Hf-Y's L+HCP+Y peritectic entirely.
+# Composition-grid subdivision for the solid-solution presentation hull. Finer than this
+# drops three-phase invariants the coarse hull found; coarser leaves field termini open.
 _SS_PLOT_REFINE = 5
 
 
@@ -2540,10 +2507,9 @@ class BLPlotter:
         # Imputed (phase-energy-imputation) phases are rendered with dashed lines.
         imputed_phases = {p.name for p in self._bl.phases if p.imputed}
 
-        # Solid-solution systems render from a presentation hull whose SS phases are
-        # sampled finer, so their fields terminate in a point rather than a vertical face
-        # straddling a dozen equilibria. Systems without SS models keep the fitted HSX
-        # object itself -- same hull, same in-place conds mutation, same figure bytes.
+        # Solid-solution systems render from a presentation hull whose SS phases are sampled
+        # finer, so their fields terminate in a point. Systems without SS models keep the
+        # fitted HSX object itself.
         hsx = self._bl.refined_hsx(_SS_PLOT_REFINE) if self._bl.ss_models else self._bl.hsx
 
         # Generate the plot using the migrated module-level plot function

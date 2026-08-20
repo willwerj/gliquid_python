@@ -12,20 +12,14 @@ from __future__ import annotations
 import numpy as np
 import plotly.graph_objects as go
 
-# The SAME formatter the binary field labels use, so a phase reads identically in both
-# figures: greek word -> symbol, structure abbreviated inside the parentheses, formula
-# digits subscripted. binary_tx imports only from plotting.style, and ternary.py already
-# imports it, so this adds no cycle and no load.
+# The same formatter the binary field labels use, so a phase reads identically in both
+# figures: greek symbol, structure abbreviated in the parentheses, formula digits
+# subscripted.
 from gliquid.plotting.binary_tx import _abbreviate_phase_name
 
-# Plotly CLIPS 3-D geometry at the axis bounds, and the base triangle is drawn on the floor.
-# Placed exactly at ``conds[0]`` its two back edges land on the clip plane and disappear, so it
-# is lifted by a hair to sit strictly inside the range -- 0.1% of the temperature span, about
-# 3 C on a 2800 C diagram and invisible at plot scale. This is what lets the z-axis stop at
-# ``conds[0]``, which is absolute zero, instead of borrowing drawing room below it: the old code
-# put the labels 150 C BELOW the floor and then opened the axis 200 C below it to fit them,
-# which only looked harmless while ``conds[0]`` was 0 K misread as 0 C. The solid-phase segments
-# are NOT lifted -- they still start at the true grid floor.
+# Plotly clips 3-D geometry at the axis bounds, so the base triangle is lifted a hair off
+# ``conds[0]`` (0.1% of the temperature span) to sit strictly inside the range. The
+# solid-phase segments are NOT lifted -- they start at the true grid floor.
 FLOOR_INSET_FRAC = 1e-3
 
 
@@ -102,11 +96,10 @@ def render_hull_slice(hull_data, components) -> go.Figure:
     fig.update_layout(
         title=f"Single-slice lower hull at T = {T_celsius_exact:.2f} C",
         scene=dict(
-            # A 3 % left inset inside the plot area: the z tick labels are drawn INSIDE the
-            # gl canvas, hanging left of the axis line, so with the scene flush against the
-            # canvas edge the leading digit of "1500" was clipped. Insetting the SCENE (not
-            # the margin) is what gives them room, since widening the margin just moves the
-            # canvas and takes the axis with it.
+            # Left inset inside the plot area: the z tick labels are drawn inside the gl
+            # canvas, hanging left of the axis line, and are clipped without it. Insetting
+            # the SCENE is what gives them room -- widening the margin moves the canvas and
+            # takes the axis with it.
             domain=dict(x=[0.09, 1.0], y=[0.0, 1.0]),
             xaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
             yaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
@@ -370,12 +363,9 @@ def render_tx_surface(
         go.Scatter3d(
             x=[-0.02, 0.48, 0.98, -0.02],
             y=[0.02, np.sqrt(3) / 2 + 0.02, 0.02, 0.02],
-            # Anchored ON the base triangle, with the drop to below it taken in SCREEN space
-            # (textposition) rather than as a temperature. conds[0] is absolute zero, so there
-            # is no room under the floor to borrow: a z coordinate below it would be an
-            # impossible temperature, and plotly clips out-of-range 3-D text, so the labels
-            # would simply vanish -- which is what the old ``conds[0] - 150`` anchor and the
-            # matching ``- 200`` on the z-axis range were paying for.
+            # Anchored ON the base triangle, with the drop below it taken in SCREEN space
+            # (textposition) rather than as a temperature: conds[0] is absolute zero, and a
+            # z coordinate under it would be clipped out of the scene.
             z=[floor_z] * 4,
             mode="text",
             text=[f"<b>{components[0]}</b>", f"<b>{components[2]}</b>", f"<b>{components[1]}</b>"],
@@ -386,25 +376,15 @@ def render_tx_surface(
     )
 
     fig.update_layout(
-        # The legend is anchored INSIDE the paper (xanchor='right' at x=0.99), not started
-        # at x=0.95 and left to run off the edge. Anchored 'left' there, plotly treats the
-        # box as sitting outside the plot area and reserves its full width -- measured at
-        # 178 px of a 700 px figure -- which it takes off the 3D scene. Together with the
-        # margins below that left the WebGL canvas at 484x800 in a 700x900 figure, 61% of
-        # the area, and it is that canvas (not the figure) that clips the view when the
-        # user zooms. Anchored right and overlaid, the same legend costs nothing: 700x860,
-        # 96%. `scene.domain` and `aspectmode` are NOT involved -- domain already spans
-        # [0,1]x[0,1] and aspectratio only moves the cube around inside the canvas; both
-        # were measured to change nothing (dev/scripts/_generated/probe_ternary_scene_sizing.py).
+        # Anchor the legend INSIDE the paper. Anchored 'left' near x=1 it runs off the edge,
+        # and plotly then reserves its full width out of the 3D scene.
         legend=dict(
             x=0.99, y=0.99, xanchor="right", yanchor="top",
             bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
         ),
         autosize=True,
-        # The z-axis title, rotated so it reads upwards and the unit lands at the top of
-        # the axis, matching the binary figures. textangle=-90 is a screen-space rotation:
-        # it does NOT follow the axis if the user orbits the scene, which is the cost of
-        # plotly not exposing an angle on the built-in title.
+        # The z-axis title. textangle is a SCREEN-space rotation and does not follow the
+        # axis if the scene is orbited; plotly exposes no angle on the built-in gl3d title.
         annotations=[
             dict(
                 text="Temperature (°C)",
@@ -419,18 +399,15 @@ def render_tx_surface(
                 font=dict(size=17, color="black"),
             )
         ],
-        # A 3D scene draws its own ticks INSIDE the canvas, so r/b margins buy nothing; t
-        # leaves room for the figure title. l is the ONE exception: the z-axis title is a
-        # paper annotation now (see below) and at l=0 it lands on top of the scene's own
-        # tick labels. 32 px is what clears them, and costs 5 points of the 96% area.
+        # A 3D scene draws its ticks inside the canvas, so r/b margins buy nothing; t leaves
+        # room for the figure title. l holds the z-axis title annotation clear of the ticks.
         margin=dict(l=30, r=0, b=0, t=40),
         scene=dict(
             zaxis=dict(
-                # Exactly the plotted window: conds IS the temperature grid in Celsius, so the
-                # axis runs from absolute zero to the top of the grid and nothing drawn can
-                # fall outside it. ``temp_slider`` is NOT re-applied here -- it is already
-                # folded into the grid, hence into conds, by _init_sys; the retired
-                # ``- 200 - temp_slider[0]`` / ``- 200 + temp_slider[1]`` counted it twice.
+                # Exactly the plotted window: conds IS the temperature grid in Celsius, so
+                # the axis runs from absolute zero to the top of the grid and nothing drawn
+                # can fall outside it. ``temp_slider`` is already folded into the grid by
+                # _init_sys and must not be re-applied here.
                 range=[conds[0], conds[1]],
                 # Blank, and drawn as a paper annotation below instead. plotly renders a
                 # gl3d axis title inside the WebGL layer and its schema exposes only

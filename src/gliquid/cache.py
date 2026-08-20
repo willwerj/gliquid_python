@@ -1,12 +1,8 @@
 """The cache seam: which STORE a cached record lives in, and how to read or write it.
 
-Every cache read and write in gliquid used to funnel through
-``api._resolve_sys_dir(sys_name) -> str``, which answers *"which directory"*. That question
-has no answer in a single-file store, so the seam sits one level down — at RECORDS.
-
 A record is named by a :class:`CacheKey`; a store implements :class:`CacheBackend`.
-:class:`DirectoryBackend` is the store this package has always had (a directory tree of
-per-system JSON files) and reproduces its filenames exactly.
+:class:`DirectoryBackend` is a directory tree of per-system JSON files;
+:class:`SqliteBackend` is a single-file store.
 
 ``read_json``/``write_json`` exchange **Python objects, not bytes**. A bytes-level API would
 force a backend that holds a semantic REDUCTION of a record (the lean MPDS mode) to
@@ -25,14 +21,12 @@ A SQLite store may additionally carry a **pooled entry store** (``entry_pool``):
 entries deduplicated by ``entry_id`` across systems, read back as
 ``chemsys IN (<the subsets>)``. It is a fallback source for ``dft_entries`` reads, exists
 for the TERNARY scope only, and is licensed by a drift measurement rather than by the
-obvious size win -- see the comment above ``_ENTRY_POOL_SQL``. Build one with
-``dev/scripts/build_ternary_entry_pool.py``.
+obvious size win -- see the comment above ``_ENTRY_POOL_SQL``.
 
 It may also carry the **ML feature corpus** (``ml_features`` / ``ml_feature_columns``): one
 row of model input features per system, per feature frame. The model itself ships inside the
 wheel at ``gliquid/models/<bundle_id>/``; these tables are the other half of that split, and
-are read only by ``gliquid.production_model_runner``. Build them with
-``dev/scripts/export_portable_model_bundle.py --features-out``.
+are read only by ``gliquid.production_model_runner``.
 
 Run ``python -m gliquid.cache --help`` for the migrate / verify / info CLI.
 
@@ -76,10 +70,8 @@ KIND_MPDS = "mpds"
 _KINDS = (KIND_DFT_ENTRIES, KIND_MPDS)
 
 
-#: Re-exported from :mod:`gliquid.config`, where it subclasses ``ConfigError`` — pointing
-#: gliquid at a store that cannot answer the question IS a configuration fault. It is the
-#: same class object, so ``from gliquid.cache import CacheModeError`` and every existing
-#: ``except`` clause keep working unchanged.
+#: Re-exported from :mod:`gliquid.config`. The same class object, so existing
+#: ``except CacheModeError`` clauses keep working.
 CacheModeError = config.CacheModeError
 
 
@@ -138,9 +130,8 @@ def atomic_write_json(path: str | os.PathLike, payload: Any) -> None:
 
     A plain ``json.dump`` to the cache path writes incrementally, so an interrupted or
     failing write leaves a TRUNCATED file that later reads accept as a valid cache. Worse,
-    concurrent cold fetches of the same system interleave into one file --
-    ``dev/scripts/Fit_Binary_Systems.py`` fans campaigns out over a ``ProcessPoolExecutor``,
-    and a campaign over uncached systems is exactly a burst of concurrent cold fetches.
+    concurrent cold fetches of the same system interleave into one file, which a campaign
+    fanned out over a process pool produces in bursts.
 
     The temp file is created in the DESTINATION directory so it shares a filesystem with
     the target; ``os.replace`` is only atomic within one filesystem, and is atomic on both
@@ -213,10 +204,8 @@ def parse_record_filename(name: str, sys_name: str | None = None) -> CacheKey | 
     return None
 
 
-# Every IUPAC element symbol. Used only to decide whether a NAME looks like a system, so a
-# stray file is not migrated as a cache record of a system that does not exist. Hard-coded
-# rather than taken from pymatgen to keep this module's imports stdlib-only (see the module
-# docstring): ``gliquid.api`` imports it, and a pymatgen import here would invert that.
+# Every IUPAC element symbol, used to decide whether a name looks like a system.
+# Hard-coded to keep this module stdlib-only: ``gliquid.api`` imports it.
 _ELEMENT_SYMBOLS = frozenset(
     """H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga
     Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm
@@ -298,10 +287,8 @@ class DirectoryBackend:
     def sys_location(self, sys_name: str) -> Path:
         """The directory holding ``sys_name``'s records.
 
-        Creates it in nested mode, on the READ path as well as the write path. That side
-        effect predates this class (``api._resolve_sys_dir`` did it) and
-        ``dev/scripts/Fit_Binary_Systems.py`` depends on it for cold fetches into the
-        workspace ``matrix_data`` store, so it is preserved deliberately.
+        Creates it in nested mode, on the READ path as well as the write path. Campaign
+        drivers depend on that for cold fetches, so it is preserved deliberately.
         """
         root = self._root_path(f"Reading the cache for '{sys_name}'")
         structure = self._structure()
@@ -374,8 +361,7 @@ def scan_directory_store(root: str | os.PathLike, dir_structure: str = "flat") -
     Args:
         root: The corpus directory.
         dir_structure: ``"flat"`` (records directly under ``root``) or ``"nested"``
-            (under ``root/<sys_name>/``, which is how the workspace ``matrix_data`` store
-            is arranged).
+            (under ``root/<sys_name>/``).
     """
     root = Path(root)
     if dir_structure not in ("flat", "nested"):
@@ -422,10 +408,9 @@ DFT_CODEC = "json+zlib6"
 
 _ZLIB_LEVEL = 6
 
-#: The MPDS fields lifted out of the payload into an addressable column. Full-mode reads do
-#: not touch it -- it exists so ``info`` and the LEAN mode below have something to read
-#: without inflating every blob. ``entry``/``jcode``/``year`` sit at the top level in some
-#: records and under ``reference`` in others, so both places are looked at.
+#: MPDS fields lifted out of the payload into addressable columns, for ``info`` and
+#: LEAN reads. ``entry``/``jcode``/``year`` are looked for at the top level and under
+#: ``reference``.
 _MPDS_HEADER_FIELDS = (
     "chemical_elements",
     "temp",
@@ -440,10 +425,9 @@ _MPDS_HEADER_FIELDS = (
 #: The whole MPDS json, compressed. Everything gliquid can do, at ~93-97% ``shapes``.
 MPDS_MODE_FULL = "full"
 
-#: Header + the PRE-fill stitched liquidus and its covered regions; no ``shapes``. Enough
-#: for ``extract_digitized_liquidus``, ``liquidus_coverage`` and a liquidus plot; every
-#: other MPDS consumer RAISES rather than answering from the missing block. The reduction
-#: itself, and the reasoning behind storing the pre-fill curve, live in ``gliquid.mpds``.
+#: Header plus the pre-fill stitched liquidus and its covered regions; no ``shapes``.
+#: Serves ``extract_digitized_liquidus``, ``liquidus_coverage`` and a liquidus plot;
+#: every other MPDS consumer raises.
 MPDS_MODE_LEAN = "lean"
 
 MPDS_MODES = (MPDS_MODE_FULL, MPDS_MODE_LEAN)
@@ -453,15 +437,7 @@ MPDS_MODES = (MPDS_MODE_FULL, MPDS_MODE_LEAN)
 LEAN_BLOCK_KEY = "_gliquid"
 LEAN_SCHEMA = 1
 
-# WITHOUT ROWID on both record tables, and NO secondary indices, ON PURPOSE.
-#
-# Every access this package makes is an exact point read on the composite primary key
-# (`exists`, `read_json`) and the one range query -- `SELECT variant FROM mpds_diagrams
-# WHERE sys_name = ?`, which backs `variants()` -- is a PK-PREFIX scan. WITHOUT ROWID makes
-# the primary key BE the storage, so those reads hit the row directly instead of going
-# through a rowid indirection. A secondary index would duplicate the key columns for a
-# lookup nothing performs: it costs space in a file whose entire reason to exist is being
-# shippable, and buys nothing. Do not "optimize" one in without a query that needs it.
+# WITHOUT ROWID + no secondary indices: all access is exact-PK or a PK-prefix scan.
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
@@ -493,51 +469,15 @@ CREATE TABLE IF NOT EXISTS mpds_diagrams (
 ) WITHOUT ROWID;
 """
 
-# The POOLED entry store -- ternaries only, and only because a measurement says so.
+# The pooled entry store, for ternaries. Reading a system is
+# ``chemsys IN (<its non-empty subsets>)`` -- 7 for a ternary, 3 for a binary -- over
+# ``idx_pool_chemsys``. Payloads are zlib-compressed per entry so a single entry is
+# addressable without inflating the rest.
 #
-# ``dft_entries`` above keeps one blob per system, duplicating every unary and binary entry
-# into every chemsys that contains it. For the BINARY corpus that duplication is load
-# bearing: measured over 300 real caches, 3.12x of the bytes are redundant but 3.58% of
-# repeated `entry_id`s carry DIFFERING payloads, fetched over time against different
-# Materials Project database versions. Pooling them would silently pick one of several
-# disagreeing copies. For the 109 existing TERNARY caches the same census reads 0.00% drift
-# over 6,241 repeats (they were fetched in one campaign) at a 3.36x dedup and 24x on disk.
-# That contrast, and nothing else, is the licence to pool -- so this schema is additive and
-# the binary path above is untouched.
-#
-# Reading a system is `chemsys IN (<its non-empty subsets>)`: 7 for a ternary, 3 for a
-# binary, mirroring exactly what ``MPRester.get_entries_in_chemsys`` enumerates. One
-# indexed IN, no join. ``idx_pool_chemsys`` is the index that makes it a lookup rather than
-# a scan -- unlike the two tables above, whose access is entirely by primary key.
-#
-# ``entry_pool_systems`` is NOT redundant bookkeeping and must not be "optimized" away. An
-# IN query over subsets cannot distinguish a system that was fetched and genuinely has no
-# ternary compounds from one that was NEVER fetched and whose binary edges merely happen to
-# be present from its neighbours. Both return a plausible, non-empty entry list. Without
-# this table the second case yields a hull that is quietly missing every ternary phase --
-# the exact silent-wrong-answer shape this batch exists to eliminate. Coverage is therefore
-# a recorded fact, and ``sha256`` lets a reconstruction be proved without the source file.
-#
-# Payloads are compressed PER ENTRY, which costs real bytes and is not negotiable. Over the
-# 109-system build the pooled entries are 10,136,308 B of json; ONE zlib stream over all of
-# them is 1,672,871 B, while 2,643 independent streams are 2,995,023 B -- zlib cannot share
-# a dictionary across rows and these entries are highly self-similar. That 1.8x is what it
-# costs to make an entry ADDRESSABLE. A single stream is a file the app downloads and
-# inflates whole to answer any question; this is a store it queries.
-#
-# ``entry_pool`` is the ONE table here that is NOT ``WITHOUT ROWID``, against the two above
-# and against ``entry_pool_systems`` below, and the exception is measured. A WITHOUT ROWID
-# table IS an index B-tree, whose inline payload limit is about ``(page_size - 12) * 64/255``
-# -- roughly 1,000 B at the default 4,096 B page. Pooled entry payloads average ~1,133 B
-# compressed, i.e. they sit just the wrong side of that line, so nearly every row spills a
-# handful of bytes onto a private 4,096 B overflow page. Measured over the 109-system build
-# (2,643 rows, identical contents, both VACUUMed):
-#
-#     WITHOUT ROWID : 7,163,904 B      plain rowid table : 3,825,664 B
-#
-# A 1.9x penalty on a file whose entire reason to exist is being shippable, in exchange for
-# saving one rowid indirection on a query that returns ~80 rows. ``entry_pool_systems``
-# keeps WITHOUT ROWID: its rows are tens of bytes and never spill.
+# Binaries are NOT pooled: repeated entry_ids there can carry differing payloads.
+# ``entry_pool_systems`` records coverage -- an entry query cannot distinguish a system
+# with no ternary compounds from one never fetched.
+# ``entry_pool`` is deliberately not WITHOUT ROWID: its payloads spill to overflow pages.
 _ENTRY_POOL_SQL = """
 CREATE TABLE IF NOT EXISTS entry_pool (
   entry_id   TEXT PRIMARY KEY,
@@ -566,39 +506,14 @@ CREATE TABLE IF NOT EXISTS entry_pool_systems (
 ) WITHOUT ROWID;
 """
 
-# The ML FEATURE CORPUS -- the per-system lookup tables the production model predicts FROM.
+# The ML feature corpus: the per-system model input tables, one row per system per
+# frame. The model itself ships in the wheel at ``gliquid/models/<bundle_id>/``.
+# ``frame`` is ``'symmetric'`` or ``'antisymmetric'``, named as in ``feature_names.json``
+# and ``_prepare_row(mode=...)``.
 #
-# These are NOT weights. The model itself (boosters, scalers, feature names) ships inside the
-# wheel at ``gliquid/models/<bundle_id>/``, because it is small, fixed and useless to split
-# from the code that calls it. The feature tables are the other half: 2,415 symmetric rows x
-# 51 columns and 4,830 antisymmetric rows x 37, i.e. one row per system in the corpus. They
-# grow with the corpus, not with the model, so they belong where the corpus lives.
-#
-# ``frame`` is ``'symmetric'`` or ``'antisymmetric'`` -- the two feature spaces the model
-# was trained in, named exactly as ``feature_names.json`` and ``_prepare_row(mode=...)``
-# name them.
-#
-# ``system`` is the ORDERED system name and the ordering is load-bearing: ``Ag-Au`` and
-# ``Au-Ag`` are two DIFFERENT antisymmetric rows, and the antisymmetry constraint
-# ``L1_a = 0.5 * (pred(A-B) - pred(B-A))`` reads both. Canonicalizing the name here would
-# collapse the mirror pair onto one row and silently turn that difference into zero.
-#
-# ``features`` is RAW little-endian float64, not json: a json round-trip of a float is only
-# exact via ``repr``, and the acceptance criterion for this whole conversion is
-# ``np.array_equal`` against the xlsx the rows came from -- not ``allclose``. Raw doubles
-# also carry NaN, which json can only spell with a non-standard literal. The column order is
-# ``ml_feature_columns.columns``; a row is meaningless without it, which is why that table
-# is written in the same transaction and checked against the bundle's feature names on read.
-#
-# WITHOUT ROWID on both, and this time it is the MEASURED choice rather than the default.
-# Spec 06 found a blanket WITHOUT ROWID actively harmful for ``entry_pool``, whose ~1,133 B
-# payloads sit just past an index B-tree's ~1,000 B inline limit and spill onto private
-# overflow pages. These payloads are 51 and 37 doubles -- 408 B and 296 B, mean 333 B -- and
-# comfortably inline. Measured over the real 7,245-row corpus, both VACUUMed:
-#
-#     WITHOUT ROWID : 2,760,704 B      plain rowid table : 2,953,216 B
-#
-# so the rule that failed for the pool holds here, and the 7% is kept.
+# ``system`` is ORDERED: Ag-Au and Au-Ag are distinct rows. Do not canonicalise.
+# ``features`` is raw little-endian float64 in ``ml_feature_columns.columns`` order;
+# a row is meaningless without that table, written in the same transaction.
 _ML_FEATURES_SQL = """
 CREATE TABLE IF NOT EXISTS ml_feature_columns (
   frame     TEXT NOT NULL PRIMARY KEY,   -- 'symmetric' | 'antisymmetric'
@@ -622,10 +537,8 @@ ML_FEATURE_CODEC = "float64-le"
 ML_FRAMES = ("symmetric", "antisymmetric")
 
 
-#: ``entry_pool_meta`` keys with a defined meaning. Provenance is recorded rather than
-#: assumed: the 0.00% drift above is a fact about ONE campaign against ONE MP database
-#: version, and a pool refreshed later must make that visible instead of inheriting the
-#: earlier measurement's licence silently.
+#: ``entry_pool_meta`` keys with a defined meaning. A pool refreshed against a different
+#: MP database version must record that here.
 POOL_META_KEYS = (
     "element_scope",  # json list of element symbols the pool was built to cover
     "mp_database_version",
@@ -755,11 +668,10 @@ class SqliteBackend:
     """The whole corpus in one SQLite file — the DISTRIBUTION format.
 
     **Read-mostly by design, not by accident.** ``write_json`` raises unless the store was
-    opened ``writable=True``. SQLite admits exactly one writer, and
-    ``dev/scripts/Fit_Binary_Systems.py`` fans campaigns out over a ``ProcessPoolExecutor``;
-    a campaign over uncached systems is a burst of concurrent cold-fetch writes, which is
-    precisely why :func:`atomic_write_json` exists on the directory side. Pointed at one
-    file those writers would serialize behind ``database is locked``. So: the directory tree
+    opened ``writable=True``. SQLite admits exactly one writer, and a campaign fanned out
+    over a process pool is a burst of concurrent cold-fetch writes -- which is why
+    :func:`atomic_write_json` exists on the directory side. Pointed at one file those
+    writers would serialize behind ``database is locked``. So: the directory tree
     stays the WORKING format, and this is the format you hand to someone else. Populate it
     with ``python -m gliquid.cache migrate``.
 
@@ -794,10 +706,8 @@ class SqliteBackend:
         # nor safe to share across a fork, and gliquid's drivers do both fork and thread.
         self._connections: dict[tuple[int, int], sqlite3.Connection] = {}
         self._lock = threading.Lock()
-        # Whether this store carries the pooled-entry tables. Memoized rather than queried
-        # per read: the miss path of `exists`/`read_json` consults it for every uncached
-        # system in a campaign. Invalidated by `ensure_entry_pool`, the only thing that can
-        # change the answer within a process.
+# Whether this store carries the pooled-entry tables. Memoized; invalidated by
+# `ensure_entry_pool`.
         self._pool_present: bool | None = None
         # Same memoization, same invalidation rule, for the ML feature tables.
         self._ml_features_present: bool | None = None
@@ -961,10 +871,8 @@ class SqliteBackend:
             raise ValueError(f"Unknown cache kind {key.kind!r}. Must be one of {list(_KINDS)}.")
         if self._conn().execute(sql, (key.sys_name, key.variant)).fetchone() is not None:
             return True
-        # A record the pool covers IS present, and must say so here: `get_dft_convexhull`
-        # decides whether to fetch on this answer alone, and a pool that reads back
-        # correctly but reports "absent" would send a no-API-key deployment to the network
-        # for every system it was built to serve.
+# A record the pool covers must report present here: `get_dft_convexhull` decides
+# whether to fetch on this answer alone.
         return key.kind == KIND_DFT_ENTRIES and self.pool_covers(key.sys_name, key.variant)
 
     def read_json(self, key: CacheKey) -> Any:
@@ -1156,11 +1064,7 @@ class SqliteBackend:
 
     # -- the pooled entry store ------------------------------------------------------
     #
-    # A SECOND way to answer a `dft_entries` read, and only ever a fallback: a per-system
-    # blob, when one exists, always wins. That ordering is deliberate. The blob is what the
-    # fetch actually returned for that system; the pool is a reassembly, licensed by a drift
-    # measurement that holds for the ternary campaign and NOT for the binary corpus. Where
-    # both are present, serve the one that was never reassembled.
+    # A fallback for `dft_entries`: a per-system blob, when one exists, always wins.
 
     def ensure_entry_pool(self) -> None:
         """Create the pooled-entry tables if this store does not have them yet.
@@ -1366,9 +1270,7 @@ class SqliteBackend:
 
     # -- the ML feature corpus --------------------------------------------------------
     #
-    # Independent of everything above: these tables answer "what are this system's model
-    # input features", not "what is cached about this system". They are read by
-    # ``gliquid.production_model_runner.get_rows_for_system`` and by nothing else.
+    # Model input features, read by ``gliquid.production_model_runner.get_rows_for_system``.
 
     def ensure_ml_features(self) -> None:
         """Create the ML feature tables if this store does not have them yet.
@@ -1548,10 +1450,8 @@ def mpds_header(mpds_json: Any) -> dict:
     return header
 
 
-#: The store ``resolve_backend(None)`` hands out. Deliberately a single long-lived object
-#: that reads ``config`` at call time rather than a snapshot: ``config.cache_dir`` and
-#: ``config.dir_structure`` are changed mid-session by tests and by campaign drivers, and a
-#: snapshot would silently keep serving the old location.
+#: The store ``resolve_backend(None)`` hands out. Reads ``config`` at call time rather
+#: than snapshotting it, so a mid-session ``set_cache_dir`` is observed.
 _GLOBAL_DIRECTORY_BACKEND = DirectoryBackend()
 
 _BACKEND_METHODS = ("exists", "read_json", "write_json", "variants", "locate")
@@ -1569,10 +1469,8 @@ def store_label(backend: CacheBackend, sys_name: str) -> str:
     return str(backend.locate(CacheKey(sys_name, KIND_MPDS, "")))
 
 
-#: Read-only ``SqliteBackend``s by store path. A store is opened once per process rather
-#: than once per api call: ``resolve_backend`` runs at the top of every cached read, and
-#: reopening a file per read would pay the open on every system in a campaign. Keyed by
-#: path so a mid-session ``set_cache_dir`` to a DIFFERENT store is still observed.
+#: Read-only ``SqliteBackend``s by store path, opened once per process. Keyed by path so
+#: a mid-session ``set_cache_dir`` to a different store is observed.
 _SQLITE_BACKENDS: dict[str, SqliteBackend] = {}
 
 
@@ -1638,10 +1536,8 @@ def resolve_backend(override: CacheBackend | str | os.PathLike | None = None) ->
 # ---------------------------------------------------------------------------------------
 # CLI -- ``python -m gliquid.cache {migrate,verify,info}``
 #
-# Everything below writes to stdout. That is the ONE print() exemption this module holds
-# (registered in tests/test_logging_boundary.py::EXEMPT): a command-line tool's stdout IS
-# its product, exactly as with ``mpds.print_phase_mismatch_chart``. Library code above this
-# line reports through ``logger``.
+# Everything below writes to stdout; library code above this line reports through
+# ``logger`` (exemption registered in tests/test_logging_boundary.py::EXEMPT).
 # ---------------------------------------------------------------------------------------
 
 
@@ -1762,10 +1658,7 @@ def migrate(
     failures: list[tuple[Path, str]] = []
     written = {KIND_DFT_ENTRIES: 0, KIND_MPDS: 0}
     source_bytes = 0
-    # Imported lazily and only when it is needed: gliquid.mpds imports THIS module, so a
-    # module-level import would be circular. The reduction lives there because it is MPDS
-    # semantics (which fields a fit reads, and that the curve must be the pre-fill one),
-    # not storage plumbing.
+    # Lazy: gliquid.mpds imports this module, so a module-level import would be circular.
     reduce = None
     if mpds_mode == MPDS_MODE_LEAN:
         from gliquid.mpds import lean_record as reduce

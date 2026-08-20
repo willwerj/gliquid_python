@@ -25,8 +25,7 @@ versions that wrote it — the reason the ``models`` extra pins ``scikit-learn==
 ``xgboost==3.1.3``, and the reason loading one under a newer scikit-learn emits
 ``InconsistentVersionWarning``. The portable bundle is XGBoost's own forward-compatible
 UBJSON plus JSON for the scaler coefficients, so it carries no version coupling at all.
-Bundles are converted by ``dev/scripts/export_portable_model_bundle.py``, which pins the
-conversion with a golden vector rather than with a claim.
+A conversion is pinned by a golden vector rather than by a claim.
 
 **That fragility is measured, not asserted.** Running the tox matrix over this module caught
 scikit-learn changing its own arithmetic: ``StandardScaler.inverse_transform`` rounds the
@@ -40,18 +39,14 @@ portable path, including under 1.9.0. The op order is recorded per target in
 what it predicted at export whichever scikit-learn is installed later — or none at all.
 
 **Legacy bundles still load.** A directory holding ``model/L0_a_model.joblib`` takes the old
-path unchanged — joblib pipelines, and the feature corpus read from the bundle's own xlsx —
-so the notebooks and ``dev/scripts/Interactive_Matrix_Plotter.py`` keep running against
-``dev/model_bundles/`` and ``cache/20260329_022905/`` with no edits.
+path unchanged -- joblib pipelines, and the feature corpus read from the bundle's own xlsx.
 
 **The ML stack is an OPTIONAL EXTRA, and this module is where that line is drawn.** Nothing
 else in gliquid imports XGBoost, SHAP, joblib or scikit-learn: the hull walk, the phase
 diagrams and the ternary interpolation reach none of them. Carrying them as base
-dependencies cost every consumer ~935 MB of site-packages for code it never called —
-measured on the ``whsun-viz`` image, whose ternary app uses only the hull path and never
-constructs a runner: ``nvidia`` (NCCL, pulled by ``xgboost`` on Linux) 454 MB, ``xgboost``
-228 MB, ``llvmlite`` 173 MB, ``scikit-learn`` 50 MB, ``numba`` 35 MB. So they moved behind
-extras, and the imports below are deferred to the exact call that needs one:
+dependencies costs a consumer that only walks hulls several hundred MB of site-packages for
+code it never calls, so they sit behind extras and the imports below are deferred to the
+exact call that needs one:
 
 ===================  ================  =====================================================
 what you are doing   extra             what it actually needs
@@ -169,16 +164,10 @@ def _joblib():
         raise ImportError(_MODELS_EXTRA_HINT) from exc
     return joblib
 
-#: The ONE bundle that ships in the wheel. Policy is replace, never accumulate: binary
-#: artifacts in git are forever, and two bundles in ``gliquid/models/`` would double the
-#: wheel to hold a copy nothing selects. Joblib originals stay outside the package.
-#:
-#: 0.2.0 repoints this from the v22.02-era 20260329_022905 to 20260817_112204 — trained on
-#: the NOSS1 (no-solid-solution) corpus with the ``mean_skill_huber`` objective. Chosen on
-#: measured liquidus error, not CV R²: paired over the 744 systems shared with v22.02 and
-#: rescored under current code, huber came in at ΔMAPE −0.16 against +1.11 for the v22.02
-#: recipe's ``mean_r2`` and +1.16 for ``tail_p90_error``. Same three targets (L1_b is pinned
-#: to zero by the comb-exp fit format, so it is not a model).
+#: The ONE bundle that ships in the wheel. Policy is replace, never accumulate: two
+#: bundles in ``gliquid/models/`` would double the wheel to hold a copy nothing selects.
+#: Joblib originals stay outside the package. Three targets -- L1_b is pinned to zero by
+#: the comb-exp fit format, so it is not a model.
 DEFAULT_BUNDLE_ID = "20260817_112204"
 
 #: Bumped when the portable bundle layout changes incompatibly. A bundle whose
@@ -255,11 +244,10 @@ class _AffineScaler:
         return out
 
 
-#: The two op orders ``StandardScaler.inverse_transform`` has actually shipped with. Both
-#: are "multiply then add, in place, at the input's width"; they differ ONLY in whether the
-#: coefficient is rounded to float32 before the arithmetic or after it. See
-#: :class:`_StandardInverse`. A bundle records which one reproduces the sklearn that
-#: exported it, so a bundle exported on either era stays exactly reproducible on the other.
+#: The two op orders ``StandardScaler.inverse_transform`` has shipped with. Both are
+#: "multiply then add, in place, at the input's width"; they differ only in whether the
+#: coefficient is rounded to float32 before the arithmetic or after. A bundle records
+#: which one reproduces the sklearn that exported it.
 STANDARD_INVERSE_CONVENTIONS = ("float64-coeff", "float32-coeff")
 
 #: What a bundle that predates the recorded field used — sklearn <= 1.7.x.
@@ -450,10 +438,9 @@ class ProductionModelRunner:
 
     def _load_model_artifacts(self) -> None:
         """Load the WEIGHTS only. The feature corpus is loaded lazily, on first use."""
-        # Resolved here, before either branch, because BOTH need it and only one names it
-        # directly: a legacy bundle reaches xgboost through joblib's unpickling, so without
-        # this the `models` path would report a bare ModuleNotFoundError raised inside
-        # joblib.load rather than a message naming the extra to install.
+        # Resolved before either branch: a legacy bundle reaches xgboost through joblib's
+        # unpickling, so without this the `models` path reports a bare ModuleNotFoundError
+        # from inside joblib.load rather than naming the extra to install.
         _xgboost()
         if self.bundle_format == "portable":
             self._load_portable_artifacts()
@@ -1230,19 +1217,17 @@ class ProductionModelRunner:
 
 
 # ---------------------------------------------------------------------------------------
-# Golden vector -- the conversion's proof, and the only thing that makes "portable" checkable
+# Golden vector -- what makes "portable" checkable
 # ---------------------------------------------------------------------------------------
 #
-# A converted bundle that merely LOADS proves nothing: every failure mode here (a transposed
-# scaler, a dropped booster iteration, the float64 inverse-transform route) produces numbers
-# that look entirely reasonable. So the exporter draws N deterministic rows, pushes them
-# through the ORIGINAL joblib pipeline, and records the sha256 of the float64 output in the
-# manifest. Re-running the same draw through the PORTABLE path must reproduce it bit for bit,
-# on any Python and any library version -- which is also what makes the tox matrix's
-# agreement on one hash a real cross-version claim rather than eight independent runs.
+# A converted bundle that merely LOADS proves nothing: a transposed scaler, a dropped
+# booster iteration or the float64 inverse-transform route all produce reasonable-looking
+# numbers. The exporter draws N deterministic rows, pushes them through the original
+# joblib pipeline, and records the sha256 of the float64 output in the manifest; the
+# portable path must reproduce it bit for bit.
 #
-# The draw lives here rather than in the exporter so that the package can re-check its own
-# shipped bundle with no dev checkout present.
+# The draw lives here so the package can re-check its own shipped bundle with no dev
+# checkout present.
 
 
 def golden_rows(frame_index: int, n_rows: int, scaler_center, scaler_scale, seed: int = 0):
