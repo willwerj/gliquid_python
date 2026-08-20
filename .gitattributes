@@ -1,0 +1,4 @@
+# Model bundles carry a recorded sha256 per file in manifest.json, so git must hand
+# them back byte-for-byte on every platform. Without this, end-of-line normalization
+# rewrites the JSON and txt members on checkout and the manifest no longer verifies.
+src/gliquid/models/** -text

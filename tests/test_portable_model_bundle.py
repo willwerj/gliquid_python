@@ -150,9 +150,17 @@ class TestShippedBundle:
             "L1_a": "antisymmetric",
         }
         assert runner.feature_source is None
+        # A deliberate pin on the SHIPPED artifact -- a canary that the wheel carries the
+        # bundle we think it does, so it is expected to move when DEFAULT_BUNDLE_ID does.
+        # 51/37 was the v22.02-era 20260329_022905 bundle; 49/36 is 20260817_112204.
+        # The three absent features (max_s_unfilled, min_f_unfilled, diff_s_unfilled) were
+        # dropped from the dataset generator INTENTIONALLY between v22.02 and the v23
+        # series -- v23.92, built months earlier, already carries the same five 'unfilled'
+        # columns. Not a side effect of scoping v24.01 to 60 elements; min_f_unfilled was
+        # a constant column (nunique=1) in v22.02 regardless.
         assert {f: len(n) for f, n in runner.feature_names.items()} == {
-            "symmetric": 51,
-            "antisymmetric": 37,
+            "symmetric": 49,
+            "antisymmetric": 36,
         }
 
 
