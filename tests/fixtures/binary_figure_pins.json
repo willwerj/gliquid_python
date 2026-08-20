@@ -1,1 +1,658 @@
-{"CuMg": {"fit_liq": {"n_traces": 11, "traces": [["scatter", "lines", null, "#B82E2E", "dash", 103], ["scatter", "lines", "fcc-Cu", "#9400D3", "solid", 15], ["scatter", "lines", "MgCu2", "#66A61E", "solid", 52], ["scatter", "lines", "Mg2Cu", "#483D8B", "solid", 32], ["scatter", "lines", "hcp-Mg", "#DA70D6", "solid", 9], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "cornflowerblue", "solid", 101], ["scatter", "lines", "Assessed Liquidus", "#B82E2E", "dash", 1], ["scatter", "lines", "Fitted Liquidus", null, null, 1]], "annotations": ["(Cu) fcc", "(Mg) hcp", "Cu", "L", "Mg", "Mg<sub>2</sub>Cu", "MgCu<sub>2</sub>"], "yaxis_range": [400.0, 1100.0]}, "pred": {"n_traces": 9, "traces": [["scatter", "lines", "fcc-Cu", "#9400D3", "solid", 15], ["scatter", "lines", "MgCu2", "#66A61E", "solid", 52], ["scatter", "lines", "Mg2Cu", "#483D8B", "solid", 32], ["scatter", "lines", "hcp-Mg", "#DA70D6", "solid", 9], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "#117733", "solid", 101], ["scatter", "lines", "Predicted Liquidus", null, null, 1]], "annotations": ["(Cu) fcc", "(Mg) hcp", "Cu", "L", "Mg", "Mg<sub>2</sub>Cu", "MgCu<sub>2</sub>"], "yaxis_range": [400.0, 1100.0]}, "ch_g": {"n_traces": 6, "trace_name_types": [["Liquid T=1361K", "scatter"], ["Liquid T=0K", "scatter"], [null, "scatter"], ["Labels (stable)", "scatter"], ["Stable", "scatter"], ["Above Hull", "scatter"]], "width": 750, "height": 600}, "color_map": {"L": "cornflowerblue", "fcc-Cu": "#9400D3", "MgCu2": "#66A61E", "Mg2Cu": "#483D8B", "hcp-Mg": "#DA70D6"}, "tx_override": {"map": {"L": "black", "fcc-Cu": "red"}, "figure": {"n_traces": 9, "traces": [["scatter", "lines", "fcc-Cu", "red", "solid", 15], ["scatter", "lines", "MgCu2", "#66A61E", "solid", 52], ["scatter", "lines", "Mg2Cu", "#483D8B", "solid", 32], ["scatter", "lines", "hcp-Mg", "#DA70D6", "solid", 9], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "black", "solid", 101], ["scatter", "lines", "Fitted Liquidus", null, null, 1]], "annotations": ["(Cu) fcc", "(Mg) hcp", "Cu", "L", "Mg", "Mg<sub>2</sub>Cu", "MgCu<sub>2</sub>"], "yaxis_range": [400.0, 1100.0]}}}, "HfZr": {"fit_liq": {"n_traces": 11, "traces": [["scatter", "lines", null, "#B82E2E", "dash", 18], ["scatter", "lines", "beta-Hf (bcc)", "#9400D3", "solid", 29], ["scatter", "lines", "alpha-Hf (hcp)", "#66A61E", "solid", 39], ["scatter", "lines", "alpha-Zr (hcp)", "#483D8B", "solid", 2], ["scatter", "lines", "beta-Zr (bcc)", "#DA70D6", "solid", 41], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "cornflowerblue", "solid", 101], ["scatter", "lines", "Assessed Liquidus", "#B82E2E", "dash", 1], ["scatter", "lines", "Fitted Liquidus", null, null, 1]], "annotations": ["(\u03b1Hf) hcp", "(\u03b1Zr) hcp", "(\u03b2Hf) bcc", "(\u03b2Zr) bcc", "Hf", "L", "Zr"], "yaxis_range": [573.2218188814717, 2400.0]}, "pred": {"n_traces": 9, "traces": [["scatter", "lines", "beta-Hf (bcc)", "#9400D3", "solid", 29], ["scatter", "lines", "alpha-Hf (hcp)", "#66A61E", "solid", 39], ["scatter", "lines", "alpha-Zr (hcp)", "#483D8B", "solid", 2], ["scatter", "lines", "beta-Zr (bcc)", "#DA70D6", "solid", 41], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "#117733", "solid", 101], ["scatter", "lines", "Predicted Liquidus", null, null, 1]], "annotations": ["(\u03b1Hf) hcp", "(\u03b1Zr) hcp", "(\u03b2Hf) bcc", "(\u03b2Zr) bcc", "Hf", "L", "Zr"], "yaxis_range": [573.2218188814717, 2400.0]}, "ch_g": {"n_traces": 6, "trace_name_types": [["Ideal Liquid T=2505K", "scatter"], ["Ideal Liquid T=0K", "scatter"], [null, "scatter"], ["Labels (stable)", "scatter"], ["Stable", "scatter"], ["Above Hull", "scatter"]], "width": 750, "height": 600}, "color_map": {"L": "cornflowerblue", "beta-Hf (bcc)": "#9400D3", "alpha-Hf (hcp)": "#66A61E", "alpha-Zr (hcp)": "#483D8B", "beta-Zr (bcc)": "#DA70D6"}, "tx_override": {"map": {"L": "black", "beta-Hf (bcc)": "red"}, "figure": {"n_traces": 8, "traces": [["scatter", "lines", "beta-Hf (bcc)", "red", "solid", 29], ["scatter", "lines", "alpha-Hf (hcp)", "#66A61E", "solid", 39], ["scatter", "lines", "alpha-Zr (hcp)", "#483D8B", "solid", 2], ["scatter", "lines", "beta-Zr (bcc)", "#DA70D6", "solid", 41], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "", "Silver", "solid", 2], ["scatter", "lines", "L", "black", "solid", 101], ["scatter", "lines", "Fitted Liquidus", null, null, 1]], "annotations": ["(\u03b1Hf) hcp", "(\u03b1Zr) hcp", "(\u03b2Hf) bcc", "(\u03b2Zr) bcc", "Hf", "L", "Zr"], "yaxis_range": [702.8346931802652, 2400.0]}}}}
+{
+  "CuMg": {
+    "fit_liq": {
+      "n_traces": 11,
+      "traces": [
+        [
+          "scatter",
+          "lines",
+          null,
+          "#B82E2E",
+          "dash",
+          103
+        ],
+        [
+          "scatter",
+          "lines",
+          "Cu (fcc)",
+          "#9400D3",
+          "solid",
+          15
+        ],
+        [
+          "scatter",
+          "lines",
+          "MgCu2",
+          "#66A61E",
+          "solid",
+          52
+        ],
+        [
+          "scatter",
+          "lines",
+          "Mg2Cu",
+          "#483D8B",
+          "solid",
+          32
+        ],
+        [
+          "scatter",
+          "lines",
+          "Mg (hcp)",
+          "#DA70D6",
+          "solid",
+          9
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "L",
+          "cornflowerblue",
+          "solid",
+          101
+        ],
+        [
+          "scatter",
+          "lines",
+          "Assessed Liquidus",
+          "#B82E2E",
+          "dash",
+          1
+        ],
+        [
+          "scatter",
+          "lines",
+          "Fitted Liquidus",
+          null,
+          null,
+          1
+        ]
+      ],
+      "annotations": [
+        "Cu",
+        "Cu (fcc)",
+        "L",
+        "Mg",
+        "Mg (hcp)",
+        "Mg<sub>2</sub>Cu",
+        "MgCu<sub>2</sub>"
+      ],
+      "yaxis_range": [
+        400.0,
+        1100.0
+      ]
+    },
+    "pred": {
+      "n_traces": 9,
+      "traces": [
+        [
+          "scatter",
+          "lines",
+          "Cu (fcc)",
+          "#9400D3",
+          "solid",
+          15
+        ],
+        [
+          "scatter",
+          "lines",
+          "MgCu2",
+          "#66A61E",
+          "solid",
+          52
+        ],
+        [
+          "scatter",
+          "lines",
+          "Mg2Cu",
+          "#483D8B",
+          "solid",
+          32
+        ],
+        [
+          "scatter",
+          "lines",
+          "Mg (hcp)",
+          "#DA70D6",
+          "solid",
+          9
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "L",
+          "#117733",
+          "solid",
+          101
+        ],
+        [
+          "scatter",
+          "lines",
+          "Predicted Liquidus",
+          null,
+          null,
+          1
+        ]
+      ],
+      "annotations": [
+        "Cu",
+        "Cu (fcc)",
+        "L",
+        "Mg",
+        "Mg (hcp)",
+        "Mg<sub>2</sub>Cu",
+        "MgCu<sub>2</sub>"
+      ],
+      "yaxis_range": [
+        400.0,
+        1100.0
+      ]
+    },
+    "ch_g": {
+      "n_traces": 6,
+      "trace_name_types": [
+        [
+          "Liquid T=1361K",
+          "scatter"
+        ],
+        [
+          "Liquid T=0K",
+          "scatter"
+        ],
+        [
+          null,
+          "scatter"
+        ],
+        [
+          "Labels (stable)",
+          "scatter"
+        ],
+        [
+          "Stable",
+          "scatter"
+        ],
+        [
+          "Above Hull",
+          "scatter"
+        ]
+      ],
+      "width": 750,
+      "height": 600
+    },
+    "color_map": {
+      "L": "cornflowerblue",
+      "Cu (fcc)": "#9400D3",
+      "MgCu2": "#66A61E",
+      "Mg2Cu": "#483D8B",
+      "Mg (hcp)": "#DA70D6"
+    },
+    "tx_override": {
+      "map": {
+        "L": "black",
+        "Cu (fcc)": "red"
+      },
+      "figure": {
+        "n_traces": 9,
+        "traces": [
+          [
+            "scatter",
+            "lines",
+            "Cu (fcc)",
+            "red",
+            "solid",
+            15
+          ],
+          [
+            "scatter",
+            "lines",
+            "MgCu2",
+            "#66A61E",
+            "solid",
+            52
+          ],
+          [
+            "scatter",
+            "lines",
+            "Mg2Cu",
+            "#483D8B",
+            "solid",
+            32
+          ],
+          [
+            "scatter",
+            "lines",
+            "Mg (hcp)",
+            "#DA70D6",
+            "solid",
+            9
+          ],
+          [
+            "scatter",
+            "lines",
+            "",
+            "Silver",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "",
+            "Silver",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "",
+            "Silver",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "L",
+            "black",
+            "solid",
+            101
+          ],
+          [
+            "scatter",
+            "lines",
+            "Fitted Liquidus",
+            null,
+            null,
+            1
+          ]
+        ],
+        "annotations": [
+          "Cu",
+          "Cu (fcc)",
+          "L",
+          "Mg",
+          "Mg (hcp)",
+          "Mg<sub>2</sub>Cu",
+          "MgCu<sub>2</sub>"
+        ],
+        "yaxis_range": [
+          400.0,
+          1100.0
+        ]
+      }
+    }
+  },
+  "HfZr": {
+    "fit_liq": {
+      "n_traces": 11,
+      "traces": [
+        [
+          "scatter",
+          "lines",
+          null,
+          "#B82E2E",
+          "dash",
+          18
+        ],
+        [
+          "scatter",
+          "lines",
+          "beta-Hf (bcc)",
+          "#9400D3",
+          "solid",
+          29
+        ],
+        [
+          "scatter",
+          "lines",
+          "alpha-Hf (hcp)",
+          "#66A61E",
+          "solid",
+          39
+        ],
+        [
+          "scatter",
+          "lines",
+          "alpha-Zr (hcp)",
+          "#483D8B",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "beta-Zr (bcc)",
+          "#DA70D6",
+          "solid",
+          41
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "L",
+          "cornflowerblue",
+          "solid",
+          101
+        ],
+        [
+          "scatter",
+          "lines",
+          "Assessed Liquidus",
+          "#B82E2E",
+          "dash",
+          1
+        ],
+        [
+          "scatter",
+          "lines",
+          "Fitted Liquidus",
+          null,
+          null,
+          1
+        ]
+      ],
+      "annotations": [
+        "Hf",
+        "L",
+        "Zr",
+        "\u03b1-Hf (hcp)",
+        "\u03b1-Zr (hcp)",
+        "\u03b2-Hf (bcc)",
+        "\u03b2-Zr (bcc)"
+      ],
+      "yaxis_range": [
+        539.9468791460322,
+        2400.0
+      ]
+    },
+    "pred": {
+      "n_traces": 9,
+      "traces": [
+        [
+          "scatter",
+          "lines",
+          "beta-Hf (bcc)",
+          "#9400D3",
+          "solid",
+          29
+        ],
+        [
+          "scatter",
+          "lines",
+          "alpha-Hf (hcp)",
+          "#66A61E",
+          "solid",
+          39
+        ],
+        [
+          "scatter",
+          "lines",
+          "alpha-Zr (hcp)",
+          "#483D8B",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "beta-Zr (bcc)",
+          "#DA70D6",
+          "solid",
+          41
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "",
+          "Silver",
+          "solid",
+          2
+        ],
+        [
+          "scatter",
+          "lines",
+          "L",
+          "#117733",
+          "solid",
+          101
+        ],
+        [
+          "scatter",
+          "lines",
+          "Predicted Liquidus",
+          null,
+          null,
+          1
+        ]
+      ],
+      "annotations": [
+        "Hf",
+        "L",
+        "Zr",
+        "\u03b1-Hf (hcp)",
+        "\u03b1-Zr (hcp)",
+        "\u03b2-Hf (bcc)",
+        "\u03b2-Zr (bcc)"
+      ],
+      "yaxis_range": [
+        539.9468791460322,
+        2400.0
+      ]
+    },
+    "ch_g": {
+      "n_traces": 6,
+      "trace_name_types": [
+        [
+          "Ideal Liquid T=2505K",
+          "scatter"
+        ],
+        [
+          "Ideal Liquid T=0K",
+          "scatter"
+        ],
+        [
+          null,
+          "scatter"
+        ],
+        [
+          "Labels (stable)",
+          "scatter"
+        ],
+        [
+          "Stable",
+          "scatter"
+        ],
+        [
+          "Above Hull",
+          "scatter"
+        ]
+      ],
+      "width": 750,
+      "height": 600
+    },
+    "color_map": {
+      "L": "cornflowerblue",
+      "beta-Hf (bcc)": "#9400D3",
+      "alpha-Hf (hcp)": "#66A61E",
+      "alpha-Zr (hcp)": "#483D8B",
+      "beta-Zr (bcc)": "#DA70D6"
+    },
+    "tx_override": {
+      "map": {
+        "L": "black",
+        "beta-Hf (bcc)": "red"
+      },
+      "figure": {
+        "n_traces": 8,
+        "traces": [
+          [
+            "scatter",
+            "lines",
+            "beta-Hf (bcc)",
+            "red",
+            "solid",
+            29
+          ],
+          [
+            "scatter",
+            "lines",
+            "alpha-Hf (hcp)",
+            "#66A61E",
+            "solid",
+            39
+          ],
+          [
+            "scatter",
+            "lines",
+            "alpha-Zr (hcp)",
+            "#483D8B",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "beta-Zr (bcc)",
+            "#DA70D6",
+            "solid",
+            41
+          ],
+          [
+            "scatter",
+            "lines",
+            "",
+            "Silver",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "",
+            "Silver",
+            "solid",
+            2
+          ],
+          [
+            "scatter",
+            "lines",
+            "L",
+            "black",
+            "solid",
+            101
+          ],
+          [
+            "scatter",
+            "lines",
+            "Fitted Liquidus",
+            null,
+            null,
+            1
+          ]
+        ],
+        "annotations": [
+          "Hf",
+          "L",
+          "Zr",
+          "\u03b1-Hf (hcp)",
+          "\u03b1-Zr (hcp)",
+          "\u03b2-Hf (bcc)",
+          "\u03b2-Zr (bcc)"
+        ],
+        "yaxis_range": [
+          702.8346931802652,
+          2400.0
+        ]
+      }
+    }
+  }
+}
