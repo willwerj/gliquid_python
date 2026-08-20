@@ -6,8 +6,10 @@ one name:
 * the **model** — three (or four) gradient-boosted regressors plus the affine scalers around
   them. Small, fixed, and useless apart from the code that calls it. It ships INSIDE the
   wheel at ``gliquid/models/<bundle_id>/``.
-* the **feature corpus** — one row of model inputs per system, 2,415 symmetric x 51 columns
-  and 4,830 antisymmetric x 37. It grows with the corpus, not with the model, and it lives
+* the **feature corpus** — one row of model inputs per system, 1,770 symmetric x 49 columns
+  and 3,540 antisymmetric x 36 for the shipped bundle. It grows with the corpus, not with the
+  model (the previous bundle's was 2,415 x 51 and 4,830 x 37, over 70 elements rather than
+  the 60 the current campaign fits), and it lives
   where the corpus lives: the cache's ``ml_features`` / ``ml_feature_columns`` tables.
 
 Before that split the runner read both xlsx sheets on EVERY instantiation, through an
@@ -177,11 +179,6 @@ def _joblib():
 #: rescored under current code, huber came in at ΔMAPE −0.16 against +1.11 for the v22.02
 #: recipe's ``mean_r2`` and +1.16 for ``tail_p90_error``. Same three targets (L1_b is pinned
 #: to zero by the comb-exp fit format, so it is not a model).
-#:
-#: NOTE the previous bundle is still present in ``gliquid/models/`` pending whsun-viz
-#: deployment and notebook verification, which violates the replace-never-accumulate policy
-#: above for exactly as long as that takes. It must be removed before 0.2.0 is published, or
-#: the wheel ships two bundles and 3 MB nothing selects.
 DEFAULT_BUNDLE_ID = "20260817_112204"
 
 #: Bumped when the portable bundle layout changes incompatibly. A bundle whose
