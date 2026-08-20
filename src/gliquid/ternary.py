@@ -1031,20 +1031,47 @@ class TLIPlotter:
 
         self.liq_plotting_df = self.plotting_df[self.plotting_df["Phase"] == "L"]
         self.solid_plotting_df = self.plotting_df[self.plotting_df["Phase"] != "L"]
+        # Dedupe PER PHASE, not per composition. Every polymorph of an element sits at that
+        # element's vertex, so a ["x0", "x1"] key kept only the highest-temperature one and
+        # deleted the rest of the ladder -- and with it every solid-solid transition -- before
+        # the figure was ever built. Same defect class the hull side already guards against,
+        # where get_ternary_form_en's groupby("Phase Name")["H"].idxmin() would drop the
+        # high-temperature polymorph unless the names are forced distinct.
         self.solid_plotting_df = self.solid_plotting_df.sort_values("T").drop_duplicates(
-            subset=["x0", "x1"], keep="last"
+            subset=["x0", "x1", "Phase"], keep="last"
         )
         solids = set(self.solid_plotting_df["Phase"].tolist())
         solids = [str(x) for x in solids]
 
-        for _, row in self.solid_plotting_df.iterrows():
-            x0 = row["x0"]
-            x1 = row["x1"]
-            label = row["Phase"]
-            color = row["Colors"]
-            new_row = {"x0": x0, "x1": x1, "T": self.conds[0], "Phase": label, "Colors": color}
-            new_row_df = pd.DataFrame([new_row])
-            self.solid_plotting_df = pd.concat([self.solid_plotting_df, new_row_df])
+        # Each phase draws as a vertical segment from a floor up to its stability ceiling.
+        # The lowest phase at a composition starts at the plot floor; every phase above it
+        # starts where the one below it ends, so a transition renders as the join between two
+        # coloured segments. Flooring them all at conds[0] instead would stack overlapping
+        # full-height lines and hide the transition even with the phases present.
+        floor_rows = []
+        for (x0, x1), grp in self.solid_plotting_df.groupby(["x0", "x1"], sort=False):
+            # conds[0] is the plot floor, but it is carried in KELVIN while this frame was
+            # converted to Celsius (the `T - 273.15` above), so it can land ABOVE a phase
+            # that is only stable at very low temperature -- Ti's spurious P6/mmm ground
+            # state tops out at -93.15 C against a floor of 0.0. Flooring that segment at
+            # conds[0] would invert it and overlap the phase above. Fall back to the actual
+            # bottom of the temperature grid only in that case, so every ordinary
+            # composition keeps byte-identical output.
+            lowest_ceiling = float(grp["T"].min())
+            base = (
+                self.conds[0]
+                if self.conds[0] <= lowest_ceiling
+                else float(self.T_grid[0]) - 273.15
+            )
+            for _, row in grp.sort_values("T").iterrows():
+                floor_rows.append(
+                    {"x0": x0, "x1": x1, "T": base, "Phase": row["Phase"], "Colors": row["Colors"]}
+                )
+                base = row["T"]
+        if floor_rows:
+            self.solid_plotting_df = pd.concat(
+                [self.solid_plotting_df, pd.DataFrame(floor_rows)], ignore_index=True
+            )
 
         self.liq_plotting_df = self.liq_plotting_df.sort_values("T").drop_duplicates(
             subset=["x0", "x1"], keep="first"
