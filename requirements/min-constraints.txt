@@ -33,7 +33,7 @@
 #     pin stays. Removing it is a matrix experiment, not a cleanup.
 
 plotly==5.24.0
-nbformat==4.2.0
+nbformat==5.11.1
 mp-api==0.45.1
 matplotlib==3.10.0
 sympy==1.13
