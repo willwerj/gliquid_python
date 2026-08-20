@@ -14,7 +14,7 @@ dependencies = [
     # installable) and not on py310-min (pandas 2.3.3). 5.24.1 is measured clean against
     # pandas 3.0.5. The <6 ceiling is separate and unrelated: plotly 6 moved the
     # fillpattern semantics the solid-solution envelope depends on.
-    "plotly>=5.24,<6.0.0",
+    "plotly>=5.24,<7.0.0",
     # Ceiling restored on evidence. emmet-core 0.87.1 resolves
     # emmet.core.io.pymatgen.__getattr__ onto pymatgen.core.entries, a module current
     # pymatgen no longer has, so api.get_dft_convexhull raises ModuleNotFoundError on any
