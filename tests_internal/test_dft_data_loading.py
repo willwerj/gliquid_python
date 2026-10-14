@@ -4,12 +4,11 @@ Enforces both behaviors of :func:`gliquid.api.get_dft_convexhull` without
 committing any DFT-entries fixtures (``data/*_ENTRIES_MP_GGA.json`` stay gitignored):
 
 * The **API path** runs first -- a single live Materials Project fetch into a temp
-  ``data_dir`` writes ``<sys>_ENTRIES_MP_GGA.json`` (the cache-miss branch).
+  ``cache_dir`` writes ``<sys>_ENTRIES_MP_GGA.json`` (the cache-miss branch).
 * The **cache path** then reuses exactly that file and asserts the API is not called again.
 
 Both require ``NEW_MP_API_KEY`` (locally via ``.env``/conda, on CI via repo secret), so
-the module is skipped when the key is absent. The API path is the one that breaks on a
-dependency-version mismatch (``ModuleNotFoundError: No module named 'pymatgen.core.entries'``).
+the module is skipped when the key is absent.
 """
 
 import os
@@ -36,19 +35,19 @@ def api_cached_dir(tmp_path_factory):
     if not os.getenv("NEW_MP_API_KEY"):
         pytest.skip("NEW_MP_API_KEY not set")
     cache_dir = tmp_path_factory.mktemp("dft_cache")
-    saved_data_dir = config.data_dir
+    saved_data_dir = config.cache_dir
     # Pin the mode as well as the location. This fixture IS a directory store -- it exists
     # to exercise the cold-fetch WRITE path, which a single-file store refuses by design --
     # and leaving the mode ambient would make it depend on how the session was configured
     # (the repo-root conftest.py can swap a sqlite store in process-wide).
     saved_cache_mode = config.cache_mode
-    config.data_dir = cache_dir  # flat layout -> entries file lands directly in cache_dir
+    config.cache_dir = cache_dir  # flat layout -> entries file lands directly in cache_dir
     config.set_cache_mode("directory")
     try:
         dft_ch, _ = api.get_dft_convexhull(FIXTURE_SYSTEM, "GGA")
         yield cache_dir, dft_ch
     finally:
-        config.data_dir = saved_data_dir
+        config.cache_dir = saved_data_dir
         config.set_cache_mode(saved_cache_mode)
 
 
@@ -63,7 +62,7 @@ def test_api_fetch_builds_hull_and_writes_cache(api_cached_dir):
 def test_cache_hit_reuses_api_file_without_calling_api(api_cached_dir, monkeypatch):
     """The cached path loads the file the API call wrote and never calls the API again."""
     cache_dir, _ = api_cached_dir
-    config.data_dir = cache_dir  # reuse the cache populated by the API fetch above
+    config.cache_dir = cache_dir  # reuse the cache populated by the API fetch above
 
     def _fail(*args, **kwargs):
         raise AssertionError("MP API was called even though the cache file exists")
@@ -75,21 +74,11 @@ def test_cache_hit_reuses_api_file_without_calling_api(api_cached_dir, monkeypat
     assert len(dft_ch.stable_entries) >= 2
 
 
-# ---------------------------------------------------------------------------------------
-# The other two dft_type values. Both are broken UPSTREAM as of emmet-core 0.85.1 /
-# mp-api 0.45.13 / pymatgen 2025.10.7, each for its own diagnosed reason (spec 08c).
-# They are xfailed rather than deleted so they stay executable canaries: ``raises=`` pins
-# the exact failure SHAPE, so a change in how they break is a real failure, and an upstream
-# fix shows up as XPASS instead of passing unnoticed.
-#
-# Spec 08d made the PUBLIC entry points (``get_dft_convexhull``,
-# ``get_dft_structure_entries``) refuse both names outright, before any network call, so
-# calling those here would only re-measure gliquid's own guard and could never XPASS again.
-# The canaries therefore probe one layer down, at ``_get_dft_entries_from_components``,
-# which 08d left reachable for exactly this purpose: it is the deepest point that still
-# talks to the live API. The fast-fail guard itself is pinned offline in
-# tests/test_api.py::TestBlockedDftTypesFailBeforeAnyNetworkCall.
-# ---------------------------------------------------------------------------------------
+# -- The other two dft_type values --
+# Both fail upstream. Each is xfailed with ``raises=`` pinning the failure shape, so an upstream
+# fix shows up as XPASS. The public entry points refuse both names before any network call
+# (pinned offline in tests/test_api.py::TestBlockedDftTypesFailBeforeAnyNetworkCall), so these
+# probe ``_get_dft_entries_from_components``, the deepest point that still reaches the live API.
 
 R2SCAN_CAUSE = (
     "The Materials Project stores the r2SCAN thermo type as the literal 'r2SCAN', while "
@@ -129,13 +118,3 @@ def test_cold_mixed_fetch_returns_entries():
     _require_key()
     entries = api._get_dft_entries_from_components(FIXTURE_SYSTEM, "MIXED")
     assert entries, "a MIXED fetch returned nothing"
-
-
-def test_the_public_entry_point_refuses_both_blocked_types():
-    """The other half of the canary: while the fetch is broken, the public API must say so.
-
-    If either xfail above turns XPASS, this test is the one to delete alongside the
-    matching ``api._BLOCKED_DFT_TYPES`` entry.
-    """
-    for dft_type in ("R2SCAN", "MIXED"):
-        assert dft_type in api._BLOCKED_DFT_TYPES

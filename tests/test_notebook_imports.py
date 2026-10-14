@@ -5,9 +5,7 @@ paths must import, attributes must exist on the module/class/instance they are r
 and keyword arguments must be accepted by the callable's signature. Nothing is executed —
 no data corpus, no API keys, no kernel — so this runs anywhere the package imports.
 
-What it does NOT do is check that a notebook produces the right numbers. It catches the
-one failure mode nothing else did: the package API moves, and a notebook that a new user
-runs first keeps a dead call in it until someone happens to execute cell 11.
+It does NOT check that a notebook produces the right numbers.
 
 Inference is deliberately shallow. A name is tracked only when its origin is unambiguous
 (a gliquid import, a constructor call, a classmethod on a gliquid class, an annotated
@@ -18,33 +16,21 @@ is UNKNOWN and simply not checked. False negatives are fine here, false alarms a
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import inspect
 import json
-import logging
 from pathlib import Path
 
 import pytest
 
-from gliquid.binary import FIT_KWARGS, RETIRED_FIT_KWARGS, BinaryLiquid
+from gliquid.binary import FIT_KWARGS, BinaryLiquid
 from gliquid.phase import Phase
 
+from ._mpds_builders import code_cells, shipped_notebooks
 
-def _notebooks_dir() -> Path | None:
-    """``notebooks/`` under the repository root, or None where it does not ship.
-
-    Anchored by NAME rather than a parent index so moving this file between test tiers
-    cannot silently point it at the wrong directory.
-    """
-    for parent in Path(__file__).resolve().parents:
-        if parent.name == "gliquid_python":
-            candidate = parent / "notebooks"
-            return candidate if candidate.is_dir() else None
-    return None
-
-
-_NB_DIR = _notebooks_dir()
-_NOTEBOOKS = sorted(p.name for p in _NB_DIR.glob("*.ipynb")) if _NB_DIR else []
+_NOTEBOOK_PATHS = {p.name: p for p in shipped_notebooks()}
+_NOTEBOOKS = sorted(_NOTEBOOK_PATHS)
 
 _needs_notebooks = pytest.mark.skipif(
     not _NOTEBOOKS, reason="notebooks/ does not ship in this installation"
@@ -53,9 +39,9 @@ _needs_notebooks = pytest.mark.skipif(
 
 # Callables whose **kwargs are NOT a blank cheque: the declared keyword set is the contract,
 # and passing anything else raises. Without this the signature check below would wave through
-# every keyword these functions accept only to ignore.
+# every keyword these functions accept through **kwargs.
 _DECLARED_KWARGS = {
-    BinaryLiquid.fit_parameters: FIT_KWARGS | RETIRED_FIT_KWARGS,
+    BinaryLiquid.fit_parameters: FIT_KWARGS,
 }
 
 # Element type of the gliquid containers the notebooks iterate over. These attributes carry
@@ -94,21 +80,14 @@ class _Instance:
         return f"<instance of {self.cls.__name__}>"
 
 
-# --------------------------------------------------------------------------------------
-# Notebook -> code
-# --------------------------------------------------------------------------------------
+# -- Notebook -> code --
 
 
 def _notebook_code(path: Path) -> str:
     """Concatenated code cells with IPython shell/magic lines removed."""
-    nb = json.loads(path.read_text(encoding="utf-8"))
     chunks = []
-    for cell in nb.get("cells", []):
-        if cell.get("cell_type") != "code":
-            continue
-        source = "".join(cell.get("source", []))
-        stripped = source.lstrip()
-        if stripped.startswith("%%"):
+    for source in code_cells(json.loads(path.read_text(encoding="utf-8"))):
+        if source.lstrip().startswith("%%"):
             continue  # cell magic: the body is not Python
         lines = [line for line in source.splitlines() if not line.lstrip().startswith(("!", "%"))]
         chunks.append("\n".join(lines))
@@ -116,12 +95,10 @@ def _notebook_code(path: Path) -> str:
 
 
 def _parse(name: str) -> ast.Module:
-    return ast.parse(_notebook_code(_NB_DIR / name), filename=name)
+    return ast.parse(_notebook_code(_NOTEBOOK_PATHS[name]), filename=name)
 
 
-# --------------------------------------------------------------------------------------
-# Attribute surfaces
-# --------------------------------------------------------------------------------------
+# -- Attribute surfaces --
 
 
 def _self_assigned(cls) -> set[str]:
@@ -148,18 +125,18 @@ def _self_assigned(cls) -> set[str]:
     return found
 
 
-def _instance_attrs(cls) -> set[str]:
+@functools.cache
+def _instance_attrs(cls) -> frozenset[str]:
+    """``dir(cls)`` plus every ``self.<name>`` its MRO assigns; computed once per class."""
     attrs = set(dir(cls))
     for klass in cls.__mro__:
         if klass is object:
             continue
         attrs |= _self_assigned(klass)
-    return attrs
+    return frozenset(attrs)
 
 
-# --------------------------------------------------------------------------------------
-# The resolver
-# --------------------------------------------------------------------------------------
+# -- The resolver --
 
 
 class _Resolver(ast.NodeVisitor):
@@ -407,16 +384,7 @@ def _resolve(name: str) -> _Resolver:
     return resolver
 
 
-# --------------------------------------------------------------------------------------
-# Tests
-# --------------------------------------------------------------------------------------
-
-
-@_needs_notebooks
-@pytest.mark.parametrize("notebook", _NOTEBOOKS)
-def test_notebook_code_parses(notebook):
-    """Every code cell is valid Python once shell/magic lines are stripped."""
-    _parse(notebook)
+# -- Tests --
 
 
 @_needs_notebooks
@@ -460,10 +428,19 @@ def test_unknown_fit_kwarg_raises_typeerror():
     assert "nonsense_kwarg" in message and "params_init" in message
 
 
-def test_retired_fit_kwarg_logs_and_continues(caplog):
+def test_removed_fit_kwarg_names_its_replacement():
     bl = BinaryLiquid.__new__(BinaryLiquid)
-    with caplog.at_level(logging.WARNING, logger="gliquid.binary"):
-        # Past the kwarg gate, the bare instance is what stops it -- not a TypeError.
-        with pytest.raises(AttributeError):
-            bl.fit_parameters(check_phase_mismatch=False)
-    assert "'check_phase_mismatch' is retired" in caplog.text
+    with pytest.raises(TypeError, match="'check_phase_mismatch' \\(use check_solid_coverage"):
+        bl.fit_parameters(check_phase_mismatch=False)
+
+
+def test_fit_docstring_lists_every_fit_kwarg_once():
+    doc = inspect.getdoc(BinaryLiquid.fit_parameters)
+    block = doc.split("**kwargs:", 1)[1].split("\n\n", 1)[0]
+    listed = []
+    for line in block.splitlines():
+        line = line.strip()
+        if line.startswith("- "):
+            for item in line[2:].split(":", 1)[0].split(","):
+                listed.append(item.split("(", 1)[0].strip())
+    assert sorted(listed) == sorted(FIT_KWARGS)

@@ -66,6 +66,7 @@ class Phase:
     energy_per_atom_ev: float | None = None  # raw DFT energy (lattice-stability entries)
     points: list = field(default_factory=list)  # computed boundary points [x, T]
     model: object | None = None  # SolutionModel for solution phases
+    non_dft: str | None = None  # 'imputed' | 'user' for a phase standing in for a DFT compound
 
     @property
     def is_solution(self) -> bool:
@@ -94,9 +95,7 @@ class Phase:
             try:
                 Element(c)
             except Exception as exc:
-                # components[0] is the implicit remainder, so an atomic-fraction result
-                # over elemental components[1:] would be silently WRONG for a compound
-                # end-member axis — guard every component, not just the queried ones.
+                # components[0] is the implicit remainder, so every component is checked.
                 raise NotImplementedError(
                     f"Phase.fraction_in supports elemental components only (got {comps}); "
                     "compound end-member axes will be supported in a future release."
@@ -124,18 +123,16 @@ class Phase:
 class ComponentRef:
     """Reference states of a single system component.
 
-    Today a component is a pure element; a parseable multi-element formula raises
-    NotImplementedError until compound (pseudo-binary) end-members land. Unparseable or
+    A component is a pure element; a parseable multi-element formula raises
+    NotImplementedError. Unparseable or
     dummy symbols are tolerated so unknown-symbol lookups keep the silent-empty-registry
     contract (``UNARY['Xx']`` returns an all-zero reference).
     """
 
     symbol: str
     phases: list[Phase] = field(default_factory=list)
-    # Tier B solid-solution end-member references (BCC/FCC/HCP structures NOT on the phase
-    # ladder): cumulative enthalpy above the element anchor, no transition temperature.
-    # Deliberately separate from ``phases`` so they never enter ``polymorphs``,
-    # ``solid_phase`` lookups, or liquid reconstruction.
+    # Tier B solid-solution end-member references (BCC/FCC/HCP structures off the phase ladder):
+    # enthalpy above the element anchor, no transition temperature. Kept apart from ``phases``.
     lattice_stabilities: list[Phase] = field(default_factory=list)
 
     def __post_init__(self):
@@ -190,7 +187,7 @@ class ComponentRef:
     def polymorphs(self) -> list[Phase]:
         """Solid phases with a known (>= 0 K) transition temperature.
 
-        Mirrors the legacy ``element_polymorphs`` list, which includes the T = 0 K ground state.
+        Includes the T = 0 K ground state.
         """
         return [
             p
@@ -261,6 +258,36 @@ class ComponentRef:
         )
 
 
+def non_dft_kind(phase: Phase) -> str | None:
+    """How ``phase`` stands in for a DFT-computed compound, if it does.
+
+    Returns:
+        str | None: ``phase.non_dft`` when set; else ``"imputed"`` when ``phase.imputed`` is
+        set; else None.
+    """
+    return phase.non_dft or ("imputed" if phase.imputed else None)
+
+
+def polymorph_ladder(
+    component_ref: ComponentRef, exclude_spacegroups: set[int] | None = None
+) -> list[Phase]:
+    """A component's elemental polymorph ladder, as fresh copies in registry order.
+
+    Args:
+        component_ref: the component whose ``polymorphs`` to copy.
+        exclude_spacegroups: spacegroup numbers to leave out; ``None`` or empty keeps every
+            polymorph.
+
+    Returns:
+        list[Phase]: one copy per kept polymorph, each with empty ``points``.
+    """
+    return [
+        replace(p, points=[])
+        for p in component_ref.polymorphs
+        if not (exclude_spacegroups and p.spacegroup_number in exclude_spacegroups)
+    ]
+
+
 class UnaryData:
     """Registry of ``ComponentRef`` keyed by element symbol, loaded from ``phase_transitions.json``."""
 
@@ -294,9 +321,7 @@ class UnaryData:
                         composition=Composition(symbol),
                         t_transition=None,
                         enthalpy=entry.get("delta_H_J_per_mol"),
-                        # 0.0 by the recalculation convention (no transition temperature to
-                        # divide by), except for the builder's scoped metastable-entropy
-                        # exception. Default 0.0 so an older database file is unchanged.
+                        # 0.0 except where the builder recorded a metastable entropy.
                         entropy=entry.get("delta_S_J_per_mol_K")
                         if entry.get("delta_S_J_per_mol_K") is not None
                         else 0.0,
@@ -313,9 +338,8 @@ class UnaryData:
             for symbol, data in elements.items()
         }
         if not self.elements:
-            # phase_transitions.json ships inside the package, so reaching here means the
-            # file was overridden (set_cache_dir at a directory carrying its own unreadable
-            # copy) or the install is damaged -- report whichever location was consulted.
+            # Reached only when the packaged file is overridden or damaged; reports the location
+            # consulted.
             consulted = (
                 config.cache_dir if config.cache_dir is not None else config._BUNDLED_REFERENCE_DIR
             )
@@ -330,7 +354,7 @@ class UnaryData:
                 )
             warnings.warn(
                 f"gliquid unary registry loaded empty ({config.phase_transitions_file} not readable); "
-                f"all element references will evaluate to zero. Call config.set_data_dir(...) then "
+                f"all element references will evaluate to zero. Call config.set_cache_dir(...) then "
                 f"phase.reload().",
                 UserWarning,
                 stacklevel=2,
@@ -361,22 +385,21 @@ UNARY = UnaryData(require=False)
 
 
 def reload(require: bool = True) -> None:
-    """Reload the module-level ``UNARY`` registry (call after ``config.set_data_dir``)."""
+    """Reload the module-level ``UNARY`` registry (call after ``config.set_cache_dir``)."""
     UNARY.reload(require=require)
 
 
-# --------------------------------------------------------------------------------------
-# System/component input parsing — the single funnel every entry point routes through.
-# --------------------------------------------------------------------------------------
+# -- System/component input parsing: the funnel every entry point routes through --
 
 
+@config._removed_keywords({"input": "system"})
 def validate_and_format_system(
-    input, *, allow_compounds: bool = False
+    system, *, allow_compounds: bool = False
 ) -> tuple[list[str], str, bool]:
     """Parse an n-component system spec, preserving the caller's component order.
 
     Args:
-        input (str or list): Hyphenated string (``'A-B'``, ``'A-B-C'``, ...) or a list of
+        system (str or list): Hyphenated string (``'A-B'``, ``'A-B-C'``, ...) or a list of
             two or more component formula strings.
         allow_compounds: Compound (multi-element) components raise NotImplementedError by
             default — this is the single guard every user entry point routes through.
@@ -389,17 +412,16 @@ def validate_and_format_system(
         differs from alphabetical (the canonical convention for fitted parameters and
         on-disk cache keys).
     """
-    if isinstance(input, str) and input.count("-") >= 1:
-        components = input.split("-")
-    elif isinstance(input, list) and all(isinstance(c, str) for c in input) and len(input) >= 2:
-        components = list(input)
+    if isinstance(system, str) and system.count("-") >= 1:
+        components = system.split("-")
+    elif isinstance(system, list) and all(isinstance(c, str) for c in system) and len(system) >= 2:
+        components = list(system)
     else:
         raise ValueError(
             "Input must be a hyphenated string or a list of two or more component formulas."
         )
 
-    # Validate each component as a formula of real periodic-table elements.
-    # Compound formulas (e.g. 'CuMg') parse; DummySpecies ('A', 'Xx', etc.) are rejected.
+    # Each component parses as a formula of real elements; DummySpecies are rejected.
     compounds = []
     for c in components:
         try:

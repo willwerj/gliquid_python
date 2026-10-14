@@ -1,10 +1,11 @@
-"""Ternary 3-D figure rendering over TLI-computed data (ex-TLIPlotter draw bodies).
+"""Ternary 3-D figure rendering over TLI-computed data.
 
-Extracted from TLIPlotter: the liquidus-surface figure, the single-slice hull figure,
-and the isothermal contour machinery. Pure presentation --
-numpy/plotly plus the leaf display module gliquid.plotting.style -- no MODEL imports;
-TLIPlotter passes model-computed dataframes,
-hull data, colors, and axis conditions in.
+The liquidus-surface figure, the single-slice hull figure, the isothermal contour
+machinery, and the JavaScript the liquidus figure runs in a browser (:func:`post_script`,
+:func:`dash_clientside_function`, :class:`LiquidusFigure`). Pure presentation -- numpy/plotly
+plus the gliquid.plotting modules style, export, liquidus_fields, phase_highlight and
+ternary_labels -- no MODEL imports; TLIPlotter passes model-computed dataframes, hull data, colors,
+and axis conditions in.
 """
 
 from __future__ import annotations
@@ -12,15 +13,72 @@ from __future__ import annotations
 import numpy as np
 import plotly.graph_objects as go
 
-# The same formatter the binary field labels use, so a phase reads identically in both
-# figures: greek symbol, structure abbreviated in the parentheses, formula digits
-# subscripted.
-from gliquid.plotting.binary_tx import _abbreviate_phase_name
+# The binary field-label formatter.
+from gliquid.plotting import liquidus_fields, phase_highlight, ternary_labels
+from gliquid.plotting.export import side_by_side_html
+from gliquid.plotting.style import (
+    FIELD_OUTLINE_COLOR,
+    FIELD_OUTLINE_WIDTH,
+    GAP_OUTLINE_COLOR,
+    GAP_OUTLINE_DASH,
+    IMPUTED_LEGEND_LABEL,
+    USER_DEFINED_LEGEND_LABEL,
+    abbreviate_phase_name,
+)
 
-# Plotly clips 3-D geometry at the axis bounds, so the base triangle is lifted a hair off
-# ``conds[0]`` (0.1% of the temperature span) to sit strictly inside the range. The
-# solid-phase segments are NOT lifted -- they start at the true grid floor.
+# Lift of the base triangle off ``conds[0]``, as a fraction of the temperature span; solid-phase
+# segments start at the grid floor.
 FLOOR_INSET_FRAC = 1e-3
+
+# Decimal places of the coordinates, and of the temperatures, of a highlighted figure's meshes.
+FIELD_COORD_DECIMALS = 6
+FIELD_T_DECIMALS = 3
+
+# A 3-D legend draws every line key solid, so an imputed phase is named rather than keyed.
+IMPUTED_SUFFIX = f" ({IMPUTED_LEGEND_LABEL.lower()})"
+USER_DEFINED_SUFFIX = f" ({USER_DEFINED_LEGEND_LABEL.lower()})"
+
+# Height in pixels of a notebook cell's figure without a ``layout.height``.
+NOTEBOOK_HEIGHT = 600
+
+# Margin added around everything drawn in the plane when setting the x and y axis ranges.
+PLANE_PAD = 0.02
+
+# The legend box, at the top right corner and anchored inside the paper.
+_LEGEND = dict(
+    x=0.99,
+    y=0.99,
+    xanchor="right",
+    yanchor="top",
+    bgcolor="rgba(255,255,255,0.72)",
+    bordercolor="rgba(0,0,0,0.15)",
+    borderwidth=1,
+)
+
+# The outline of the base triangle, closed, as plot x and y.
+_TRIANGLE_X = [0, 0.5, 1, 0]
+_TRIANGLE_Y = [0, ternary_labels._H, 0, 0]
+
+
+def composition_at_pct(comp, components) -> np.ndarray:
+    """The (n, 3) at. % of each element of ``components``, in alphabetical order (the order of a
+    plotter's ``sys_name``), to one decimal place.
+
+    ``comp`` is the (n, 2) mole fractions of ``components[1]`` and ``components[2]``; the rest is
+    ``components[0]``.
+    """
+    comp = np.asarray(comp, dtype=float)
+    fractions = dict(zip(components, (1.0 - comp[:, 0] - comp[:, 1], comp[:, 0], comp[:, 1])))
+    return np.round(np.column_stack([100.0 * fractions[e] for e in sorted(components)]), 1)
+
+
+def composition_hover(components) -> str:
+    """Hover lines ``<element>: <x> at. %`` for customdata columns 0-2 as filled by
+    :func:`composition_at_pct`."""
+    return "".join(
+        f"{element}: %{{customdata[{n}]:.1f}} at. %<br>"
+        for n, element in enumerate(sorted(components))
+    )
 
 
 def render_hull_slice(hull_data, components) -> go.Figure:
@@ -45,11 +103,12 @@ def render_hull_slice(hull_data, components) -> go.Figure:
             intensity=points[:, 2],
             showscale=True,
             colorbar=dict(title="G"),
-            customdata=np.column_stack((slice_df["x0"], slice_df["x1"], slice_df["Phase"])),
+            customdata=np.column_stack(
+                (composition_at_pct(slice_df[["x0", "x1"]], components), slice_df["Phase"])
+            ),
             hovertemplate=(
-                f"x_{components[1]}: %{{customdata[0]:.3f}}<br>"
-                + f"x_{components[2]}: %{{customdata[1]:.3f}}<br>"
-                + "Phase: %{customdata[2]}<br>"
+                composition_hover(components)
+                + "Phase: %{customdata[3]}<br>"
                 + "G: %{z:.4f}<extra></extra>"
             ),
         )
@@ -70,12 +129,13 @@ def render_hull_slice(hull_data, components) -> go.Figure:
                     line=dict(color="black", width=0.4),
                 ),
                 name=phase,
-                customdata=np.column_stack((group["x0"], group["x1"], group["G"])),
+                customdata=np.column_stack(
+                    (composition_at_pct(group[["x0", "x1"]], components), group["G"])
+                ),
                 hovertemplate=(
                     f"<b>{phase}</b><br>"
-                    + f"x_{components[1]}: %{{customdata[0]:.3f}}<br>"
-                    + f"x_{components[2]}: %{{customdata[1]:.3f}}<br>"
-                    + "G: %{customdata[2]:.4f}<extra></extra>"
+                    + composition_hover(components)
+                    + "G: %{customdata[3]:.4f}<extra></extra>"
                 ),
             )
         )
@@ -83,8 +143,8 @@ def render_hull_slice(hull_data, components) -> go.Figure:
     g_floor = float(np.min(points[:, 2]))
     fig.add_trace(
         go.Scatter3d(
-            x=[0, 0.5, 1, 0],
-            y=[0, np.sqrt(3) / 2, 0, 0],
+            x=_TRIANGLE_X,
+            y=_TRIANGLE_Y,
             z=[g_floor, g_floor, g_floor, g_floor],
             mode="lines",
             line=dict(color="black", width=5),
@@ -96,10 +156,7 @@ def render_hull_slice(hull_data, components) -> go.Figure:
     fig.update_layout(
         title=f"Single-slice lower hull at T = {T_celsius_exact:.2f} C",
         scene=dict(
-            # Left inset inside the plot area: the z tick labels are drawn inside the gl
-            # canvas, hanging left of the axis line, and are clipped without it. Insetting
-            # the SCENE is what gives them room -- widening the margin moves the canvas and
-            # takes the axis with it.
+            # Left inset of the scene, which holds the z tick labels drawn inside the gl canvas.
             domain=dict(x=[0.09, 1.0], y=[0.0, 1.0]),
             xaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
             yaxis=dict(title=" ", showticklabels=False, showaxeslabels=False, showgrid=False),
@@ -107,13 +164,8 @@ def render_hull_slice(hull_data, components) -> go.Figure:
             bgcolor="white",
             camera=dict(projection=dict(type="orthographic")),
         ),
-        # Same anchoring as render_tx_surface: anchored 'left' at x=0.95 the legend runs off
-        # the paper and plotly reserves its width out of the 3D scene. See the note there.
         margin=dict(l=0, r=0, b=0, t=60),
-        legend=dict(
-            x=0.99, y=0.99, xanchor="right", yanchor="top",
-            bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
-        ),
+        legend=_LEGEND,
     )
 
     return fig
@@ -123,10 +175,13 @@ def compute_isotherm_contours(liq_points, triangles):
     """Iso-temperature contour polylines across the liquidus mesh.
 
     The delta-T ladder is a display heuristic (denser contours on flatter surfaces);
-    contours are returned in ascending-temperature order, each a list of (x0, x1, T)
-    points, exactly as the retired TLIPlotter._add_isothermal_lines computed them.
+    contours are returned in ascending-temperature order, each a (k, 3) array of
+    (x0, x1, T) points. A contour crosses each mesh edge whose ends lie on either side of
+    its temperature (a vertex at the temperature counts as above it), and its pieces are
+    joined through the edges they share.
     """
-    # Get temperature range
+    liq_points = np.asarray(liq_points, dtype=float)
+    triangles = np.asarray(triangles, dtype=int)
     temps = liq_points[:, 2]
     temp_min, temp_max = np.min(temps), np.max(temps)
     temp_range = temp_max - temp_min
@@ -145,44 +200,26 @@ def compute_isotherm_contours(liq_points, triangles):
     else:
         delta_T = max(10, temp_range / 20)
 
-    # Generate iso-temperature values
-    iso_temps = np.arange(temp_min + delta_T, temp_max, delta_T)
+    edges, edge_of = np.unique(liquidus_fields._face_edges(triangles), axis=0, return_inverse=True)
+    edge_of = edge_of.reshape(3, -1).T
+    start, end = liq_points[edges[:, 0]], liq_points[edges[:, 1]]
 
-    # For each iso-temperature, find intersection lines with triangles
     contours = []
-    for iso_temp in iso_temps:
-        line_segments = []
-
-        for triangle in triangles:
-            # Get the three vertices of the triangle
-            v1 = liq_points[triangle[0]]
-            v2 = liq_points[triangle[1]]
-            v3 = liq_points[triangle[2]]
-
-            # Find intersections of the iso-temperature plane with triangle edges
-            intersections = []
-
-            # Check each edge of the triangle
-            edges = [(v1, v2), (v2, v3), (v3, v1)]
-            for p1, p2 in edges:
-                # Check if iso_temp is between the temperatures of the edge endpoints
-                t1, t2 = p1[2], p2[2]
-                if (t1 <= iso_temp <= t2) or (t2 <= iso_temp <= t1):
-                    if abs(t2 - t1) > 1e-8:  # More strict tolerance for flatter surfaces
-                        # Linear interpolation to find intersection point
-                        alpha = (iso_temp - t1) / (t2 - t1)
-                        intersection = p1 + alpha * (p2 - p1)
-                        intersection[2] = iso_temp  # Ensure exact temperature
-                        intersections.append(intersection)
-
-            # If we have exactly 2 intersections, we have a line segment
-            if len(intersections) == 2:
-                line_segments.append(intersections)
-
-        # Connect line segments into continuous contours
-        if line_segments:
-            contours.extend(connect_line_segments(line_segments))
-
+    for iso_temp in np.arange(temp_min + delta_T, temp_max, delta_T):
+        above = temps >= iso_temp
+        crossed = above[edges[:, 0]] != above[edges[:, 1]]
+        hit = crossed[edge_of]
+        two = hit.sum(axis=1) == 2
+        segments = edge_of[two][hit[two]].reshape(-1, 2)
+        if not len(segments):
+            continue
+        with np.errstate(divide="ignore", invalid="ignore"):
+            alpha = (iso_temp - start[:, 2]) / (end[:, 2] - start[:, 2])
+            points = start + alpha[:, None] * (end - start)
+        points[:, 2] = iso_temp
+        contours.extend(
+            points[line] for line in liquidus_fields.chain_segments(map(tuple, segments))
+        )
     return contours
 
 
@@ -207,140 +244,174 @@ def draw_isotherms(fig, contours) -> None:
             )
 
 
-def connect_line_segments(segments, tolerance=1e-4):
-    """
-    Connect line segments into continuous contours.
-
-    Args:
-        segments: List of line segments, each segment is [point1, point2]
-        tolerance: Distance tolerance for connecting endpoints
-
-    Returns:
-        List of connected contours, each contour is a list of points
-    """
-    if not segments:
-        return []
-
-    contours = []
-    remaining_segments = segments.copy()
-
-    while remaining_segments:
-        # Start a new contour with the first remaining segment
-        current_contour = list(remaining_segments.pop(0))
-
-        # Keep trying to extend the contour
-        extended = True
-        while extended and remaining_segments:
-            extended = False
-
-            # Try to find a segment that connects to either end of current contour
-            for i, segment in enumerate(remaining_segments):
-                p1, p2 = segment[0], segment[1]
-
-                # Check if segment connects to the end of current contour
-                end_point = current_contour[-1]
-                if np.linalg.norm(p1[:2] - end_point[:2]) < tolerance:
-                    current_contour.append(p2)
-                    remaining_segments.pop(i)
-                    extended = True
-                    break
-                elif np.linalg.norm(p2[:2] - end_point[:2]) < tolerance:
-                    current_contour.append(p1)
-                    remaining_segments.pop(i)
-                    extended = True
-                    break
-
-                # Check if segment connects to the beginning of current contour
-                start_point = current_contour[0]
-                if np.linalg.norm(p1[:2] - start_point[:2]) < tolerance:
-                    current_contour.insert(0, p2)
-                    remaining_segments.pop(i)
-                    extended = True
-                    break
-                elif np.linalg.norm(p2[:2] - start_point[:2]) < tolerance:
-                    current_contour.insert(0, p1)
-                    remaining_segments.pop(i)
-                    extended = True
-                    break
-
-        contours.append(current_contour)
-
-    return contours
-
-
 def render_tx_surface(
-    solid_df, liq_df, liq_points, triangles, color_map, components, conds
-) -> go.Figure:
+    solid_df,
+    liq_df,
+    triangles,
+    color_map,
+    components,
+    conds,
+    imputed_phases=(),
+    user_phases=(),
+    partition=None,
+    highlight_phase=None,
+    interactive_legend=False,
+) -> LiquidusFigure:
     """The 3-D ternary liquidus figure: solid-phase lines, liquidus mesh, isotherms,
-    legend markers, and the base-triangle axes/labels (ex-TLIPlotter._plot_tx draw tail).
+    legend markers, and the base triangle with its composition ticks and flat labels
+    (:mod:`gliquid.plotting.ternary_labels`), the labels in the view of the figure's camera.
 
     ``conds`` is the plotted temperature window in CELSIUS -- the same frame as the ``T``
     columns of ``solid_df``/``liq_df`` -- and it is the z-axis range verbatim. It already
     carries any ``temp_slider`` margin, which is folded into the temperature grid it is
     derived from (:meth:`gliquid.ternary.TernaryLiquidInterpolation._init_sys`), so this
-    function takes no slider of its own; the retired one was applied a second time here.
+    function takes no slider of its own.
+
+    ``imputed_phases`` names phases whose energy was imputed; their lines are drawn dashed
+    and their legend entries and hover text carry an ``(imputed)`` suffix. ``user_phases``
+    names user-defined phases, drawn the same way with a ``(user-defined)`` suffix.
+
+    ``partition`` (a :class:`gliquid.plotting.liquidus_fields.Partition`) replaces the mesh of
+    ``liq_df`` nodes as the drawn surface, and its fields are the phases' liquidus fields. A field
+    of a phase with no legend entry (the two-liquid field) is drawn with the rest of the surface,
+    and a dotted grey line, shown in every view, marks where it borders other fields; where a
+    highlighted field borders it, that field's outline takes the line's place. Without it the
+    surface is the node mesh and has no fields. ``highlight_phase`` draws that solid phase's field
+    in full colour, outlined, with the rest of the surface, the other legend entries and the other
+    phases' lines dimmed; ``interactive_legend`` embeds every such view for a browser-side legend
+    handler (see :mod:`gliquid.plotting.phase_highlight`). Without a ``partition`` neither draws
+    anything.
+
+    Raises:
+        ValueError: ``highlight_phase`` is not a solid phase of the figure.
     """
-    fig = go.Figure()
+    legend_phases = [phase for phase in color_map if phase != "L"]
+    if highlight_phase is not None and highlight_phase not in legend_phases:
+        raise ValueError(
+            f"highlight_phase {highlight_phase!r} is not a solid phase of this figure; "
+            f"choose one of {legend_phases}."
+        )
+    highlight = partition is not None and (highlight_phase is not None or interactive_legend)
+    tags = phase_highlight.HighlightTraces(liquidus="gliquid-liquidus") if highlight else None
 
-    # _abbreviate_phase_name drops a greek prefix when the element has only ONE phase in
-    # the figure (nothing to tell apart), so it needs the full name list, not just the one
-    # being labelled. color_map's keys are exactly the phases this figure draws.
+    def tagged(key, role, phase=None):
+        if not highlight:
+            return {}
+        tag = {"meta": _meta(key, role, phase)}
+        return {**tag, "visible": True} if role in ("liquidus", "legend") else tag
+
+    fig = LiquidusFigure()
+
+    # abbreviate_phase_name takes the full name list of the figure.
     phase_names = list(color_map)
+    imputed_phases = set(imputed_phases)
+    user_phases = set(user_phases)
 
-    for label, group in solid_df.groupby("Phase"):
+    def display_name(phase):
+        name = abbreviate_phase_name(phase, phase_names)
+        if phase in imputed_phases:
+            return f"{name}{IMPUTED_SUFFIX}"
+        if phase in user_phases:
+            return f"{name}{USER_DEFINED_SUFFIX}"
+        return name
+
+    for n, (label, group) in enumerate(solid_df.groupby("Phase")):
+        line = dict(color=group["Colors"], width=10)
+        if highlight:
+            colors = list(group["Colors"])
+            line["color"] = colors[0] if len(set(colors)) == 1 else colors
+            tags.solids[str(label)] = (f"gliquid-solid-{n}", line["color"])
+        if label in imputed_phases or label in user_phases:
+            line["dash"] = "dash"
         fig.add_trace(
             go.Scatter3d(
                 x=group["x0"],
                 y=group["x1"],
                 z=group["T"],
                 mode="lines",
-                line=dict(color=group["Colors"], width=10),
+                line=line,
                 showlegend=False,
                 opacity=1,
-                hovertemplate=f"<b>Phase: {_abbreviate_phase_name(label, phase_names)}</b>"
-                + "<br><extra></extra>",
+                hovertemplate=f"<b>Phase: {display_name(label)}</b>" + "<br><extra></extra>",
+                **tagged(f"gliquid-solid-{n}", "solid", str(label)),
             )
         )
 
-    fig.add_trace(
-        go.Mesh3d(
-            x=liq_df["x0"],
-            y=liq_df["x1"],
-            z=liq_df["T"],
-            i=triangles[:, 0],
-            j=triangles[:, 1],
-            k=triangles[:, 2],
-            opacity=0.6,
-            colorscale="Viridis",
-            intensity=liq_df["T"],
-            showscale=False,
-            hovertemplate="<b>Liquidus Surface</b><br>"
-            + f"x_{components[1]}: %{{customdata[0]:.3f}}<br>"
-            + f"x_{components[2]}: %{{customdata[1]:.3f}}<br>"
-            + "T: %{z:.1f}°C<br>"
-            +
-            #   'Coexistent Phases: %{customdata[2]}<br>' +
-            "<extra></extra>",
-            customdata=np.column_stack(
-                (liq_df["x0_orig"], liq_df["x1_orig"], liq_df["coexistent_phases"])
-            ),
-        )
+    liquidus_hover = (
+        "<b>Liquidus Surface</b><br>"
+        + composition_hover(components)
+        + "T: %{z:.1f}°C<br>"
+        + "Coexistent Phases: %{customdata[3]}<br>"
+        + "<extra></extra>"
     )
 
-    # Add iso-temperature lines
-    draw_isotherms(fig, compute_isotherm_contours(liq_points, triangles))
+    if partition is not None:
+        surface = partition.surface
+        coexistent = np.array(
+            [", ".join(phases) for phases in partition.vertex_phases], dtype=object
+        )
+        unlisted = [phase for phase in partition.fields if phase not in legend_phases]
+    else:
+        unlisted = []
+        surface = liquidus_fields.SurfacePiece(
+            xy=liq_df[["x0", "x1"]].to_numpy(float),
+            T=liq_df["T"].to_numpy(float),
+            comp=liq_df[["x0_orig", "x1_orig"]].to_numpy(float),
+            parent=np.arange(len(liq_df)),
+            faces=np.asarray(triangles),
+        )
+        coexistent = liq_df["coexistent_phases"].to_numpy(dtype=object)
 
-    for phase, color in color_map.items():
+    fig.add_trace(
+        _field_mesh(
+            surface,
+            "Viridis",
+            components,
+            coexistent,
+            liquidus_hover,
+            name="liquidus",
+            **tagged(tags.liquidus if highlight else None, "liquidus"),
+        )
+    )
+    boundaries = [
+        (neighbour, lines)
+        for phase in unlisted
+        for neighbour, lines in liquidus_fields.field_boundaries(partition, phase).items()
+        if neighbour is not None
+    ]
+    for n, (neighbour, lines) in enumerate(boundaries):
+        key = f"gliquid-boundary-{n}"
+        if highlight and neighbour in legend_phases:
+            tags.boundaries.setdefault(neighbour, []).append(key)
+        fig.add_trace(
+            _outline_trace(
+                lines,
+                color=GAP_OUTLINE_COLOR,
+                dash=GAP_OUTLINE_DASH,
+                visible=True,
+                **tagged(key, "boundary", neighbour),
+            )
+        )
+
+    # Add iso-temperature lines
+    draw_isotherms(
+        fig, compute_isotherm_contours(np.column_stack([surface.xy, surface.T]), surface.faces)
+    )
+
+    for n, phase in enumerate(legend_phases):
+        if highlight:
+            tags.legend[str(phase)] = f"gliquid-legend-{n}"
         fig.add_trace(
             go.Scatter3d(
                 x=[None],
                 y=[None],
                 z=[None],
                 mode="markers",
-                marker=dict(color=color, size=10, opacity=1.0),
-                name=_abbreviate_phase_name(phase, phase_names),
+                marker=dict(color=color_map[phase], size=10, opacity=1.0),
+                name=display_name(phase),
                 textfont=dict(size=8),
                 showlegend=True,
+                **tagged(f"gliquid-legend-{n}", "legend", str(phase)),
             )
         )
 
@@ -349,8 +420,8 @@ def render_tx_surface(
 
     fig.add_trace(
         go.Scatter3d(
-            x=[0, 0.5, 1, 0],
-            y=[0, np.sqrt(3) / 2, 0, 0],
+            x=_TRIANGLE_X,
+            y=_TRIANGLE_Y,
             z=[floor_z] * 4,
             mode="lines",
             line=dict(color="black", width=5),
@@ -359,61 +430,37 @@ def render_tx_surface(
         )
     )
 
-    fig.add_trace(
-        go.Scatter3d(
-            x=[-0.02, 0.48, 0.98, -0.02],
-            y=[0.02, np.sqrt(3) / 2 + 0.02, 0.02, 0.02],
-            # Anchored ON the base triangle, with the drop below it taken in SCREEN space
-            # (textposition) rather than as a temperature: conds[0] is absolute zero, and a
-            # z coordinate under it would be clipped out of the scene.
-            z=[floor_z] * 4,
-            mode="text",
-            text=[f"<b>{components[0]}</b>", f"<b>{components[2]}</b>", f"<b>{components[1]}</b>"],
-            textposition="bottom center",
-            showlegend=False,
-            textfont=dict(size=12),
-        )
-    )
+    ternary_labels.draw_composition_axes(fig, components, floor_z)
+    x_range, y_range = _plane_ranges(fig, PLANE_PAD)
 
     fig.update_layout(
-        # Anchor the legend INSIDE the paper. Anchored 'left' near x=1 it runs off the edge,
-        # and plotly then reserves its full width out of the 3D scene.
-        legend=dict(
-            x=0.99, y=0.99, xanchor="right", yanchor="top",
-            bgcolor="rgba(255,255,255,0.72)", bordercolor="rgba(0,0,0,0.15)", borderwidth=1,
-        ),
+        legend=_LEGEND,
         autosize=True,
-        # The z-axis title. textangle is a SCREEN-space rotation and does not follow the
-        # axis if the scene is orbited; plotly exposes no angle on the built-in gl3d title.
+        # The z-axis title, a screen-space annotation.
         annotations=[
             dict(
                 text="Temperature (°C)",
                 textangle=-90,
-                # NEGATIVE paper x: paper coordinates span the area INSIDE the margins,
-                # so x=0 still sits over the scene's own tick labels. -0.035 of a ~660 px
-                # plot area is ~23 px, which lands the text in the left margin beside them.
-                xref="paper", yref="paper",
-                x=-0.03, y=0.5,
-                xanchor="center", yanchor="middle",
+                # Negative paper x places the text in the left margin, beside the scene's tick
+                # labels.
+                xref="paper",
+                yref="paper",
+                x=-0.03,
+                y=0.5,
+                xanchor="center",
+                yanchor="middle",
                 showarrow=False,
                 font=dict(size=17, color="black"),
             )
         ],
-        # A 3D scene draws its ticks inside the canvas, so r/b margins buy nothing; t leaves
-        # room for the figure title. l holds the z-axis title annotation clear of the ticks.
+        # t leaves room for the figure title; l holds the z-axis title.
         margin=dict(l=30, r=0, b=0, t=40),
         scene=dict(
             zaxis=dict(
-                # Exactly the plotted window: conds IS the temperature grid in Celsius, so
-                # the axis runs from absolute zero to the top of the grid and nothing drawn
-                # can fall outside it. ``temp_slider`` is already folded into the grid by
-                # _init_sys and must not be re-applied here.
+                # The plotted window: conds is the temperature grid in Celsius, temp_slider already
+                # folded in.
                 range=[conds[0], conds[1]],
-                # Blank, and drawn as a paper annotation below instead. plotly renders a
-                # gl3d axis title inside the WebGL layer and its schema exposes only
-                # `text` and `font` for it -- there is no angle attribute (checked against
-                # plotly 2.35.2), and it comes out reading downwards, putting the unit at
-                # the BOTTOM of the axis. An annotation is the only way to set the angle.
+                # Blank; the title is drawn as a paper annotation.
                 title="",
             ),
             xaxis=dict(
@@ -421,13 +468,18 @@ def render_tx_surface(
                 showticklabels=False,
                 showaxeslabels=False,
                 showgrid=False,
+                range=x_range,
             ),
             yaxis=dict(
                 title=" ",
                 showticklabels=False,
                 showaxeslabels=False,
                 showgrid=False,
+                range=y_range,
             ),
+            # x and y share one scale, so the triangle and the flat labels keep their shapes.
+            aspectmode="manual",
+            aspectratio=dict(x=1.0, y=(y_range[1] - y_range[0]) / (x_range[1] - x_range[0]), z=1.0),
             xaxis_visible=True,
             yaxis_visible=True,
             zaxis_visible=True,
@@ -437,5 +489,254 @@ def render_tx_surface(
             ),
         ),
     )
+    ternary_labels.orient_labels(fig)
+
+    if highlight:
+        _add_phase_fields(
+            fig,
+            tags,
+            surface,
+            components,
+            coexistent,
+            partition.fields,
+            legend_phases,
+            liquidus_hover,
+        )
+        states, reset = phase_highlight.build_states(tags)
+        if interactive_legend:
+            phase_highlight.embed_spec(fig, tags, states, reset)
+        if highlight_phase is not None:
+            phase_highlight.apply_patches(fig, states[str(highlight_phase)])
 
     return fig
+
+
+_ATTACH_ALL = "window.gliquidAttachLabelViews(gd); window.gliquidAttachPhaseHighlight(gd);"
+
+
+def post_script() -> str:
+    """JavaScript run on a :func:`render_tx_surface` figure once a browser has drawn it, with
+    ``{plot_id}`` standing for its div id. A :class:`LiquidusFigure` adds it itself; pass it to
+    anything else that draws the figure's JSON.
+
+    It shows the view of the base triangle's labels (:mod:`gliquid.plotting.ternary_labels`)
+    whose edge is lowest on screen as the camera turns, and on a figure built with
+    ``interactive_legend`` it handles legend clicks (:mod:`gliquid.plotting.phase_highlight`).
+    """
+    return (
+        ternary_labels.ATTACH_JS
+        + phase_highlight.ATTACH_JS
+        + "(function (gd) { "
+        + _ATTACH_ALL
+        + " })(document.getElementById('{plot_id}'));\n"
+    )
+
+
+def dash_clientside_function() -> str:
+    """A Dash clientside-callback function attaching the :func:`post_script` handlers to a
+    ``dcc.Graph``.
+
+    Its inputs are the graph's ``figure`` and ``id``; it returns ``no_update``. For a
+    ``dcc.Graph`` with id ``graph_id`` and a ``dcc.Store(id=<store_id>)`` in the layout, register
+    it as::
+
+        app.clientside_callback(
+            dash_clientside_function(),
+            Output(<store_id>, "data"),
+            Input(graph_id, "figure"),
+            State(graph_id, "id"),
+        )
+    """
+    return (
+        "function (figure, graphId) {\n"
+        + ternary_labels.ATTACH_JS
+        + phase_highlight.ATTACH_JS
+        + """
+  var attempts = 0;
+  (function attach() {
+    var root = document.getElementById(graphId);
+    var gd = root && (root.classList.contains("js-plotly-plot")
+      ? root : root.querySelector(".js-plotly-plot"));
+    if (gd && gd.on) { __ATTACH_ALL__ return; }
+    if (attempts++ < 100) { setTimeout(attach, 100); }
+  })();
+  return window.dash_clientside.no_update;
+}
+""".replace("__ATTACH_ALL__", _ATTACH_ALL)
+    )
+
+
+class LiquidusFigure(go.Figure):
+    """A :func:`render_tx_surface` figure that runs :func:`post_script` wherever it is drawn.
+
+    In a notebook kernel, ``show()`` and a bare ``fig`` as the last line of a cell draw it from
+    :meth:`notebook_html`; elsewhere, and with an explicit ``renderer``, ``show`` hands plotly the
+    script. ``to_html`` and ``write_html`` run it ahead of any ``post_script`` passed in.
+    """
+
+    def show(self, *args, **kwargs):
+        if args or "renderer" in kwargs or not _in_notebook_kernel():
+            return super().show(*args, **_with_post_script(kwargs))
+        from IPython.display import HTML, display
+
+        display(HTML(self.notebook_html(config=kwargs.get("config"))))
+
+    def to_html(self, *args, **kwargs):
+        return super().to_html(*args, **_with_post_script(kwargs))
+
+    def write_html(self, *args, **kwargs):
+        return super().write_html(*args, **_with_post_script(kwargs))
+
+    def notebook_html(self, config=None) -> str:
+        """The figure as :func:`gliquid.plotting.export.side_by_side_html` draws it, for
+        ``IPython.display.HTML``: ``layout.height`` pixels tall, or :data:`NOTEBOOK_HEIGHT`
+        without one; ``config`` is a plotly config dict."""
+        height = self.layout.height or NOTEBOOK_HEIGHT
+        return side_by_side_html([self], configs=[config], height=f"{height}px")
+
+    def _ipython_display_(self):
+        self.show()
+
+
+def _in_notebook_kernel() -> bool:
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    return hasattr(get_ipython(), "kernel")
+
+
+def _with_post_script(kwargs) -> dict:
+    extra = kwargs.get("post_script")
+    extra = [] if extra is None else [extra] if isinstance(extra, str) else list(extra)
+    return {**kwargs, "post_script": [post_script(), *extra]}
+
+
+def _plane_ranges(fig, pad) -> tuple[list[float], list[float]]:
+    """The x and y extents of every trace in ``fig`` and of every view of its labels, each
+    widened by ``pad`` on both sides."""
+    views = [
+        xy
+        for t in fig.data
+        if isinstance(t.meta, dict)
+        for xy in t.meta.get(ternary_labels.XY_KEY, {}).values()
+    ]
+    xs = np.concatenate(
+        [np.asarray(t.x, dtype=float) for t in fig.data if t.x is not None]
+        + [np.asarray(x, dtype=float) for x, _ in views]
+    )
+    ys = np.concatenate(
+        [np.asarray(t.y, dtype=float) for t in fig.data if t.y is not None]
+        + [np.asarray(y, dtype=float) for _, y in views]
+    )
+    return (
+        [float(np.nanmin(xs)) - pad, float(np.nanmax(xs)) + pad],
+        [float(np.nanmin(ys)) - pad, float(np.nanmax(ys)) + pad],
+    )
+
+
+def _meta(key, role, phase=None) -> dict:
+    """The trace ``meta`` :mod:`gliquid.plotting.phase_highlight` reads: id, role and phase."""
+    return {"gliquid_id": key, "gliquid_role": role, "gliquid_phase": phase}
+
+
+def _field_mesh(
+    piece, colorscale, components, coexistent, hovertemplate, all_T=None, **kwargs
+) -> go.Mesh3d:
+    """A piece of the liquidus as a Mesh3d, coloured by T, hovering the at. % of ``components``
+    (:func:`composition_hover`) and the vertex's coexistent phases.
+
+    ``coexistent`` is the hover text of each surface vertex, which ``piece.parent`` indexes;
+    ``kwargs`` go to the trace. With ``all_T``, the coordinates and temperatures are rounded to
+    :data:`FIELD_COORD_DECIMALS` and :data:`FIELD_T_DECIMALS` places and coloured on the scale
+    of ``all_T``.
+    """
+    xy, temps = piece.xy, piece.T
+    if all_T is not None:
+        xy = np.round(xy, FIELD_COORD_DECIMALS)
+        temps = np.round(temps, FIELD_T_DECIMALS)
+        kwargs.update(cmin=float(all_T.min()), cmax=float(all_T.max()), cauto=False)
+    return go.Mesh3d(
+        x=xy[:, 0],
+        y=xy[:, 1],
+        z=temps,
+        i=piece.faces[:, 0],
+        j=piece.faces[:, 1],
+        k=piece.faces[:, 2],
+        opacity=0.6,
+        colorscale=colorscale,
+        intensity=temps,
+        showscale=False,
+        hovertemplate=hovertemplate,
+        customdata=np.column_stack(
+            (composition_at_pct(piece.comp, components), coexistent[piece.parent])
+        ),
+        **kwargs,
+    )
+
+
+def _outline_trace(outline, color=FIELD_OUTLINE_COLOR, dash=None, **kwargs) -> go.Scatter3d:
+    """A field outline, polylines of (k, 3) x, y, T arrays, as one line trace in ``color``,
+    ``dash`` styled; ``kwargs`` go to the trace."""
+    x, y, z = [], [], []
+    for line in outline:
+        x += [*line[:, 0], None]
+        y += [*line[:, 1], None]
+        z += [*line[:, 2], None]
+    return go.Scatter3d(
+        x=x[:-1],
+        y=y[:-1],
+        z=z[:-1],
+        mode="lines",
+        line=dict(color=color, width=FIELD_OUTLINE_WIDTH, dash=dash),
+        showlegend=False,
+        hoverinfo="skip",
+        **kwargs,
+    )
+
+
+def _add_phase_fields(
+    fig, tags, surface, components, coexistent, fields, phases, hovertemplate
+) -> None:
+    """Add every legend phase's field, the dimmed rest of the surface and the field outline,
+    all hidden, and record their ids in ``tags``.
+
+    ``coexistent`` is the hover text of each ``surface`` vertex, which the ``parent`` of every
+    field piece indexes.
+    """
+    viridis = go.Mesh3d(colorscale="Viridis").colorscale
+    dimmed = phase_highlight.dimmed_colorscale(viridis)
+
+    def mesh(piece, colorscale, key, role, phase):
+        return _field_mesh(
+            piece,
+            colorscale,
+            components,
+            coexistent,
+            hovertemplate,
+            surface.T,
+            visible=False,
+            meta=_meta(key, role, phase),
+        )
+
+    for n, phase in enumerate(str(phase) for phase in phases):
+        field = fields.get(phase)
+        if field is None or field.inside is None:
+            continue
+        tags.fields[phase] = f"gliquid-field-{n}"
+        fig.add_trace(mesh(field.inside, viridis, tags.fields[phase], "field", phase))
+        if field.outside is not None:
+            tags.rests[phase] = f"gliquid-rest-{n}"
+            fig.add_trace(mesh(field.outside, dimmed, tags.rests[phase], "rest", phase))
+        tags.outlines[phase] = f"gliquid-outline-{n}"
+        fig.add_trace(
+            _outline_trace(
+                field.outline,
+                visible=False,
+                meta=_meta(tags.outlines[phase], "outline", phase),
+            )
+        )
+
+    if len(tags.fields) < len(tags.legend):
+        tags.dimmed_liquidus = "gliquid-liquidus-dimmed"
+        fig.add_trace(mesh(surface, dimmed, tags.dimmed_liquidus, "dimmed_liquidus", None))

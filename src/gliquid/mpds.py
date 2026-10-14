@@ -2,11 +2,12 @@
 Author: Joshua Willwerth
 Description: MPDS digitized-phase-diagram parsing for gliquid: downloading/caching the
 publicly-available Materials Platform for Data Science (MPDS) binary phase-diagram JSONs,
-extracting the digitized liquidus, classifying the digitized solid phases, and
-cross-referencing them against the DFT convex hull for the fitting constraints.
+extracting the digitized liquidus, classifying the digitized solid phases, and identifying
+the invariant points the fitting constraints are built from.
 
 System input parsing lives in ``gliquid.phase.validate_and_format_system``; the DFT entry
-cache/load layer lives in ``gliquid.api``.
+cache/load layer lives in ``gliquid.api``; the DFT-to-MPDS phase assignment and the
+solid-coverage gate live in ``gliquid.solid_coverage``.
 GitHub: https://github.com/willwerj
 ORCID: https://orcid.org/0009-0004-6334-9426
 """
@@ -15,52 +16,47 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 
 import numpy as np
 from pymatgen.analysis.phase_diagram import PhaseDiagram
+from pymatgen.core import Composition
 
 import gliquid.api as api
 import gliquid.cache as cache
 import gliquid.config as config
-from gliquid.phase import SS_SPACEGROUPS, UNARY, validate_and_format_system
+from gliquid.phase import UNARY, validate_and_format_system
+from gliquid.plotting.style import standard_formula
 
 logger = logging.getLogger(__name__)
 
 # MPDS shape['phase'] identifiers look like 'Zr/229/cI2' -- prototype/spacegroup/Pearson.
 _SHAPE_PHASE_RE = re.compile(r"^(?P<prototype>[^/]+)/(?P<spacegroup>\d+)/(?P<pearson>[^/]+)$")
 
-# MPDS polymorph suffixes and their temperature ordering (see polymorph_rank). 'hp' is a
-# high-PRESSURE form, not a thermal one, so it sorts last and never wins the
-# low-temperature slot. Subscript markup only ever appears in the 'labels' block.
+# MPDS polymorph suffixes and their temperature ordering (see polymorph_rank); 'hp', a
+# high-pressure form, sorts last.
 _POLYMORPH_RE = re.compile(r"^(lt|rt|ht|hp)(\d*)$", re.I)
 _POLYMORPH_BASE_RANK = {"lt": 0, "rt": 10, "": 10, "ht": 20, "hp": 90}
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
-# extract_digitized_liquidus linearly interpolates across any consecutive-point composition
-# gap wider than _FILL_GAP_X, inserting synthetic points at _FILL_STEP_X spacing, but only
-# WITHIN a covered region. The liquidus_coverage hole tolerance (config.liquidus_gap_tol)
-# is deliberately looser than _FILL_GAP_X.
-#
-# So any consecutive gap wider than _FILL_GAP_X surviving in the returned curve is an
-# undigitized hole between disjoint liquid regions, which is what plotters break on.
+# The leading parenthesised group of an MPDS phase label: '(Ti)', '(Ti) rt', '(Ti, Cr) ht'.
+_COMPONENT_LABEL_RE = re.compile(r"^\(\s*([^()]*?)\s*\)")
+
+# extract_digitized_liquidus fills any consecutive-point gap wider than _FILL_GAP_X inside a
+# covered region with points _FILL_STEP_X apart; a wider gap left in its output is an
+# undigitized hole between disjoint liquid regions.
 _FILL_GAP_X = 0.06
 _FILL_STEP_X = 0.03
 
-# ---------------------------------------------------------------------------------------
-# Lean records: an MPDS diagram reduced to what a fit and a liquidus plot need.
-#
-# A LEAN record drops ``shapes`` and carries the already-stitched liquidus under one
-# reserved key. Kept: ``reference``, ``chemical_elements``, ``temp``, ``comp_range``,
-# ``labels`` and the ``entry``/``jcode``/``year`` citation fields.
-#
-# A reserved KEY rather than a new class, so ``load_mpds_data``'s ``(dict, (curve,
-# is_partial))`` shape is unchanged and every ``shapes`` consumer can detect the
-# reduction (:func:`record_mode`).
-#
-# Stores the PRE-fill curve; callers densify at read time. Storing the filled curve would
-# make ``liquidus_coverage`` report max_gap <= 0.06 for every system and silently disable
-# the interior-sparsity gate in ``BinaryLiquid.from_cache``.
+# How far off a pure end, in mole fraction, a point still counts as on it; _collapse_columns
+# keeps one point per composition column there.
+_AXIS_X_TOL = 1e-3
+
+# Points at different compositions inside the axis window collapse only when their column
+# spans at least this temperature; points at one composition always collapse.
+_AXIS_MIN_SPREAD_K = 40.0
+
+# -- Lean records: the pre-fill stitched liquidus stored under the reserved key, plus only
+# ``reference``/``chemical_elements``/``temp``/``comp_range`` (see :func:`record_mode`) --
 _GLIQUID_KEY = "_gliquid"
 
 #: Bumped when the shape of the ``_gliquid`` block changes.
@@ -72,8 +68,7 @@ def record_mode(mpds_json) -> str:
 
     * ``'empty'`` -- the ``{"reference": None}`` placeholder ``load_mpds_data`` caches for
       a system MPDS has no digitized diagram for. Checked FIRST, so a placeholder is
-      classified the same way in a lean store as in a full one and every consumer keeps its
-      existing "no data" behaviour rather than starting to raise.
+      classified the same way in a lean store as in a full one.
     * ``'lean'`` -- the reduction above: no ``shapes``, the stitched liquidus instead.
     * ``'full'`` -- an ordinary MPDS json.
     """
@@ -85,19 +80,13 @@ def record_mode(mpds_json) -> str:
     return "full"
 
 
-def _require_full_record(mpds_json, caller: str, *, escape: str = "") -> None:
+def require_full_record(mpds_json, caller: str, *, escape: str = "") -> None:
     """Raise unless ``mpds_json`` still carries its digitized ``shapes``.
 
-    **The failure this prevents is not a crash.** ``identify_mpds_phases`` reads
-    ``mpds_json.get("shapes", [])`` and would return ``[]`` on a lean record; an empty phase
-    list makes :func:`assess_solid_coverage` report ZERO reported compounds, which reads as
-    "nothing unsupported", and the solid-coverage gate PASSES. That is a silent wrong answer
-    of exactly the class the gate exists to prevent, so a lean record must stop the caller
-    rather than degrade it.
-
-    There is deliberately **no auto-degrade path**. A fit run without invariant constraints
-    and without the coverage gate is a *different fit*; returning one silently under the
-    same call is the failure mode, not the mitigation.
+    On a lean record :func:`identify_mpds_phases` would return no phases, and
+    :func:`gliquid.solid_coverage.assess_solid_coverage` would then report nothing unsupported
+    and pass the gate. There is no auto-degrade path: a fit without invariant constraints and
+    without the coverage gate is a different fit.
     """
     if record_mode(mpds_json) != "lean":
         return
@@ -116,27 +105,24 @@ def lean_record(mpds_json: dict) -> dict:
 
     Computes :func:`_stitched_liquidus` ONCE and stores its pre-fill ``(x, T)`` points plus
     the ``covered`` region structure, so that ``extract_digitized_liquidus`` and
-    ``liquidus_coverage`` reproduce their full-record answers exactly.
+    ``liquidus_coverage`` reproduce their full-record answers exactly. The only other fields
+    kept are ``chemical_elements``, ``temp``, ``comp_range`` and ``reference``; ``labels`` and
+    the top-level ``entry``/``jcode``/``year`` are dropped.
 
-    ``is_partial`` is **derived** at read time, never stored — storing it would let the two
-    drift. The one thing derivation cannot recover from an empty ``covered`` is *why* it is
-    empty, so the two empty cases are distinguished by ``covered`` itself: ``None`` means
-    "no liquid field was digitized at all" (nothing was ever measured) and ``[]`` means
-    "'L' shapes existed but none yielded a usable branch" — which is exactly the case
-    ``_stitched_liquidus`` reports as partial. Both are faithful values of ``covered``, not
-    a smuggled flag.
+    ``is_partial`` is **derived** at read time, never stored. The two empty cases are
+    distinguished by ``covered`` itself: ``None`` means "no liquid field was digitized at all"
+    and ``[]`` means "'L' shapes existed but none yielded a usable branch", which
+    ``_stitched_liquidus`` reports as partial.
 
-    ``chemical_elements`` is written **explicitly, ``None`` when genuinely unknown**:
-    :func:`mpds_frame_matches` treats an ABSENT frame block as *matching* the caller, so a
-    lean record that merely omitted it would silently mis-mirror every reversed-frame
-    construction.
+    ``chemical_elements`` is written explicitly, ``None`` when unknown:
+    :func:`mpds_frame_matches` treats an ABSENT frame block as matching the caller.
     """
     import gliquid.cache as _cache  # local: cache imports config only, mpds imports cache
 
     stitched, is_partial, covered = _stitched_liquidus(mpds_json, quiet=True)
     if stitched is None and not covered:
         covered = [] if is_partial else None
-    header = _cache.mpds_header(mpds_json)
+    header = _cache.mpds_header(mpds_json, lean=True)
     header.setdefault("chemical_elements", None)
     return {
         **header,
@@ -152,10 +138,8 @@ def lean_record(mpds_json: dict) -> dict:
 def _lean_stitched(block: dict, quiet: bool) -> tuple[list[list] | None, bool, list[list[float]]]:
     """``_stitched_liquidus``'s answer, read back off a lean record's ``_gliquid`` block.
 
-    The warnings are re-emitted so a lean store does not silently lose the "this system's
-    liquidus is incomplete" signal. Only the disjoint-shape message differs: it can no
-    longer name the branch COUNT (the branches are gone), so it names the covered regions,
-    which is the part a reader acts on.
+    Emits the same warnings, except that the disjoint-shape message names the covered regions
+    instead of the branch count.
     """
     stitched, covered = block.get("stitched"), block.get("covered")
     if covered is None:
@@ -201,8 +185,8 @@ def parse_shape_structure(shape: dict) -> dict:
     matched to a loaded solid-solution model.
 
     Every field is ``None`` when MPDS did not resolve the shape to a structure. That is the
-    normal case for the full-composition ``'(A, B)'`` labels (Os-Re, Sc-Zr, Hf-Zr) and also
-    happens for a minority of ordinary compounds (Al-Cu ``'Cu11Al9 rt'``, Rb-Sn ``'RbSn2'``).
+    normal case for the full-composition ``'(A, B)'`` labels and also happens for some
+    ordinary compounds.
     Malformed identifiers degrade to all-``None`` rather than raising: this metadata is
     advisory, never load-bearing for parsing.
     """
@@ -222,20 +206,17 @@ def liquid_shape_paths(mpds_json: dict) -> list[str]:
 
     A miscibility gap, a monotectic, or a pair of terminal wedges is drawn as SEVERAL
     disjoint one-phase 'L' shapes, and the liquidus is the lower envelope of all of them.
-    Reading only the first reports a sliver: Ag-Fe spans 0.006 of the composition range
-    instead of 1.0, Bi-Si 0.075, Er-Ta 0.169.
 
     The label is matched exactly, so the two-phase dome between the branches ('L1 + L2',
     'L + G', ...) is never mistaken for liquid field. A shape whose ``kind`` is something
-    other than 'phase' is a drawing overlay or a mislabelled solid compound (five in the
-    cached corpus, e.g. Hg-Pd, Li-Mo) and is likewise not liquid; ``kind``-less shapes in
-    older cached jsons are kept.
+    other than 'phase' is a drawing overlay or a mislabelled solid compound and is likewise
+    not liquid; ``kind``-less shapes are kept.
 
     Raises:
         config.CacheModeError: on a LEAN record, which has no ``shapes``. Reachable only by
             a direct caller — ``_stitched_liquidus`` short-circuits before it.
     """
-    _require_full_record(mpds_json, "liquid_shape_paths")
+    require_full_record(mpds_json, "liquid_shape_paths")
     return [
         shape["svgpath"]
         for shape in mpds_json.get("shapes", [])
@@ -249,9 +230,11 @@ def _shape_liquidus(svgpath: str, mpds_json: dict) -> list[list] | None:
     """One 'L' shape -> its liquidus branch, sorted by composition, or None.
 
     Strip the frame-boundary points (the flat lid an open wedge is closed with is frame,
-    not liquidus), split what is left into monotonic sections, and stitch the sections
-    that line up with the pure-element endpoints onto the longest one. ``None`` when the
-    shape has too few interior points to be a curve.
+    not liquidus), split what is left into monotonic sections, stitch the sections that
+    line up with the pure-element endpoints onto the longest one, and collapse what
+    survives to one temperature per composition (:func:`_collapse_columns`), which is what
+    removes the ring-closure edges the frame strip cannot see. ``None`` when the shape has
+    too few interior points to be a curve.
     """
     liquidus = shape_to_list(svgpath)
 
@@ -318,7 +301,68 @@ def _shape_liquidus(svgpath: str, mpds_json: dict) -> list[list] | None:
             ):
                 main_section += sec
 
-    return sorted(main_section)
+    return _collapse_columns(main_section, mpds_json)
+
+
+def _collapse_columns(branch: list[list], mpds_json: dict) -> list[list]:
+    """One temperature per composition: the ring-closure edges MPDS draws up the axes, gone.
+
+    An 'L' svgpath is a closed RING, not a curve. Having traced the liquidus it closes the
+    liquid field by running up a pure-element axis and back across a top lid, and vertices
+    of those closure edges reach the stitched section: the frame strip only catches a lid
+    sitting ON the frame, and ``within_tol_from_line``'s zero-width fallback judges a vertical
+    stitch candidate on the gap between its two ANCHORS, never on the candidate's own
+    temperature. Drawn, the survivor is a vertical spike at the edge of the plot.
+
+    The liquidus is single-valued in composition, so two points at the same composition
+    cannot both be it, and the liquid field lies ABOVE the liquidus, so the colder one is
+    the boundary. At a pure end the liquidus is a single point -- that element's melting
+    temperature -- so the whole axis column collapses to one, picked by distance from
+    ``t_fusion`` rather than by temperature: a terminal solid solution merged into the same
+    ring also reaches the axis, and taking the coldest point there swaps the melting point
+    for a solidus.
+
+    Like :func:`_lower_envelope` this only ever DROPS a point, never moves or invents one,
+    so the shape's composition span, its ``covered`` interval and ``is_partial`` are
+    untouched.
+    """
+    t_fusion = [UNARY[element].t_fusion for element in mpds_json["chemical_elements"]]
+
+    def axis_end(x):
+        """0 or 1 when this composition is ON a pure-element axis, else None."""
+        if x <= _AXIS_X_TOL:
+            return 0
+        if x >= 1 - _AXIS_X_TOL:
+            return 1
+        return None
+
+    # One point per exact composition first: the coldest off the axes; on an axis the one nearest
+    # t_fusion, ties broken cold.
+    columns = {}
+    for point in branch:
+        columns.setdefault(point[0], []).append(point)
+
+    kept = []
+    for x, column in columns.items():
+        end = axis_end(x)
+        if len(column) == 1:
+            kept.append(column[0])
+        elif end is None:
+            kept.append(min(column, key=lambda p: p[1]))
+        else:
+            kept.append(min(column, key=lambda p: (abs(p[1] - t_fusion[end]), p[1])))
+
+    # Then the closure column at an axis: collapsed only when it spans _AXIS_MIN_SPREAD_K.
+    for end in (0, 1):
+        window = [p for p in kept if axis_end(p[0]) == end]
+        if len(window) < 2:
+            continue
+        if max(p[1] for p in window) - min(p[1] for p in window) < _AXIS_MIN_SPREAD_K:
+            continue
+        survivor = min(window, key=lambda p: (abs(p[1] - t_fusion[end]), p[1]))
+        kept = [p for p in kept if axis_end(p[0]) != end or p is survivor]
+
+    return sorted(kept)
 
 
 def _lower_envelope(branches: list[list[list]]) -> list[list]:
@@ -356,7 +400,7 @@ def _lower_envelope(branches: list[list[list]]) -> list[list]:
                 for t in (t_at(other, pt[0]) for j, other in enumerate(branches) if j != i)
             ):
                 continue
-            if tuple(pt) in seen:  # shapes that share a vertex must not double it up
+            if tuple(pt) in seen:  # a vertex shared by two shapes is kept once
                 continue
             seen.add(tuple(pt))
             envelope.append(pt)
@@ -386,17 +430,14 @@ def _stitched_liquidus(
     ``is_partial`` describes the UNION's coverage, not one shape's: it is set when the
     branch spans stop short of the pure ends, and also when they do not join up
     (``len(covered) > 1``), since a diagram whose liquid field is drawn in disjoint pieces
-    covers a composition interval no digitized shape reaches (Bi-Si: full span, ~0.86
-    hole). A single-'L' diagram has one branch, so only the endpoint condition can fire.
+    covers a composition interval no digitized shape reaches. A single-'L' diagram has one
+    branch, so only the endpoint condition can fire.
 
     ``quiet`` suppresses the warnings so a metrics pass over a json that was already
     extracted does not double-count them in scanned logs.
 
-    THIS IS THE ONE SEAM lean mode needs. Both ``extract_digitized_liquidus`` and
-    ``liquidus_coverage`` route through here, so the early return below is what makes a
-    lean record work end to end — and it is why the reduction stores the pre-fill curve:
-    the two callers must keep seeing the same thing they always saw at this point,
-    ``liquidus_coverage`` most of all.
+    Both ``extract_digitized_liquidus`` and ``liquidus_coverage`` route through here; on a
+    lean record the early return below serves the stored pre-fill curve.
     """
     if mpds_json.get("reference") is None:
         if not quiet:
@@ -422,7 +463,8 @@ def _stitched_liquidus(
     is_partial = False
     covered = merge_ranges([[branch[0][0], branch[-1][0]] for branch in branches])
 
-    # If the liquidus does not have endpoints near the ends of the composition range, melting temps won't be good
+    # If the liquidus does not have endpoints near the ends of the composition range, melting temps
+    # won't be good
     if covered[0][0] > 0.03 or covered[-1][1] < 0.97:
         if not quiet:
             logger.warning(
@@ -506,12 +548,9 @@ def liquidus_coverage(mpds_json: dict, gap_tol: float | None = None) -> dict | N
 
     ``extract_digitized_liquidus`` linearly interpolates across in-region composition gaps
     wider than ``_FILL_GAP_X``, so its output cannot distinguish digitized points from
-    synthetic fill: a diagram drawing its liquid as separate wedges at 0-7 and 92-100 at.%
-    still comes back spanning the full axis (Bi-Si class — and it is precisely the
-    multi-shape envelope in ``_stitched_liquidus`` that makes such a diagram reach full
-    span at all), even though the interior between the wedges is now left empty rather than
-    fabricated. An endpoint-span check therefore over-reports such data as complete — this
-    measures the stitched pre-fill curve instead:
+    synthetic fill, and a diagram drawing its liquid as separate terminal wedges still comes
+    back spanning the full axis. An endpoint-span check therefore over-reports such data as
+    complete; this measures the stitched pre-fill curve instead:
 
     - ``max_gap``: widest composition interval between consecutive digitized points;
     - ``covered_fraction``: fraction of the stitched span made of inter-point gaps no wider
@@ -561,11 +600,9 @@ def liquidus_coverage(mpds_json: dict, gap_tol: float | None = None) -> dict | N
 def mirror_liquidus_coverage(coverage: dict) -> dict:
     """A :func:`liquidus_coverage` dict reflected onto the reversed component frame.
 
-    ``span``, ``n_points``, ``max_gap`` and ``covered_fraction`` are mirror-invariant —
-    which is why a caller re-framing a system could historically carry the whole dict
-    across untouched — but ``x_min``/``x_max`` and above all ``holes`` are POSITIONS, and
-    ``x -> 1-x`` moves them. A hole carried across a frame flip unmirrored masks the
-    opposite end of the diagram and does so silently: the metrics still look plausible.
+    ``span``, ``n_points``, ``max_gap`` and ``covered_fraction`` are mirror-invariant, but
+    ``x_min``/``x_max`` and above all ``holes`` are POSITIONS, and ``x -> 1-x`` moves them. A
+    hole carried across a frame flip unmirrored masks the opposite end of the diagram.
     An involution, like :func:`mirror_liquidus`.
     """
     mirrored = dict(coverage)
@@ -576,31 +613,36 @@ def mirror_liquidus_coverage(coverage: dict) -> dict:
     return mirrored
 
 
-def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, bool]]:
+@config._removed_keywords({"input": "system"})
+def load_mpds_data(system, pd_ind=None) -> tuple[dict, tuple[list[list] | None, bool]]:
     """Retrieves MPDS data for a binary system.
 
     Args:
-        input (str or list): System specification (e.g., 'A-B' or ['A', 'B']).
+        system (str or list): System specification (e.g., 'A-B' or ['A', 'B']).
         pd_ind (int | None): Index of the cached MPDS phase diagram to load.
 
     Returns:
         tuple[dict, tuple[list[list] | None, bool]]: The system MPDS JSON and the digitized
-        liquidus curve formatted for fitting. Unary reference data no longer rides along —
-        consumers take it from ``gliquid.phase.UNARY.component_data`` directly. Note that the
+        liquidus curve formatted for fitting. Unary reference data is not returned; take it from
+        ``gliquid.phase.UNARY.component_data``. Note that the
         MPDS json in the specified cache directory must follow the alphabetized, hyphenated
         naming convention (e.g. 'A-B.json')
+
+    Raises:
+        CacheModeError: the configured store is read-only and holds no record for the
+            system; raised before any MPDS request.
+        mpds_client.APIError: an MPDS request failed with any code other than 204 (no
+            hits); nothing is cached.
     """
-    components, _, _ = validate_and_format_system(input)
+    components, _, _ = validate_and_format_system(system)
     if len(components) != 2:
         raise ValueError(
             f"MPDS binary phase-diagram retrieval needs exactly 2 components, got {components}."
         )
-    # On-disk keys (and the MPDS query) canonicalize to the alphabetical name; the raw
-    # json therefore stays in the alphabetical frame — consumers mirror at use.
+    # On-disk keys use the alphabetical system name, so the json is in the alphabetical frame.
     cache_name = api._canonical_sys_name(components)
-    # Which diagram a pd_ind resolves to is a question about the RECORDS a store holds, not
-    # about files in a directory, so it is asked of the backend. ``variant == ""`` is the
-    # indexless ``<sys>.json`` naming; ``"0"``, ``"1"``, ... are the indexed diagrams.
+    # The backend resolves pd_ind: ``variant == ""`` is the indexless ``<sys>.json`` naming;
+    # ``"0"``, ``"1"``, ... are the indexed diagrams.
     backend = cache.resolve_backend(None)
     available = set(backend.variants(cache_name, cache.KIND_MPDS))
     has_indexless = "" in available
@@ -610,9 +652,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
     if pd_ind is None:
         variant = "" if has_indexless else "0"
         if has_indexless and has_pd0:
-            # Both namings present: the indexless file SHADOWS PD_0 and the caller almost
-            # certainly meant the indexed one. Silent in a single-diagram store (no PD_0
-            # sibling), which is where indexless is the legitimate convention.
+            # Both namings present: the indexless file shadows PD_0; warns.
             logger.warning(
                 f"{cache_name}.json shadows {cache_name}_MPDS_PD_0.json in {sys_dir}; "
                 f"pd_ind=None is resolving the indexless file. Pass pd_ind explicitly to "
@@ -624,11 +664,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
             if has_pd0:
                 raise ValueError(f"No matching json with pd_ind={pd_ind} found in cache!")
             if has_indexless:
-                # An indexless-only store holds exactly one diagram, so pd_ind=0 names it.
-                # Without this the requested-index path falls through to the API branch and
-                # hands back {"reference": None} with no error — the mirror image of the
-                # shadowing trap above, and it fires on the pin (pd_ind=0) recommended to
-                # avoid that trap.
+                # An indexless-only store holds one diagram, which pd_ind=0 names.
                 if pd_ind != 0:
                     raise ValueError(
                         f"No matching json with pd_ind={pd_ind} found in cache! "
@@ -651,20 +687,19 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                 "Reading MPDS json from entry at " + mpds_json["reference"]["entry"] + "..."
             )
     else:  # Try API call
-        # THE remote MPDS path. Guarded ABOVE the key check below, which is the whole
-        # point: without a key this function logs a warning and returns
-        # ``{"reference": None}``, a record shaped exactly like the real answer "MPDS holds
-        # no digitized diagram for this system". Under offline mode that silence would be
-        # indistinguishable from that fact, and a fit would proceed against a diagram
-        # nobody ever looked for. So it raises instead (config.OfflineError).
-        config.require_online(f"Fetching the MPDS phase diagram for '{cache_name}'")
         logger.info("No cached binary phase data found!")
         mpds_json = {"reference": None}
+        # Without a key nothing is fetched and the system proceeds with no MPDS reference.
         if not api.get_api_key(api.MPDS_KEY_VAR):
             logger.warning(
                 "MPDS_API_KEY not found in environment variables. Proceeding without binary phase data."
             )
             return mpds_json, (None, False)
+        config.require_online(f"Fetching the MPDS phase diagram for '{cache_name}'")
+        api._require_writable_store(
+            backend,
+            sys_key if pd_ind is not None else cache.CacheKey(cache_name, cache.KIND_MPDS, ""),
+        )
         client = api.get_mpds_client()
         fields = {
             "C": [
@@ -700,7 +735,14 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                     continue
                 if extract_digitized_liquidus(dia_json)[0]:
                     valid_jsons.append(dia_json)
-        except api.mpds_api_error():
+        except api.mpds_api_error() as exc:
+            code = getattr(exc, "code", None)
+            if code != 204:
+                logger.error(
+                    f"MPDS request for '{cache_name}' failed with code {code}: "
+                    f"{getattr(exc, 'msg', str(exc))}. Nothing was cached."
+                )
+                raise
             logger.info("Got 0 hits")
 
         if not valid_jsons:
@@ -715,7 +757,7 @@ def load_mpds_data(input, pd_ind=None) -> tuple[dict, tuple[list[list] | None, b
                 logger.info("No valid phase diagrams found, caching default json")
             else:
                 logger.info(
-                    f"Caching binary phase data from entry at {dia_json['reference']['entry']} as {sys_file}..."
+                    f"Caching binary phase data from entry at {mpds_json['reference']['entry']} as {sys_file}..."
                 )
         else:
             for ind, dia_json in enumerate(valid_jsons):
@@ -779,20 +821,33 @@ def mirror_mpds_phases(phases: list[dict]) -> list[dict]:
 
 
 def is_component_phase_label(name: str, elements) -> bool:
-    """True when ``name`` is MPDS's ``'(X)'`` spelling of a pure component's own phase.
+    """True when ``name`` is MPDS's parenthesised spelling of a COMPONENT solution field.
 
-    Matches the bare label only (``'(Ti)'``), never the binary solid solution
-    ``'(Ti, Cr)'`` -- callers pass ``shape['label'].split()[0]``, so an ``'(A, B)'`` label
-    arrives as ``'(A,'`` and cannot collide.
+    Two spellings match: a terminal field on one component, ``'(Ti)'`` / ``'(Ti) rt'``, and
+    a field spanning both, ``'(Ti, Cr)'`` / ``'(Ti, Cr) ht'``. Every symbol inside the
+    parentheses must be one of ``elements``; with no ``elements`` nothing matches.
 
-    Deliberately name-based rather than composition-based. A terminal composition is NOT a
-    usable discriminator: across the cache, the 0.005-0.03 / 0.97-0.995 bands are populated
-    almost entirely by genuine line compounds at extreme stoichiometry (DyB66, LiC12,
-    Al1.67B22), while real component phases are digitized anywhere from the frame edge out
-    to x ~ 0.19 when the terminal solid solution has appreciable solubility ('(Mn)' at 0.186
-    in Mn-Ti). Only the label separates the two.
+    Only the LEADING parenthesised group is read, so a polymorph suffix is irrelevant. A
+    caller that passes ``shape['label'].split()[0]`` supplies ``'(Ti)'`` for a terminal
+    label and ``'(Ti,'`` for a two-component one; the latter has no closing parenthesis and
+    does not match.
+
+    Name-based, not composition-based: line compounds at extreme stoichiometry lie as near
+    the pure ends as component phases do, and a component phase can be digitized well away
+    from its end.
+
+    :func:`gliquid.solid_coverage.assess_solid_coverage` reads it the other way round: a
+    digitized FIELD whose label this rejects is an ordered intermetallic with a homogeneity
+    range, and is scored as a compound rather than as a solid solution.
     """
-    return any(name == f"({el})" for el in (elements or ()))
+    symbols = set(elements or ())
+    if not symbols:
+        return False
+    match = _COMPONENT_LABEL_RE.match(_HTML_TAG_RE.sub("", name or "").strip())
+    if match is None:
+        return False
+    named = [token.strip() for token in match.group(1).split(",")]
+    return all(token in symbols for token in named)
 
 
 def is_multiphase_field_label(label: str) -> bool:
@@ -804,19 +859,35 @@ def is_multiphase_field_label(label: str) -> bool:
     field BETWEEN two phases, not a phase -- even though MPDS routinely tags it
     ``nphases: 1``, which is what lets it reach :func:`identify_mpds_phases` at all.
 
-    The check is needed because a boundary line is named from
-    ``shape['label'].split()[0]``, which silently promotes the first constituent into a
-    phantom compound sitting at the FIELD's composition. Hg-Zr's Hg3Zr line at 25 at.%
-    Zr came back as a second 'HgZr3' (the real one is the 75 at.% line), and B-Mn grew
-    an 'Mn2B' at 80 at.% Mn beside the real one at 66.7 at.%. Both were confirmed
-    against the source figures. Across the cache the pattern covers 23 shapes in 18
-    systems; only the handful that collide with a correctly named shape are visible
-    without this check -- the rest add a phantom compound no consumer can spot.
+    A boundary line is named from ``shape['label'].split()[0]``, which would promote the
+    first constituent into a phantom compound at the FIELD's composition.
 
     A ``'+'`` anywhere in the label is the signal: no compound name or polymorph suffix
-    in the cached corpus contains one.
+    contains one.
     """
     return "+" in (label or "")
+
+
+def is_fluid_phase_label(label: str) -> bool:
+    """True when an MPDS label names the liquid or gas field itself -- ``'L'`` or ``'G'``.
+
+    MPDS sometimes emits a liquid or gas field as a ``kind: 'compound'`` STROKE flagged
+    ``is_solid: true``, rather than as an area: a terminal liquid sliver too narrow to
+    fill gets drawn as a 2- or 3-point line, and a frame edge can capture the nearby
+    printed ``'L'`` text. Without this check :func:`identify_mpds_phases` would name the shape
+    from ``split_phase_label(...)[0]`` and emit a line compound literally called ``'L'``.
+
+    :func:`liquid_shape_paths` already refuses these shapes on the LIQUIDUS side, via its
+    ``kind in (None, 'phase')`` filter. That filter cannot be reused here: every genuine
+    line compound is ``kind: 'compound'``, so applying it at the phase-list gate would
+    delete all of them. The label is the discriminator, not the kind.
+
+    Matched on the BASE name only, so a polymorph suffix cannot slip a fluid field
+    through. No element symbol is ``'L'`` or ``'G'``, so the check cannot collide with an
+    element's phase. Multi-phase field labels such as ``'L + G'`` are caught earlier by
+    :func:`is_multiphase_field_label`.
+    """
+    return split_phase_label(label)[0] in ("L", "G")
 
 
 def split_phase_label(label: str) -> tuple[str, str]:
@@ -840,10 +911,8 @@ def polymorph_rank(suffix: str) -> int:
     thermal form); a compound token embedded in a longer suffix still counts
     ('Pt3Ga Ga + rt' -> rt).
 
-    Ranking is by label rather than by digitized temperature because the temperature is
-    not trustworthy here: C-Ce draws BOTH CeC2 lines over the full temperature axis ~10 K
-    apart, so the ht form's own bounds start LOWER than the rt form's (472.5 K vs 491.4 K)
-    and any temperature-based ranking picks the wrong form as the low-temperature one.
+    Ranking is by label, not by digitized temperature: a diagram can draw two thermal forms
+    over overlapping temperature ranges, whose digitized bounds then order them wrongly.
     """
     for token in (suffix or "").split():
         match = _POLYMORPH_RE.match(token)
@@ -853,22 +922,214 @@ def polymorph_rank(suffix: str) -> int:
     return _POLYMORPH_BASE_RANK[""]
 
 
-def low_temp_threshold(mpds_json: dict) -> float:
+ROOM_TEMPERATURE = 298.15
+"""K. A phase whose field reaches this is stable at room temperature by inspection."""
+
+
+def low_temp_threshold(mpds_json: dict, fraction: float | None = None) -> float:
     """Temperature (K) below which a digitized phase counts as stable at low temperature.
 
-    The bottom of the diagram's own temperature axis plus 10% of its span. Relative rather
-    than absolute because diagrams are digitized over wildly different ranges: a fixed
-    cutoff would admit nearly everything in C-La's 0-4500 C frame and nearly nothing in
-    C-Ce's 200-2600 C one.
+    The bottom of the diagram's declared temperature axis plus ``fraction`` of its span.
+    Being a fraction of the DECLARED axis, this moves with a wrong axis;
+    :func:`is_low_temperature_phase` pairs it with :func:`reaches_room_temperature`, which
+    does not.
+
+    Args:
+        mpds_json: the source json; only ``temp`` (axis bottom and top, in C) is read.
+        fraction: fraction of the axis span. Defaults to
+            ``config.coverage_low_temp_axis_fraction``.
+
+    Returns:
+        float: the cutoff in K.
     """
+    fraction = config.coverage_default("low_temp_axis_fraction", fraction)
     lo, hi = mpds_json["temp"][0], mpds_json["temp"][1]
-    return (lo + 273.15) + (hi - lo) * 0.10
+    return (lo + 273.15) + (hi - lo) * float(fraction)
+
+
+def reaches_room_temperature(phase: dict) -> bool:
+    """Does this phase's digitized field extend down to room temperature or below?
+
+    Independent of the diagram's declared axis, and so independent of whether that axis is
+    right. A compound drawn as stable at room temperature IS a low-temperature phase however
+    the frame was recorded, and a hole in the digitization below its field cannot change that.
+
+    Args:
+        phase: a digitized phase record carrying ``tbounds``.
+
+    Returns:
+        bool: True when the field's lower bound is at or below
+        :data:`ROOM_TEMPERATURE`; False when it is higher or ``tbounds`` is unusable.
+    """
+    bounds = phase.get("tbounds") or []
+    if not bounds or not bounds[0]:
+        return False
+    try:
+        return float(bounds[0][1]) <= ROOM_TEMPERATURE
+    except (TypeError, ValueError, IndexError):
+        return False
+
+
+# Composition slack for matching a phase to an unpaired-form key after a frame mirror.
+_UNPAIRED_KEY_TOL = 1e-9
+
+
+def is_unpaired_ht_form(phase: dict, unpaired_ht) -> bool:
+    """Whether ``phase`` is one of the forms :func:`mark_unpaired_ht_forms` reported.
+
+    Matched on the suffix-stripped ``name`` and on ``comp``, so a raw shape and a collapsed
+    cluster that inherited the form's identity both test true.
+
+    Args:
+        phase: a phase dict carrying ``name`` and ``comp``.
+        unpaired_ht: ``(base label, composition)`` keys, in ``phase``'s component frame.
+
+    Returns:
+        bool: False for an empty set or a phase with no composition.
+    """
+    if not unpaired_ht:
+        return False
+    comp = phase.get("comp")
+    if comp is None:
+        return False
+    base = split_phase_label(phase.get("name") or "")[0]
+    return any(
+        key == base and abs(float(x) - float(comp)) <= _UNPAIRED_KEY_TOL for key, x in unpaired_ht
+    )
+
+
+def is_low_temperature_phase(
+    phase: dict, threshold: float, *, unpaired_ht: frozenset = frozenset()
+) -> bool:
+    """Whether a digitized phase is a low-temperature phase.
+
+    True iff ``phase['type']`` is ``'lc'``, ``'ss'`` or ``'comp'``, the phase is not an
+    unpaired high-temperature form, and its field bottom is below ``threshold`` or reaches
+    room temperature (:func:`reaches_room_temperature`). The one rule every consumer of
+    "low-temperature phase" applies. Run :func:`collapse_polymorphs` first, so a compound's
+    thermal forms are judged as one phase by the bottom of its coolest form.
+
+    Args:
+        phase: a phase dict from :func:`identify_mpds_phases` or :func:`collapse_polymorphs`.
+        threshold: low-temperature cutoff in K, from :func:`low_temp_threshold`.
+        unpaired_ht: ``(base label, composition)`` keys from :func:`mark_unpaired_ht_forms`,
+            in the same component frame as ``phase``. A listed phase is never
+            low-temperature, whatever its field bottom.
+
+    Returns:
+        bool
+    """
+    if phase.get("type") not in ("lc", "ss", "comp"):
+        return False
+    if is_unpaired_ht_form(phase, unpaired_ht):
+        return False
+    try:
+        below = phase["tbounds"][0][1] < threshold
+    except (KeyError, TypeError, IndexError):
+        below = False
+    return below or reaches_room_temperature(phase)
+
+
+def compound_key(label: str, elements) -> str:
+    """The compound a phase label names, spelled one way for every thermal form.
+
+    ``plotting.style.standard_formula`` of the suffix-stripped label in ``elements`` order;
+    the raw base label when that will not parse, names an element outside ``elements``, or
+    is a component label.
+    """
+    base = split_phase_label(label)[0]
+    if not base or base.startswith("("):
+        return base
+    try:
+        return standard_formula(base, list(elements or []))
+    except Exception:  # noqa: BLE001 - any unparseable label keys as its own text
+        return base
+
+
+def _label_forms(
+    mpds_json: dict | None, elements
+) -> dict[str, list[tuple[int, float, float | None]]]:
+    """Thermal forms the json's ``labels`` block names, keyed by :func:`compound_key`.
+
+    Each entry is ``(polymorph rank, label temperature in K, label composition)``; the
+    composition is None when the entry carries no usable position. Field annotations
+    (:func:`is_multiphase_field_label`) and malformed entries are skipped.
+    """
+    forms: dict[str, list[tuple[int, float, float | None]]] = {}
+    for entry in (mpds_json or {}).get("labels") or []:
+        try:
+            if is_multiphase_field_label(entry[0]):
+                continue
+            suffix = split_phase_label(entry[0])[1]
+            temp = float(entry[1][1]) + 273.15
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        try:
+            comp = float(entry[1][0]) / 100
+        except (TypeError, ValueError, IndexError):
+            comp = None
+        forms.setdefault(compound_key(entry[0], elements), []).append(
+            (polymorph_rank(suffix), temp, comp)
+        )
+    return forms
+
+
+def mark_unpaired_ht_forms(
+    phases: list[dict],
+    elements,
+    *,
+    pair_tol: float | None = None,
+    mpds_json: dict | None = None,
+) -> frozenset[tuple[str, float]]:
+    """Keys of the high-temperature forms that have no cooler sibling to pair with.
+
+    A shape whose polymorph suffix ranks above ``rt`` (:func:`polymorph_rank`) is unpaired
+    when no shape and no ``labels``-block entry of the same compound with a rank at or
+    below ``rt`` lies within ``pair_tol`` of its composition. Compound identity is the
+    normalised formula :func:`collapse_polymorphs` pairs by. Component phases (``'('``
+    labels) are never reported. Call it on the raw shapes, before collapse, so every form
+    is visible to the sibling test.
+
+    Args:
+        phases: ``identify_mpds_phases(..., with_polymorph=True)`` output. Without the
+            ``'polymorph'`` key a line compound's suffix is unknown and it ranks as
+            unsuffixed.
+        elements: the component symbols, in the frame ``phases`` are in.
+        pair_tol: composition window. Defaults to ``config.coverage_polymorph_pair_tol``.
+        mpds_json: the source json, read for its ``labels`` block. None means no labels.
+
+    Returns:
+        frozenset: ``(base label, composition)`` of every unpaired form -- the key
+        :func:`is_low_temperature_phase` tests against, which a collapsed cluster of such
+        forms inherits from its lowest-ranked member.
+    """
+    tol = config.coverage_polymorph_pair_tol if pair_tol is None else float(pair_tol)
+    forms = _label_forms(mpds_json, elements)
+    rt_rank = _POLYMORPH_BASE_RANK["rt"]
+    keyed = []
+    for phase in phases:
+        name = phase.get("name") or ""
+        base, name_suffix = split_phase_label(name)
+        if base.startswith("(") or phase.get("comp") is None:
+            continue
+        suffix = phase["polymorph"] if "polymorph" in phase else name_suffix
+        keyed.append(
+            (compound_key(name, elements), polymorph_rank(suffix), float(phase["comp"]), base)
+        )
+    unpaired = set()
+    for key, rank, comp, base in keyed:
+        if rank <= rt_rank:
+            continue
+        siblings = [x for k, r, x, _b in keyed if k == key and r <= rt_rank]
+        siblings += [x for r, _t, x in forms.get(key, []) if r <= rt_rank and x is not None]
+        if not any(abs(x - comp) <= tol for x in siblings):
+            unpaired.add((base, comp))
+    return frozenset(unpaired)
 
 
 def _merge_polymorph_cluster(
-    base: str,
     cluster: list[dict],
-    label_forms: list[tuple[int, float]],
+    label_forms: list[tuple[int, float, float | None]],
     temp_threshold: float | None,
 ) -> dict:
     """Merge one compound's polymorph shapes into a single phase dict. See
@@ -876,116 +1137,72 @@ def _merge_polymorph_cluster(
     ranks = [polymorph_rank(phase.get("polymorph", "")) for phase in cluster]
     lowest_rank = min(ranks)
     low = cluster[ranks.index(lowest_rank)]
+    base = split_phase_label(low["name"])[0]
     hottest = max(cluster, key=lambda phase: phase["tbounds"][1][1])
 
     merged = dict(low)
     merged["tbounds"] = [low["tbounds"][0], hottest["tbounds"][1]]
     distinct = len(set(ranks)) > 1
-    # The low-temperature form's own ceiling: above it the liquidus is conjugate to a
-    # hotter form. Degenerate (== the melting point) when the digitizer drew both lines
-    # full height, which correctly leaves the whole flanking liquidus interval suspect.
-    transition = low["tbounds"][1][1] if distinct else None
 
-    # Recover a low-temperature form MPDS named in 'labels' but never digitized as its own
-    # shape: C-La labels 'LaC2 rt' at 102 C while digitizing only the ht dome (bottom
-    # 1355 K), so without this neither form reaches the low-temperature tables at all.
-    if temp_threshold is not None and low["tbounds"][0][1] >= temp_threshold:
+    # Recover a low-temperature form named in 'labels' but not digitized as its own shape.
+    if temp_threshold is not None and not is_low_temperature_phase(low, temp_threshold):
+        x_lo = low["tbounds"][0][0]
         cooler = sorted(
             (rank, temp)
-            for rank, temp in label_forms
-            if temp < temp_threshold and rank <= lowest_rank
+            for rank, temp, _comp in label_forms
+            if rank <= lowest_rank
+            and is_low_temperature_phase(
+                {"type": low["type"], "tbounds": [[x_lo, temp]]}, temp_threshold
+            )
         )
         if cooler:
             rank_lo, temp_lo = cooler[0]
             if rank_lo < lowest_rank:
                 distinct = True
-                transition = low["tbounds"][0][1]
             merged["tbounds"] = [[low["tbounds"][0][0], temp_lo], merged["tbounds"][1]]
 
     if len(cluster) > 1 or distinct:
         merged["name"] = base
-    if distinct:
-        merged["distinct_melting_polymorph"] = True
-        merged["polymorph_transition_temp"] = transition
     return merged
 
 
-def collapse_polymorphs(
+def _collapse_polymorph_clusters(
     phases: list[dict],
     mpds_json: dict | None = None,
     *,
     temp_threshold: float | None = None,
-    comp_tol: float = 0.02,
-) -> list[dict]:
-    """Collapse a compound's digitized polymorphs into one phase per compound.
+    comp_tol: float | None = None,
+    elements=None,
+) -> list[tuple[dict, list[dict]]]:
+    """One ``(merged phase, member shapes)`` pair per compound-composition cluster.
 
-    MPDS digitizes every polymorph of a compound as its own shape ('CeC2 rt' AND
-    'CeC2 ht'), which double-counts the compound wherever a consumer treats one shape as
-    one phase. C-Ce drew two CeC2 bars in the low-temperature phase comparison -- one
-    classified congruent, one incongruent, overlapping into a composite color -- because
-    :func:`identify_mpds_phases` strips the suffix from a line compound's name and the two
-    landed in different tables.
-
-    One entry survives per (compound, composition) cluster. It takes its identity and its
-    lower temperature bound from the LOWEST-temperature polymorph -- the form stable at the
-    bottom of the diagram, and the only one a 0 K DFT hull can hold -- and its upper bound
-    from the compound's highest melting/decomposition temperature, so congruent-vs-
-    incongruent classification still sees the real melting point. Entries sharing a name at
-    DIFFERENT compositions are a separate digitization defect (Al-Dy labels DyAl2 at both
-    0.333 and 0.666, Hg-Zr HgZr3 at 0.25 and 0.75) and are deliberately left alone rather
-    than merged into a phantom phase.
-
-    A cluster holding more than one thermal form gets ``'distinct_melting_polymorph': True``
-    and ``'polymorph_transition_temp'``. Above that temperature the liquidus is conjugate to
-    a form that is NOT the hull's ground state, so no solid free-energy reference exists for
-    it -- ``BinaryLiquid.fit_parameters`` masks the flanking composition range on that basis.
-
-    Args:
-        phases (list): Phase dicts from ``identify_mpds_phases(..., with_polymorph=True)``.
-            Without the ``'polymorph'`` key every entry ranks as unsuffixed, so same-named
-            shapes still collapse but none is flagged as a distinct melting form.
-        mpds_json (dict): Source json; only the ``labels`` block is read, to recover a
-            low-temperature form named there but never digitized (the C-La case above).
-        temp_threshold (float): Low-temperature cutoff in K, required for that recovery.
-            Defaults to :func:`low_temp_threshold` of ``mpds_json``.
-        comp_tol (float): Composition tolerance for treating two same-named shapes as the
-            same compound.
-
-    Returns:
-        list: One phase dict per compound-composition cluster, sorted by composition.
+    The pairing and merge policy is :func:`collapse_polymorphs`'s, which returns the merged
+    phases alone. Members are copies of the input dicts and keep their ``'polymorph'`` key;
+    the merged phase does not carry one. A component phase is its own single-member cluster.
+    Pairs are sorted by the merged phase's composition.
     """
     if not phases:
-        return list(phases)
+        return []
     if temp_threshold is None and mpds_json:
         temp_threshold = low_temp_threshold(mpds_json)
+    comp_tol = config.coverage_default("polymorph_pair_tol", comp_tol)
+    if elements is None:
+        elements = (mpds_json or {}).get("chemical_elements") or []
 
-    # Component phases ('(Ce) ht1' / '(Ce) ht2') are terminal solid solutions, not
-    # compounds: downstream code keys them by their own labels and they never
-    # double-count a compound. Pass them through untouched.
+    # Component phases ('(Ce) ht1' / '(Ce) ht2') pass through untouched.
     passthrough, candidates = [], []
     for phase in phases:
         target = passthrough if split_phase_label(phase["name"])[0].startswith("(") else candidates
         target.append(dict(phase))
 
-    label_forms: dict[str, list[tuple[int, float]]] = {}
-    for entry in (mpds_json or {}).get("labels") or []:
-        try:
-            # Same rule the shapes went through, so the two blocks stay joinable: a
-            # field annotation must not seed a thermal form for its first constituent.
-            if is_multiphase_field_label(entry[0]):
-                continue
-            label_base, suffix = split_phase_label(entry[0])
-            temp = float(entry[1][1]) + 273.15
-        except (TypeError, ValueError, IndexError, KeyError):
-            continue
-        label_forms.setdefault(label_base, []).append((polymorph_rank(suffix), temp))
+    label_forms = _label_forms(mpds_json, elements)
 
     groups: dict[str, list[dict]] = {}
     for phase in candidates:
-        groups.setdefault(split_phase_label(phase["name"])[0], []).append(phase)
+        groups.setdefault(compound_key(phase["name"], elements), []).append(phase)
 
-    collapsed = []
-    for base, members in groups.items():
+    collapsed: list[tuple[dict, list[dict]]] = []
+    for key, members in groups.items():
         members = sorted(members, key=lambda phase: phase["comp"])
         clusters = [[members[0]]]
         for phase in members[1:]:
@@ -994,17 +1211,60 @@ def collapse_polymorphs(
             else:
                 clusters.append([phase])
         for cluster in clusters:
-            collapsed.append(
-                _merge_polymorph_cluster(base, cluster, label_forms.get(base, []), temp_threshold)
-            )
+            merged = _merge_polymorph_cluster(cluster, label_forms.get(key, []), temp_threshold)
+            collapsed.append((merged, cluster))
 
-    # 'polymorph' has served its purpose here. Dropping it keeps every phase dict on its
-    # historical key set, so a compound with nothing to collapse stays byte-identical --
-    # the characterization pins compare phase dicts by exact key set.
-    result = sorted(collapsed + passthrough, key=lambda phase: phase["comp"])
-    for phase in result:
-        phase.pop("polymorph", None)
-    return result
+    # drop 'polymorph': the characterization pins compare phase dicts by exact key set
+    pairs = collapsed + [(phase, [dict(phase)]) for phase in passthrough]
+    pairs.sort(key=lambda pair: pair[0]["comp"])
+    for merged, _members in pairs:
+        merged.pop("polymorph", None)
+    return pairs
+
+
+def collapse_polymorphs(
+    phases: list[dict],
+    mpds_json: dict | None = None,
+    *,
+    temp_threshold: float | None = None,
+    comp_tol: float | None = None,
+    elements=None,
+) -> list[dict]:
+    """Collapse a compound's digitized polymorphs into one phase per compound.
+
+    One entry survives per (compound, composition) cluster. It takes its identity and lower
+    temperature bound from the lowest-temperature polymorph and its upper bound from the
+    compound's highest melting/decomposition temperature, and is named after its lowest-ranked
+    form. Two shapes are forms of one compound when their suffix-stripped labels normalise to the
+    same formula (``plotting.style.standard_formula`` in ``elements`` order; a label that will
+    not parse keys as its own text) and their compositions lie within ``comp_tol``. Entries
+    sharing a name at different compositions stay separate.
+
+    Args:
+        phases (list): Phase dicts from ``identify_mpds_phases(..., with_polymorph=True)``.
+            Without the ``'polymorph'`` key every entry ranks as unsuffixed.
+        mpds_json (dict): Source json; only the ``labels`` block is read, to recover a
+            low-temperature form named there but never digitized.
+        temp_threshold (float): Low-temperature cutoff in K, required for that recovery.
+            Defaults to :func:`low_temp_threshold` of ``mpds_json``.
+        comp_tol (float): Composition tolerance for treating two shapes of one compound as
+            the same cluster. Defaults to ``config.coverage_polymorph_pair_tol``.
+        elements: Component symbols fixing the normalised formula's element order. Defaults
+            to the json's own ``chemical_elements``.
+
+    Returns:
+        list: One phase dict per compound-composition cluster, sorted by composition.
+    """
+    return [
+        merged
+        for merged, _members in _collapse_polymorph_clusters(
+            phases,
+            mpds_json,
+            temp_threshold=temp_threshold,
+            comp_tol=comp_tol,
+            elements=elements,
+        )
+    ]
 
 
 def identify_mpds_phases(
@@ -1019,46 +1279,32 @@ def identify_mpds_phases(
 
     Emits three phase ``'type'`` values:
 
-    * ``'ss'`` -- a digitized single-phase FIELD (an area shape), carrying ``cbounds``.
-    * ``'comp'`` -- a pure COMPONENT's own phase, labelled ``'(X)'``, drawn as a boundary
-      line rather than an area. Not a compound: its free energy is the element reference,
-      which is always available. See :func:`is_component_phase_label`.
+    * ``'ss'`` -- a digitized single-phase field (an area shape), carrying ``cbounds``.
+    * ``'comp'`` -- a pure component's own phase, labelled ``'(X)'`` and drawn as a boundary
+      line (see :func:`is_component_phase_label`); its free energy is the element reference.
     * ``'lc'`` -- a line compound.
-
-    ``'comp'`` exists because MPDS routinely digitizes a terminal phase as a
-    ``kind='compound'`` boundary line -- Cr-Ti's ``'(Ti) rt'`` is literally the right-hand
-    frame edge, ``M 100,600 L 100,1669.69 L 100,2000``. Typing that as a line compound made
-    :func:`assess_solid_coverage` report it as a reported compound with no DFT counterpart
-    and mask the liquidus from the nearest anchor out to the frame, skipping a system that
-    fits fine. Consumers that only need "a low-temperature phase" treat ``'comp'``
-    exactly like ``'lc'``/``'ss'``; only the coverage gate distinguishes them.
 
     Args:
         mpds_json (dict): MPDS digitized phase equilibrium data for the system.
         verbose (bool): If True, outputs additional debugging information.
         with_structure (bool): If True, add a ``'structure'`` key to every phase dict holding
-            the parsed ``shape['phase']`` identifier (see :func:`parse_shape_structure`).
-            Defaults to False, which keeps the returned dicts byte-identical to the historical
-            key set -- the characterization pins compare phase dicts by exact key set, so this
-            must stay opt-in. :func:`assess_solid_coverage` is the intended consumer.
+            the parsed ``shape['phase']`` identifier (see :func:`parse_shape_structure`), as
+            :func:`gliquid.solid_coverage.assess_solid_coverage` needs.
         with_polymorph (bool): If True, add a ``'polymorph'`` key holding the label's
-            polymorph suffix (``'rt'``, ``'ht1'``, ``''`` when unsuffixed). Opt-in for the
-            same key-set reason as ``with_structure``. A line compound's ``'name'`` has the
-            suffix stripped, so this is the only way to tell 'CeC2 rt' from 'CeC2 ht' after
-            identification; :func:`collapse_polymorphs` is the intended consumer.
-        elements: Component symbols used to recognize ``'(X)'`` component labels. Defaults to
-            the json's own ``chemical_elements``; pass explicitly for the ~13% of cached jsons
-            that carry no frame block, which would otherwise fall back to ``'lc'``. Only the
-            SET is read, so frame order does not matter.
+            polymorph suffix (``'rt'``, ``'ht1'``, ``''`` when unsuffixed), as
+            :func:`collapse_polymorphs` needs. A line compound's ``'name'`` has the suffix
+            stripped.
+        elements: Component symbols used to recognize ``'(X)'`` component labels, in any order.
+            Defaults to the json's own ``chemical_elements``; without either, component labels
+            read as ``'lc'``.
 
     Returns:
         list: A list of dictionaries containing information on equilibrium phase composition and temperature boundaries
 
     Raises:
-        config.CacheModeError: on a LEAN record. This is the single most important guard in
-            the lean-mode contract — see :func:`_require_full_record`.
+        config.CacheModeError: on a LEAN record; see :func:`require_full_record`.
     """
-    _require_full_record(mpds_json, "identify_mpds_phases")
+    require_full_record(mpds_json, "identify_mpds_phases")
     if mpds_json.get("reference") is None:
         if verbose:
             logger.warning("System JSON does not contain any data!")
@@ -1070,13 +1316,21 @@ def identify_mpds_phases(
     phases = []
     for shape in mpds_json.get("shapes", []):
         if shape.get("nphases") == 1 and shape.get("is_solid") and "label" in shape:
-            # A two-phase field MPDS tagged nphases=1. Naming it from split()[0] would
-            # invent a compound at the field's composition. See is_multiphase_field_label.
+            # A two-phase field tagged nphases=1 (see is_multiphase_field_label).
             if is_multiphase_field_label(shape["label"]):
                 if verbose:
                     logger.info(
                         f"Skipping {shape['label']!r}: label names more than one "
                         f"phase, so the shape is a field, not a phase"
+                    )
+                continue
+
+            # A liquid or gas field tagged is_solid=true (see is_fluid_phase_label).
+            if is_fluid_phase_label(shape["label"]):
+                if verbose:
+                    logger.info(
+                        f"Skipping {shape['label']!r}: label names the liquid or gas "
+                        f"field, so the shape is not a solid phase"
                     )
                 continue
 
@@ -1126,9 +1380,6 @@ def identify_mpds_phases(
     return sorted(phases, key=lambda x: x["comp"])
 
 
-_SG_TO_SS_NAME = {sg: name for name, sg in SS_SPACEGROUPS.items()}
-
-
 def merge_ranges(ranges) -> list[list[float]]:
     """Merge overlapping/adjacent ``[lo, hi]`` composition ranges into a minimal set."""
     ordered = sorted([sorted(r) for r in ranges])
@@ -1143,360 +1394,366 @@ def merge_ranges(ranges) -> list[list[float]]:
     return merged
 
 
-@dataclass(frozen=True)
-class PhaseCoverage:
-    """Whether one digitized solid phase has a free energy behind it, and why."""
-
-    name: str
-    kind: str  # 'ss' | 'comp' | 'lc'
-    comp: float
-    interval: tuple[float, float]  # cbounds for 'ss'; the masked gap for a missing 'lc'
-    supported: bool
-    reason: str
-    spacegroup: int | None = None
-    pearson: str | None = None
-
-
-@dataclass(frozen=True)
-class SolidCoverageReport:
-    """How much of a liquidus has no solid free-energy reference behind it.
-
-    ``unsupported_fraction`` is the load-bearing number: the union of composition intervals
-    whose conjugate solid we cannot evaluate, clipped to the digitized liquidus span and
-    divided by it.
-
-    The verdict is **not** a property of the system alone -- it depends on which energies were
-    actually loaded, i.e. on ``config.solid_solutions`` / ``ss_ref_mode``. ``ss_models`` is kept
-    on the report so a recorded verdict stays interpretable.
-    """
-
-    span: tuple[float, float]
-    unsupported_fraction: float
-    unsupported_ranges: list[list[float]]
-    n_compounds: int
-    n_missing_compounds: int
-    phases: list[PhaseCoverage]
-    ss_models: tuple[str, ...]
-    thresholds: dict
-
-    @property
-    def missing_compound_fraction(self) -> float:
-        return self.n_missing_compounds / self.n_compounds if self.n_compounds else 0.0
-
-    def is_insufficient(self) -> tuple[bool, str]:
-        """``(verdict, reason)`` against the thresholds captured on this report.
-
-        Two commensurate conditions, either of which is disqualifying:
-
-        1. Too much of the liquidus has no solid reference at all. Catches wide solid
-           solutions with no solid-solution model (the Lu-Nd / Ho-Zr class).
-        2. Too many of the reported compounds are absent from the DFT hull. Catches systems
-           whose missing compounds each occupy a modest composition range but which
-           collectively leave the hull unable to represent the solid side (Rb-Sn).
-        """
-        frac = self.unsupported_fraction
-        if frac > self.thresholds["skip_frac"]:
-            return True, (
-                f"{frac:.0%} of the liquidus has no solid reference "
-                f"(> {self.thresholds['skip_frac']:.0%} cap)"
-            )
-        missing_frac = self.missing_compound_fraction
-        if (
-            self.n_missing_compounds >= self.thresholds["min_missing"]
-            and missing_frac >= self.thresholds["missing_frac"]
-        ):
-            return True, (
-                f"{self.n_missing_compounds}/{self.n_compounds} reported compounds "
-                f"have no DFT counterpart (>= {self.thresholds['missing_frac']:.0%} "
-                f"of at least {self.thresholds['min_missing']})"
-            )
-        return False, (
-            f"{frac:.0%} unsupported, "
-            f"{self.n_missing_compounds}/{self.n_compounds} compounds missing"
-        )
-
-    @property
-    def summary_line(self) -> str:
-        unsupported = [p for p in self.phases if not p.supported]
-        detail = (
-            "; ".join(
-                f"{p.name} [{p.interval[0]:.2f},{p.interval[1]:.2f}] {p.reason}"
-                for p in unsupported
-            )
-            or "none"
-        )
-        return (
-            f"unsupported {self.unsupported_fraction:.0%} of "
-            f"[{self.span[0]:.2f},{self.span[1]:.2f}]; compounds missing "
-            f"{self.n_missing_compounds}/{self.n_compounds}; "
-            f"ss_models={list(self.ss_models)}; {detail}"
-        )
-
-    def as_dict(self) -> dict:
-        """JSON-safe view for campaign run summaries."""
-        return {
-            "span": list(self.span),
-            "unsupported_fraction": self.unsupported_fraction,
-            "unsupported_ranges": [list(r) for r in self.unsupported_ranges],
-            "n_compounds": self.n_compounds,
-            "n_missing_compounds": self.n_missing_compounds,
-            "ss_models": list(self.ss_models),
-            "thresholds": dict(self.thresholds),
-            "phases": [
-                {
-                    "name": p.name,
-                    "kind": p.kind,
-                    "comp": p.comp,
-                    "interval": list(p.interval),
-                    "supported": p.supported,
-                    "reason": p.reason,
-                    "spacegroup": p.spacegroup,
-                    "pearson": p.pearson,
-                }
-                for p in self.phases
-            ],
-        }
-
-
-def assess_solid_coverage(
-    mpds_phases: list[dict],
-    invariants,
-    span,
-    dft_comps,
-    ss_models=(),
-    *,
-    ss_narrow_tol=None,
-    dft_cover_tol=None,
-    ss_rescue_max_width=None,
-    thresholds=None,
-) -> SolidCoverageReport:
-    """Measure the fraction of a liquidus with no solid free-energy reference behind it.
-
-    Every point on a liquidus is in equilibrium with some solid. That point constrains the
-    liquid free energy only if the solid's free energy is known, so the honest measure of
-    whether a system is fittable is *how much of the liquidus is conjugate to a solid we
-    cannot evaluate*. This function computes exactly that, from data already extracted:
-    the digitized phase fields, the identified invariants, the DFT hull compositions and the
-    loaded solid-solution models.
-
-    Support rules, per digitized solid phase:
-
-    * A pure component's own phase (``type == 'comp'``, MPDS's ``'(X)'`` label) is always
-      supported and is never counted as a reported compound -- the element reference always
-      exists. Without this rule a terminal phase drawn as a boundary line reads as a line
-      compound at x = 0 or 1, which ``covered_by_dft`` can never match because ``dft_comps``
-      is interior-only by construction.
-    * A solid-solution field no wider than ``ss_narrow_tol`` is not scored -- its endpoint
-      line compound is an adequate stand-in.
-    * A wider field whose spacegroup matches a loaded solid-solution model is supported.
-    * A wider field whose spacegroup is one of the solid-solution structures but has **no**
-      loaded model is unsupported over its whole composition range. A label-string check
-      cannot see this: such a field may be labelled ``(A)`` yet span the entire axis.
-    * A field whose structure MPDS did not resolve falls back to "supported if any model is
-      loaded" -- this is what keeps genuine ``(A, B)`` solid solutions (Os-Re) fittable.
-    * A field that is really an ordered compound with a homogeneity range (its spacegroup is
-      not a solid-solution structure) is supported when a DFT compound sits inside it, but
-      **only if it is narrower than** ``ss_rescue_max_width``. Without that cap a single
-      interior DFT compound would rescue an arbitrarily wide field, and complete solid
-      solutions with no models (Ag-Au, Ta-W, Se-Te, Bi-Sb, As-Sb) would score as fully
-      supported -- the precise failure this gate exists to catch.
-    * A line compound with no DFT phase within ``dft_cover_tol`` masks only its **primary
-      crystallization field** -- the interval between the flanking invariant compositions --
-      not everything out to the next supported anchor. Past a eutectic the conjugate solid is
-      a different phase whose energy may be perfectly well known, and that stretch of
-      liquidus is still informative. (This is what puts Mn-Y at 0.53 rather than 0.92.)
+def flank_bound(comp, side, tiers, *, tol, default):
+    """The nearest candidate composition lying strictly more than ``tol`` to one side of ``comp``.
 
     Args:
-        mpds_phases: ``identify_mpds_phases(..., with_structure=True)`` output.
-        invariants: Identified invariant points; only ``'comp'`` is read. May be empty.
-        span: ``[x_lo, x_hi]`` of the digitized liquidus.
-        dft_comps: Interior (0 < x < 1) DFT hull phase compositions.
-        ss_models: Names of loaded solid-solution models, e.g. ``('BCC', 'HCP')``.
-        ss_narrow_tol: Override ``config.coverage_ss_narrow_tol`` — the width below which a
-            solid-solution field is not scored.
-        dft_cover_tol: Override ``config.coverage_dft_cover_tol`` — how near a DFT phase must
-            sit to a line compound to count as covering it.
-        ss_rescue_max_width: Override ``config.coverage_ss_rescue_max_width`` — the widest
-            field an interior DFT compound may rescue.
-        thresholds: Override the ``config`` decision thresholds; keys ``skip_frac``,
-            ``min_missing``, ``missing_frac``.
+        comp: the composition to bound.
+        side: ``"left"`` for candidates ``c < comp - tol``, ``"right"`` for ``c > comp + tol``.
+        tiers: ``(candidates, rule)`` pairs, tried in order. The first tier holding any
+            candidate on ``side`` decides.
+        tol: composition slack, keyword-only and required.
+        default: the ``(bound, rule)`` pair returned when no tier holds a candidate on ``side``.
 
     Returns:
-        SolidCoverageReport
+        tuple: ``(bound, rule)``. ``bound`` is the largest (left) or smallest (right) qualifying
+        candidate of the deciding tier, as the element itself with no conversion, the first of
+        equal extremes in iteration order; ``rule`` is that tier's rule. Otherwise ``default``,
+        the same object.
 
-    Note:
-        This function never sees an MPDS record — it takes ``mpds_phases``, already
-        identified. It is therefore guarded one level up, at the two places that DO hold a
-        json: :func:`identify_mpds_phases`, its only source of phases, and
-        ``BinaryLiquid.assess_solid_coverage``, which names itself in the error. Handing a
-        lean record's (impossible) empty phase list in here would report zero reported
-        compounds, i.e. "nothing unsupported", and the gate would pass — see
-        :func:`_require_full_record`.
+    Raises:
+        ValueError: if ``side`` is neither ``"left"`` nor ``"right"``.
     """
-    ss_narrow_tol = config.coverage_ss_narrow_tol if ss_narrow_tol is None else ss_narrow_tol
-    dft_cover_tol = config.coverage_dft_cover_tol if dft_cover_tol is None else dft_cover_tol
-    if ss_rescue_max_width is None:
-        ss_rescue_max_width = config.coverage_ss_rescue_max_width
-    thresholds = (
-        dict(thresholds)
-        if thresholds
-        else {
-            "skip_frac": config.coverage_skip_frac,
-            "min_missing": config.coverage_min_missing,
-            "missing_frac": config.coverage_missing_frac,
-        }
+    if side == "left":
+        for candidates, rule in tiers:
+            below = [c for c in candidates if c < comp - tol]
+            if below:
+                return max(below), rule
+    elif side == "right":
+        for candidates, rule in tiers:
+            above = [c for c in candidates if c > comp + tol]
+            if above:
+                return min(above), rule
+    else:
+        raise ValueError(f"side must be 'left' or 'right', not {side!r}")
+    return default
+
+
+def find_local_maxima(points):
+    """Local maxima of a sequence of ``(x, y)`` points.
+
+    A rise followed by a fall records the middle point of the flat top it reached. The
+    first and last points never qualify, so a monotone sequence yields nothing. Returns the
+    point objects themselves, not copies.
+    """
+
+    def is_gt_prev(index):
+        return index > 0 and points[index][1] > points[index - 1][1]
+
+    local_maxima = []
+    current_section = []
+
+    for i in range(len(points)):
+        if is_gt_prev(i):
+            current_section = [points[i]]
+        elif current_section and current_section[-1][1] == points[i][1]:
+            current_section.append(points[i])
+        elif current_section:
+            local_maxima.append(current_section[len(current_section) // 2])
+            current_section = []
+
+    return local_maxima
+
+
+def _endpoint_maxima(points):
+    """One-sided maxima at the ends of a digitized liquidus.
+
+    :func:`find_local_maxima` needs a rise AND a fall, so it never returns the first or last
+    point. Where the digitized curve simply BEGINS (or ends) at a compound's melting point,
+    that maximum is real and is the compound's congruent melting point -- the data starts
+    there, the diagram does not.
+
+    An endpoint within ``_AXIS_X_TOL`` of a pure end is excluded: the maximum there is that
+    element's melting point, not a compound's.
+
+    Args:
+        points: ``(x, T)`` pairs in composition order.
+
+    Returns:
+        list: the qualifying endpoint objects themselves, not copies.
+    """
+    if len(points) < 2:
+        return []
+    out = []
+    for index, neighbour in ((0, 1), (-1, -2)):
+        point = points[index]
+        x = float(point[0])
+        if x <= _AXIS_X_TOL or x >= 1.0 - _AXIS_X_TOL:
+            continue
+        if point[1] > points[neighbour][1]:
+            out.append(point)
+    return out
+
+
+def _is_terminal_phase(phase) -> bool:
+    """Whether a phase is a pure component or a terminal solid solution on one.
+
+    Three independent markers, any of which is sufficient: MPDS brackets a terminal
+    solid-solution label (``(Th)``, ``(Th) rt``), ``'comp'`` types a component's own phase, and
+    a stoichiometry within ``_AXIS_X_TOL`` of either pure end is a component whatever it is
+    called.
+    """
+    name = phase.get("name") or ""
+    if "(" in name or phase.get("type") == "comp":
+        return True
+    comp = phase.get("comp")
+    if comp is None:
+        return False
+    return float(comp) <= _AXIS_X_TOL or float(comp) >= 1.0 - _AXIS_X_TOL
+
+
+def find_local_minima(points):
+    """Local minima of a sequence of ``(x, y)`` points.
+
+    :func:`find_local_maxima` run over negated ordinates, mapped back to the original
+    point objects through the index carried alongside.
+    """
+    negated = [(i, -point[1]) for i, point in enumerate(points)]
+    return [points[i] for i, _ in find_local_maxima(negated)]
+
+
+# Composition slack below which a supported stretch is a clipping artefact, not a gap.
+SEGMENT_TOL = 1e-9
+
+# Invariant types that record the melting of one named phase: 'cmp' (congruent melting) and
+# 'per' (peritectic). 'eut' and 'mig' name the adjacent phases.
+_MELTING_INVARIANT_TYPES = ("cmp", "per")
+
+# Composition slack for joining an invariant's recorded phase composition to a phase dict's own.
+_INVARIANT_MATCH_TOL = 0.02
+
+# Distance within which an interior liquidus maximum is a phase's own congruent dome.
+_CONGRUENT_MATCH_TOL = 0.02
+
+
+def controlling_invariant(
+    phase: dict, invariants, *, allow_eutectic: bool = False, comp_tol: float | None = None
+) -> dict | None:
+    """The invariant that anchors ``phase``, or ``None``.
+
+    Matches on the phase name carried in an invariant's ``'phases'`` and on the stoichiometry
+    carried in its ``'phase_comps'``, so a compound MPDS labels twice at different
+    compositions binds to its own record. Where several
+    records name the compound, the one whose recorded composition sits nearest wins.
+
+    Names are compared with any polymorph suffix stripped on BOTH sides: a shape labelled
+    with its thermal form binds to a record naming the bare compound, and vice versa.
+
+    The composition check separates a phase's own melting record from a distant one that
+    merely names it.
+
+    Args:
+        phase (dict): One ``identify_mpds_phases`` entry; ``'name'`` and ``'comp'`` are read.
+        invariants: ``identify_invariant_points`` output, in the same composition frame as
+            ``phase``. May be empty or None.
+        allow_eutectic: Fall back to a eutectic the phase flanks when no melting record
+            matches. Imputation needs an anchor wherever the phase borders the liquid;
+            field bounding needs the record that melts it, and takes the default.
+        comp_tol: How near a recorded stoichiometry must sit to ``phase['comp']``. Defaults
+            to the module tolerance.
+
+    Returns:
+        dict | None: The matched ``'cmp'`` / ``'per'`` invariant, or a flanking ``'eut'``
+        when ``allow_eutectic`` and nothing melts it.
+    """
+    name, comp = phase.get("name"), phase.get("comp")
+    if name is None or comp is None:
+        return None
+    tol = _INVARIANT_MATCH_TOL if comp_tol is None else float(comp_tol)
+    comp = float(comp)
+    base = split_phase_label(name)[0]
+
+    def _named(inv):
+        return base in {split_phase_label(n)[0] for n in (inv.get("phases") or []) if n}
+
+    def _recorded_delta(inv):
+        """Nearest recorded stoichiometry to ``comp``, or None when none is within tol."""
+        recorded = [c for c in (inv.get("phase_comps") or []) if c is not None]
+        if not recorded:
+            return None
+        delta = min(abs(float(c) - comp) for c in recorded)
+        return delta if delta <= tol else None
+
+    matches = []
+    for inv in invariants or []:
+        if not isinstance(inv, dict) or inv.get("type") not in _MELTING_INVARIANT_TYPES:
+            continue
+        if inv.get("comp") is None or not _named(inv):
+            continue
+        delta = _recorded_delta(inv)
+        if delta is not None:
+            matches.append((delta, inv))
+    if matches:
+        return min(matches, key=lambda match: match[0])[1]
+    if not allow_eutectic:
+        return None
+    # A eutectic is matched on stoichiometry alone and resolved on its liquid composition.
+    flanking = [
+        inv
+        for inv in invariants or []
+        if isinstance(inv, dict)
+        and inv.get("type") == "eut"
+        and inv.get("comp") is not None
+        and _recorded_delta(inv) is not None
+    ]
+    if not flanking:
+        return None
+    return min(flanking, key=lambda inv: abs(float(inv["comp"]) - comp))
+
+
+def is_ordered_field_label(name, elements):
+    """True when a digitized field's label names a compound rather than a component."""
+    if elements:
+        return not is_component_phase_label(name, elements)
+    return not (name or "").strip().startswith("(")
+
+
+# Composition slack for matching a formula-derived composition to a hull composition.
+FORMULA_TOL = 1e-6
+
+
+def formula_comp(label, elements):
+    """The composition a phase label's FORMULA implies, or None when it will not parse.
+
+    Args:
+        label: an MPDS phase label, polymorph suffix and all.
+        elements: the two component symbols, low composition first.
+
+    Returns:
+        float | None: fraction of ``elements[1]``, or None for a label that is not an
+        INTEGER-subscript formula over exactly these two elements.
+    """
+    base = split_phase_label(label or "")[0]
+    if not base or base.startswith("("):
+        return None
+    try:
+        amounts = Composition(base).get_el_amt_dict()
+    except Exception:  # noqa: BLE001 - any unparseable label falls back to the drawn position
+        return None
+    if not amounts or not set(amounts) <= set(elements):
+        return None
+    # A fractional subscript is a measured composition, matched with the drawn-position tolerance.
+    if not all(float(count).is_integer() for count in amounts.values()):
+        return None
+    left = amounts.get(elements[0], 0.0)
+    right = amounts.get(elements[1], 0.0)
+    total = left + right
+    return right / total if total > 0 else None
+
+
+def ignored_comp_ranges(span, liq_coverage=None) -> list[list[float]]:
+    """Composition intervals over ``[0, 1]`` that carry no digitized liquidus.
+
+    Everything outside ``span``, unioned with the holes ``liquidus_coverage`` reports --
+    the gaps :func:`extract_digitized_liquidus` refuses to bridge, which survive into the
+    extracted curve as undigitized stretches. Both are positions, so ``span`` and
+    ``liq_coverage`` must already be in the caller's component frame.
+
+    Args:
+        span: ``[x_lo, x_hi]`` endpoints of the digitized liquidus. Falsy means nothing was
+            digitized, which makes the whole axis ignored.
+        liq_coverage: ``liquidus_coverage`` output, or None.
+
+    Returns:
+        Merged ``[lo, hi]`` intervals, clipped to ``[0, 1]``.
+    """
+    if not span:
+        return [[0.0, 1.0]]
+    lo, hi = float(span[0]), float(span[1])
+    holes = [[float(a), float(b)] for a, b in ((liq_coverage or {}).get("holes") or [])]
+    merged = merge_ranges([[max(0.0, a), min(1.0, b)] for a, b in ([0.0, lo], [hi, 1.0], *holes)])
+    return [r for r in merged if r[1] - r[0] > SEGMENT_TOL]
+
+
+def _thermal_form_records(members: list[dict], t_max: float, decomp: str) -> list[dict]:
+    """Per-form segment records of one compound cluster, ordered by temperature.
+
+    ``members`` are the cluster's raw shapes from :func:`_collapse_polymorph_clusters`,
+    ordered here by :func:`polymorph_rank` and then by digitized top. The lowest form starts
+    at 0 K and each later form starts where the previous one ends; a form ends at its own
+    digitized top and the hottest one ends at ``t_max``. A form whose digitized top does not
+    clear the form below it spans no temperature range and gets NO record -- the form below
+    it already reaches that top. ``decomp`` therefore lands on the hottest form that does
+    span a range, and every form beneath it decomposes by ``'transition'``. Every kept
+    record's ``comp_range`` is then widened to the same shared envelope -- the widest ``lb``
+    and the widest ``ub`` across every kept record's own ``cbounds`` (a field) or
+    ``(comp, comp)`` (a line) -- so every segment of one compound draws at one width.
+
+    Returns:
+        list[dict]: ``{'form', 'comp_range', 't_lo', 't_hi', 'decomp'}``, one per member that
+        spans a temperature range, lowest first, all sharing one ``comp_range``; never empty.
+    """
+    ordered = sorted(
+        members,
+        key=lambda member: (polymorph_rank(member.get("polymorph", "")), member["tbounds"][1][1]),
     )
-    thresholds.update(
-        {
-            "ss_narrow_tol": ss_narrow_tol,
-            "dft_cover_tol": dft_cover_tol,
-            "ss_rescue_max_width": ss_rescue_max_width,
-        }
-    )
-
-    ss_models = tuple(ss_models or ())
-    dft_comps = sorted(float(c) for c in (dft_comps or []))
-    x_lo, x_hi = (float(span[0]), float(span[1])) if span else (0.0, 1.0)
-    width = max(x_hi - x_lo, 1e-9)
-
-    inv_comps = sorted(
-        iv["comp"]
-        for iv in (invariants or [])
-        if isinstance(iv, dict) and iv.get("comp") is not None
-    )
-    # Supported anchors bound a missing compound's field when no invariant flanks it: the pure
-    # elements are always available, and any DFT compound is a valid solid reference.
-    anchors = sorted({0.0, 1.0, *dft_comps})
-
-    def covered_by_dft(comp):
-        return next((c for c in dft_comps if abs(c - comp) <= dft_cover_tol), None)
-
-    def flank_left(comp):
-        return max(
-            [c for c in inv_comps if c < comp - 1e-9],
-            default=max([a for a in anchors if a < comp - 1e-9], default=0.0),
-        )
-
-    def flank_right(comp):
-        return min(
-            [c for c in inv_comps if c > comp + 1e-9],
-            default=min([a for a in anchors if a > comp + 1e-9], default=1.0),
-        )
-
-    records, unsupported = [], []
-    n_compounds = n_missing = 0
-
-    for phase in mpds_phases:
-        structure = phase.get("structure") or {}
-        spacegroup, pearson = structure.get("spacegroup"), structure.get("pearson")
-
-        if phase["type"] == "ss":
-            lo, hi = phase["cbounds"][0][0], phase["cbounds"][1][0]
-            field_width = hi - lo
-            ss_name = _SG_TO_SS_NAME.get(spacegroup)
-
-            if field_width <= ss_narrow_tol:
-                supported, reason = True, "narrow_field"
-            elif ss_name is not None:
-                supported = ss_name in ss_models
-                reason = f"{'' if supported else 'no_'}ss_model:{ss_name}"
-                # Spacegroup alone is not a structure (e.g. NbC is 225 but rock salt, not FCC).
-                # Surface the mismatch for audit; deliberately not used to decide.
-                if supported and pearson and pearson not in ("cI2", "cF4", "hP2"):
-                    reason += f" (pearson={pearson})"
-            elif spacegroup is None:
-                supported = bool(ss_models)
-                reason = f"unknown_structure_{'ss_loaded' if supported else 'no_ss'}"
-            elif field_width > ss_rescue_max_width:
-                supported, reason = False, f"too_wide_to_rescue:sg{spacegroup}"
-            else:
-                near = next(
-                    (c for c in dft_comps if lo - dft_cover_tol <= c <= hi + dft_cover_tol), None
-                )
-                supported = near is not None
-                reason = f"dft_phase@{near:.3f}" if supported else f"no_ss_model:sg{spacegroup}"
-
-            interval = (lo, hi)
-            if not supported:
-                unsupported.append([lo, hi])
-        elif phase["type"] == "comp":
-            # A pure component's own phase. Its solid reference is the element itself, which
-            # is always available -- the same fact the `anchors` set above relies on. It is
-            # not a reported compound, so it must not enter the n_missing_compounds count
-            # either. Treating Cr-Ti's '(Ti) rt' frame edge as a missing line compound is
-            # what masked [0.333, 1.0] and skipped a system that fits at MAE 11.9 K.
-            supported, reason = True, "component_phase"
-            interval = (phase["comp"], phase["comp"])
+    records = []
+    t_lo = 0.0
+    for index, member in enumerate(ordered):
+        last = index == len(ordered) - 1
+        t_hi = float(t_max) if last else max(float(member["tbounds"][1][1]), t_lo)
+        if member["type"] == "ss":
+            comp_range = (member["cbounds"][0][0], member["cbounds"][1][0])
         else:
-            n_compounds += 1
-            comp = phase["comp"]
-            near = covered_by_dft(comp)
-            supported = near is not None
-            if supported:
-                reason, interval = f"dft_phase@{near:.3f}", (comp, comp)
-            else:
-                n_missing += 1
-                reason = "no_dft_phase"
-                interval = (flank_left(comp), flank_right(comp))
-                unsupported.append(list(interval))
-
+            comp_range = (member["comp"], member["comp"])
         records.append(
-            PhaseCoverage(
-                name=phase["name"],
-                kind=phase["type"],
-                comp=phase["comp"],
-                interval=interval,
-                supported=supported,
-                reason=reason,
-                spacegroup=spacegroup,
-                pearson=pearson,
-            )
+            {
+                "form": member.get("polymorph", ""),
+                "comp_range": comp_range,
+                "t_lo": t_lo,
+                "t_hi": t_hi,
+                "decomp": decomp if last else "transition",
+            }
         )
-
-    merged = merge_ranges(unsupported)
-    masked = sum(
-        min(hi, x_hi) - max(lo, x_lo) for lo, hi in merged if min(hi, x_hi) > max(lo, x_lo)
-    )
-
-    return SolidCoverageReport(
-        span=(x_lo, x_hi),
-        unsupported_fraction=masked / width,
-        unsupported_ranges=merged,
-        n_compounds=n_compounds,
-        n_missing_compounds=n_missing,
-        phases=records,
-        ss_models=ss_models,
-        thresholds=thresholds,
-    )
+        t_lo = t_hi
+    kept = [record for record in records if record["t_hi"] > record["t_lo"]] or records[:1]
+    kept[-1]["t_hi"] = max(float(t_max), kept[-1]["t_lo"])
+    kept[-1]["decomp"] = decomp
+    lb = min(record["comp_range"][0] for record in kept)
+    ub = max(record["comp_range"][1] for record in kept)
+    for record in kept:
+        record["comp_range"] = (lb, ub)
+    return kept
 
 
 def get_low_temp_phase_data(
     mpds_json: dict, dft_ch: PhaseDiagram
-) -> tuple[tuple[dict, dict, int | float], tuple[dict, dict, int | float]]:
-    """Extracts low-temperature phase data from MPDS and MP convex hull.
-
-    Pure-component phases (``type == 'comp'``, MPDS's ``'(X)'`` label) are NOT reported: the
-    MPDS side of this comparison is about compounds that melt congruently or incongruently,
-    and an element is neither. They are excluded from both tables and from
-    ``max_phase_temp``. Wide ``'(X)'`` solid-solution fields are still reported -- those
-    carry a real composition range, and :func:`identify_mpds_phases` has already dropped the
-    terminal ones.
+) -> tuple[tuple[dict, dict, int | float, dict], tuple[dict, dict, int | float]]:
+    """Low-temperature phase tables from an MPDS diagram and from the DFT convex hull.
 
     Args:
         mpds_json (dict): MPDS digitized phase equilibrium data for the system.
-        dft_ch (PhaseDiagram): DFT convex hull data formatted with pymatgen.
+        dft_ch (PhaseDiagram): DFT convex hull of the system. Its component frame is the
+            frame every MPDS-side composition is reported in.
 
     Returns:
-        Tuples with low temperature phase data for both digitzed and computed phases. The returned data is in the
-        following format: (mpds congruently melting phases, mpds incongruently melting phases, max phase decomp temp),
-        (dft phase formation energies, dft phase energies below convex hull, minimum phase formation energy)
+        ``((congruent, incongruent, max_phase_temp, forms), (mp_phases, mp_phases_ebelow,
+        min_form_e))``.
+
+        MPDS side. ``congruent`` and ``incongruent`` map each low-temperature compound
+        (:func:`is_low_temperature_phase` after :func:`collapse_polymorphs`; pure-component
+        ``'(X)'`` phases excluded, wide ``'(X)'`` solid-solution fields kept) to
+        ``((c_lo, c_hi), T_max)``: its composition range and its melting or decomposition
+        temperature in K, tabled congruent when that point lies on the digitized liquidus.
+        ``max_phase_temp`` is the highest ``T_max``, or the liquidus minimum when nothing is
+        tabled. ``forms`` maps each tabled compound name to its thermal forms as a list of
+        ``{'form': suffix or '', 'comp_range': (c_lo, c_hi), 't_lo': K, 't_hi': K,
+        'decomp': 'congruent' | 'incongruent' | 'transition'}`` records ordered by
+        temperature: one per digitized shape that spans a temperature range, the lowest
+        starting at 0 K, each later one starting where the previous ends, the last ending at
+        ``T_max`` with the compound's own ``decomp`` and every earlier one ``'transition'``.
+        Every record of one compound shares the same ``comp_range`` -- the widest ``c_lo`` and
+        the widest ``c_hi`` across its own forms. A compound drawn as a single form, or whose
+        hotter forms clear no range above it, has one record spanning 0..``T_max``.
+
+        DFT side. ``mp_phases`` and ``mp_phases_ebelow`` map each stable compound entry name
+        to ``((x, x), formation energy per atom)`` and ``((x, x), energy below the hull
+        without that entry)``; ``min_form_e`` is the lowest formation energy.
+
     Raises:
-        config.CacheModeError: on a LEAN record. Guarded here as well as inside
-            :func:`identify_mpds_phases` so the message names the function the caller
-            actually called — ``plotting/binary_figs.py``'s phase-comparison figure is the
-            consumer, and an empty MPDS column there reads as a real finding.
+        config.CacheModeError: on a LEAN record.
     """
-    _require_full_record(mpds_json, "get_low_temp_phase_data")
+    require_full_record(mpds_json, "get_low_temp_phase_data")
 
     dft_phases, dft_phases_ebelow = {}, {}
     min_form_e = 0
@@ -1518,21 +1775,18 @@ def get_low_temp_phase_data(
         )
         dft_phases_ebelow[entry.name] = ((comp, comp), e_below_hull)
 
-    mpds_congruent_phases, mpds_incongruent_phases = {}, {}
+    mpds_congruent_phases, mpds_incongruent_phases, mpds_forms = {}, {}, {}
     max_phase_temp = 0
 
-    # Polymorphs are collapsed to one entry per compound: without it C-Ce reports CeC2
-    # twice (the rt line lands on the liquidus maximum and is tabled congruent, the ht line
-    # misses it by 10 K and is tabled incongruent), and C-La reports LaC2 not at all.
-    identified_phases = collapse_polymorphs(
-        identify_mpds_phases(mpds_json, elements=api.pd_components(dft_ch), with_polymorph=True),
-        mpds_json,
-    )
+    hull_components = api.pd_components(dft_ch)
+    raw_phases = identify_mpds_phases(mpds_json, elements=hull_components, with_polymorph=True)
+    unpaired_ht = mark_unpaired_ht_forms(raw_phases, hull_components, mpds_json=mpds_json)
+    clusters = _collapse_polymorph_clusters(raw_phases, mpds_json, elements=hull_components)
     mpds_liquidus, _ = extract_digitized_liquidus(mpds_json)
 
-    if not identified_phases:
+    if not clusters:
         return (
-            (mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp),
+            (mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp, mpds_forms),
             (dft_phases, dft_phases_ebelow, min_form_e),
         )
 
@@ -1549,57 +1803,55 @@ def get_low_temp_phase_data(
 
     temp_threshold = low_temp_threshold(mpds_json)
 
-    # Component phases are excluded: these tables are the MPDS side of a congruent- vs
-    # incongruent-MELTING comparison against the DFT hull, and a pure element is neither.
-    # Every call site already dropped '('-prefixed names by hand (binary_figs's
-    # render_phase_comparison, both matrix plotters' mpds_lowt_phase_count); doing it here
-    # also keeps max_phase_temp off them, which those hand filters could not -- a component
-    # digitized as the frame edge spans the full temperature axis, so it pinned
-    # max_phase_temp to the top of the diagram and squashed the real compound bars.
-    # Wide '(X)' solid-solution FIELDS stay: identify_mpds_phases already drops the terminal
-    # ones, so a surviving 'ss' has measurable solubility and a real composition range.
-    for phase in identified_phases:
-        if phase["type"] in {"lc", "ss"} and phase["tbounds"][0][1] < temp_threshold:
-            if phase_decomp_on_liq(phase, mpds_liquidus):
-                if phase["type"] == "ss":
-                    mpds_congruent_phases[phase["name"]] = (
-                        (phase["cbounds"][0][0], phase["cbounds"][1][0]),
-                        phase["tbounds"][1][1],
-                    )
-                else:
-                    mpds_congruent_phases[phase["name"]] = (
-                        (phase["comp"], phase["comp"]),
-                        phase["tbounds"][1][1],
-                    )
-            else:
-                if phase["type"] == "ss":
-                    mpds_incongruent_phases[phase["name"]] = (
-                        (phase["cbounds"][0][0], phase["cbounds"][1][0]),
-                        phase["tbounds"][1][1],
-                    )
-                else:
-                    mpds_incongruent_phases[phase["name"]] = (
-                        (phase["comp"], phase["comp"]),
-                        phase["tbounds"][1][1],
-                    )
-            max_phase_temp = max(phase["tbounds"][1][1], max_phase_temp)
+    # Pure-component phases are not tabled; wide '(X)' solid-solution fields are.
+    for phase, members in clusters:
+        if phase["type"] == "comp" or not is_low_temperature_phase(
+            phase, temp_threshold, unpaired_ht=unpaired_ht
+        ):
+            continue
+        if phase["type"] == "ss":
+            comp_range = (phase["cbounds"][0][0], phase["cbounds"][1][0])
+        else:
+            comp_range = (phase["comp"], phase["comp"])
+        t_max = phase["tbounds"][1][1]
+        if phase_decomp_on_liq(phase, mpds_liquidus):
+            decomp, table = "congruent", mpds_congruent_phases
+        else:
+            decomp, table = "incongruent", mpds_incongruent_phases
+        table[phase["name"]] = (comp_range, t_max)
+        mpds_forms[phase["name"]] = _thermal_form_records(members, t_max, decomp)
+        max_phase_temp = max(t_max, max_phase_temp)
 
     if max_phase_temp == 0 and mpds_liquidus:
         max_phase_temp = min(mpds_liquidus, key=lambda x: x[1])[1]
 
-    # The DFT side is already in the hull's own component frame; mirror the MPDS side
-    # into it when the json was digitized in the reversed frame.
-    hull_components = api.pd_components(dft_ch)
+    # Mirrors the MPDS side into the hull's component frame when the json is reversed.
     if not mpds_frame_matches(mpds_json, hull_components):
 
         def _mirror_ranges(d):
             return {name: ((1 - c2, 1 - c1), t) for name, ((c1, c2), t) in d.items()}
 
+        def _mirror_forms(forms):
+            return {
+                name: [
+                    {
+                        **record,
+                        "comp_range": (
+                            1 - record["comp_range"][1],
+                            1 - record["comp_range"][0],
+                        ),
+                    }
+                    for record in records
+                ]
+                for name, records in forms.items()
+            }
+
         mpds_congruent_phases = _mirror_ranges(mpds_congruent_phases)
         mpds_incongruent_phases = _mirror_ranges(mpds_incongruent_phases)
+        mpds_forms = _mirror_forms(mpds_forms)
 
     return (
-        (mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp),
+        (mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp, mpds_forms),
         (dft_phases, dft_phases_ebelow, min_form_e),
     )
 
@@ -1607,12 +1859,10 @@ def get_low_temp_phase_data(
 def print_phase_mismatch_chart(low_t_exp_phases: list[dict], dft_phase_comps) -> None:
     """Prints the low-temperature MPDS-vs-DFT phase-mismatch terminal chart.
 
-    Lives at module level (called from ``BinaryLiquid.fit_parameters``, not from
-    ``identify_invariant_points``) because the MP row needs DFT phase compositions,
-    which the MPDS-only invariant-point identification deliberately does not consult.
-    The scale bar is drawn on the fitting grid's 0.01 composition step (101 bins); the
-    COMP legend below is hardcoded to the same width, so both would need re-drawing if
-    the fitting grid ever changed.
+    Called from ``BinaryLiquid.fit_parameters``: the MP row needs DFT phase compositions,
+    which :func:`identify_invariant_points` does not consult. The scale bar is drawn on the
+    fitting grid's 0.01 composition step (101 bins), and the COMP legend below is hardcoded
+    to the same width.
 
     Args:
         low_t_exp_phases (list): Low-temperature phase dicts from
@@ -1632,8 +1882,7 @@ def print_phase_mismatch_chart(low_t_exp_phases: list[dict], dft_phase_comps) ->
             mpds_phases_strs[min(int(phase["comp"] * 100), n_bins - 1)] = "|"
     for comp in dft_phase_comps or []:
         mp_phases_strs[min(int(comp * 100), n_bins - 1)] = "|"
-    # print() by design: this function IS a console chart renderer (documented logging
-    # exemption — the aligned monospace rows are the product, not diagnostics).
+    # print(), not logging: the aligned monospace rows are the product.
     print("\n--- Low temperature phase mismatch ---")
     print("MPDS:", "[" + "".join(mpds_phases_strs) + "]")
     print("MP:  ", "[" + "".join(mp_phases_strs) + "]")
@@ -1663,267 +1912,328 @@ def print_phase_mismatch_chart(low_t_exp_phases: list[dict], dft_phase_comps) ->
     )
 
 
-def identify_invariant_points(
-    mpds_json: dict,
-    components,
-    digitized_liq: list[list],
-    component_data: dict,
-    temp_range,
-    *,
-    verbose=False,
-    check_full_ss=True,
-    t_tol=15,
-) -> tuple[list[dict], list[dict], bool]:
-    """Identifies invariant points in the MPDS data from the digitized liquidus and JSON.
-
-    This function does not consider DFT phases, which may differ in composition from the
-    MPDS data. It requires both complete liquidus and JSON data for a binary system.
-    (The DFT-vs-MPDS mismatch chart moved to ``print_phase_mismatch_chart``, called from
-    ``BinaryLiquid.fit_parameters`` where DFT phases are in scope.)
+def _find_adj_phases(
+    point: list | tuple, low_t_exp_phases, components, component_data, t_tol
+) -> tuple[dict, dict]:
+    """The nearest low-temperature phase on each side of ``point``.
 
     Args:
-        mpds_json (dict): MPDS digitized phase equilibrium data for the system.
-        components (list): Component names in the evaluation frame ([A, B]).
-        digitized_liq (list): Digitized liquidus points as [x, T] pairs.
-        component_data (dict): Per-component reference data; only ``.t_fusion`` is read.
-        temp_range (list): Evaluation temperature range [min, max] in K; the max scales
-            the composition-vs-temperature distance metric used to pair a miscibility-gap
-            dome with its adjacent monotectic.
-        verbose (bool): If True, outputs additional debugging information.
-        check_full_ss (bool): If True, checks for full composition range solid solutions.
-        t_tol (int): Temperature tolerance for invariant point identification.
+        point: a ``(composition, temperature)`` point.
+        low_t_exp_phases: candidate phases; the pure components are added to them.
+        components: the two component names.
+        component_data: per-component data, read for ``t_fusion``.
+        t_tol: how far below ``point``'s temperature a phase may top out and still
+            count as present there.
 
     Returns:
-        tuple: (invariant points, low-temperature phases from the MPDS JSON, full_comp_ss).
-        full_comp_ss is True when the MPDS labels report a solid solution spanning the
-        full composition range; identification stops early (solidus processing is not
-        implemented) and the CALLER decides whether fitting can proceed — it can when
-        solid-solution phase energies (ss_models) are available.
+        tuple: ``(left, right)``, each a phase dict, or None where that side is empty.
+    """
+    # order matters: min() below breaks distance ties by list position
+    all_lowt_phases = low_t_exp_phases + [
+        {
+            "name": components[0],
+            "comp": 0,
+            "type": "lc",
+            "tbounds": [[], [0, component_data[components[0]].t_fusion]],
+        },
+        {
+            "name": components[1],
+            "comp": 1,
+            "type": "lc",
+            "tbounds": [[], [1, component_data[components[1]].t_fusion]],
+        },
+    ]
+    all_lowt_phases = [p for p in all_lowt_phases if p["tbounds"][1][1] + t_tol >= point[1]]
+    lhs_phases = [phase for phase in all_lowt_phases if phase["comp"] < point[0]]
+    adj_lhs_phase = (
+        None if not lhs_phases else min(lhs_phases, key=lambda x: abs(x["comp"] - point[0]))
+    )
+    rhs_phases = [phase for phase in all_lowt_phases if phase["comp"] > point[0]]
+    adj_rhs_phase = (
+        None if not rhs_phases else min(rhs_phases, key=lambda x: abs(x["comp"] - point[0]))
+    )
+    return adj_lhs_phase, adj_rhs_phase
+
+
+def liquidus_crossings(liquidus, temp):
+    """Compositions where the digitized liquidus crosses ``temp``, in curve order.
+
+    The digitization is a polyline, so each crossing is exact under linear interpolation.
+    A segment lying flat at ``temp`` contributes nothing -- it has no single crossing.
+    """
+    out = []
+    points = [(float(p[0]), float(p[1])) for p in liquidus]
+    for (x0, t0), (x1, t1) in zip(points, points[1:]):
+        if t0 == t1:
+            continue
+        if (t0 - temp) * (t1 - temp) <= 0:
+            out.append(x0 + (temp - t0) * (x1 - x0) / (t1 - t0))
+    return out
+
+
+def _unclaimed_maximum_between(maxima, phase_comp, endpoint_comp, tol=_CONGRUENT_MATCH_TOL):
+    """Whether an unclaimed liquidus maximum separates a phase from a liquidus endpoint.
+
+    A maximum lying strictly between the two is another compound's congruent dome, and the
+    liquid beyond it is conjugate to that compound rather than to this phase. A maximum
+    within ``tol`` of ``phase_comp`` is the phase's own dome and never separates it.
+
+    Args:
+        maxima: interior liquidus maxima no congruent record has claimed, as ``[comp, temp]``.
+        phase_comp: the phase composition.
+        endpoint_comp: the candidate peritectic liquid composition.
+        tol: composition window within which a maximum counts as the phase's own.
+
+    Returns:
+        bool
+    """
+    lo, hi = sorted((float(phase_comp), float(endpoint_comp)))
+    return any(
+        lo < float(coords[0]) < hi and abs(float(coords[0]) - float(phase_comp)) > tol
+        for coords in maxima
+    )
+
+
+def _place_on_liquidus(liquidus, comp, temp):
+    """Refine ``comp`` to the liquidus crossing at ``temp``, and give the curve that point.
+
+    Args:
+        liquidus: digitized liquidus points, MUTATED IN PLACE to carry the crossing.
+        comp: the composition to refine, from the caller's own endpoint selection.
+        temp: the temperature the crossing is taken at.
+
+    Returns:
+        float: the refined composition, or ``comp`` unchanged when the curve never
+        reaches ``temp``.
+    """
+    crossings = liquidus_crossings(liquidus, temp)
+    if not crossings:
+        return comp
+    # nearest to the endpoint the caller already chose, so the selection is preserved
+    placed = min(crossings, key=lambda x: abs(x - comp))
+    if not any(
+        abs(float(p[0]) - placed) <= SEGMENT_TOL and abs(float(p[1]) - temp) <= SEGMENT_TOL
+        for p in liquidus
+    ):
+        index = next((i for i, p in enumerate(liquidus) if float(p[0]) > placed), len(liquidus))
+        liquidus.insert(index, [placed, float(temp)])
+    return placed
+
+
+_MIG_LABEL_RE = re.compile(r"^L\S*\s*\+\s*L\S*$")
+# kelvin between a dome polygon's top and the frame top that reads as clipping
+_FRAME_EDGE_TOL_K = 4.0
+
+
+def is_two_liquid_label(text) -> bool:
+    """True for a printed two-liquid field label such as ``L1 + L2``, in any spelling.
+
+    Args:
+        text: the label text as printed, HTML markup allowed.
+    """
+    return bool(_MIG_LABEL_RE.match(_HTML_TAG_RE.sub("", str(text or "")).strip()))
+
+
+def two_liquid_label_comps(mpds_json: dict, elements=None) -> list[float]:
+    """Compositions at which the diagram PRINTS a two-liquid field label.
+
+    Direct evidence of a liquid-liquid gap, independent of whether the digitized geometry
+    yields a dome: a stretch of liquidus carrying this label has a second liquid as its
+    conjugate, not a solid.
+
+    Args:
+        mpds_json: a full MPDS record; its ``labels`` block is read.
+        elements: component symbols to report the compositions in. Omitted, the record's
+            own frame is used.
+
+    Returns:
+        list[float]: one composition per printed label, in composition order.
+    """
+    mirrored = elements is not None and not mpds_frame_matches(mpds_json, elements)
+    comps = []
+    for entry in (mpds_json or {}).get("labels") or []:
+        try:
+            if not is_two_liquid_label(entry[0]):
+                continue
+            x = float(entry[1][0])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        if x > 1.0:
+            x /= 100.0
+        comps.append(1.0 - x if mirrored else x)
+    return sorted(comps)
+
+
+def _two_liquid_lens_pool(mpds_json, components):
+    """Printed two-liquid label anchors and two-phase shape outlines, in the evaluation frame.
+
+    Args:
+        mpds_json: the MPDS record, in its own component frame.
+        components: component names in the evaluation frame.
+
+    Returns:
+        tuple: ``(labels, shapes)`` -- one ``[x, T]`` anchor per printed two-liquid label, and
+        one ``[[x, T], ...]`` vertex list per two-phase shape whose svgpath parses.
+    """
+    mirrored = not mpds_frame_matches(mpds_json, components)
+
+    def frame_x(x):
+        return 1 - x if mirrored else x
+
+    labels = [
+        [frame_x(label[1][0] / 100.0), label[1][1] + 273.15]
+        for label in mpds_json["labels"]
+        if is_two_liquid_label(label[0])
+    ]
+    shapes = []
+    for shape in mpds_json["shapes"]:
+        if shape.get("nphases") != 2:
+            continue
+        data = shape_to_list(shape["svgpath"])
+        if data:
+            shapes.append([[frame_x(x), t] for x, t in data])
+    return labels, shapes
+
+
+def _two_liquid_apex_maxima(mpds_json, components, maxima, *, t_tol):
+    """``(x, T)`` of every liquidus maximum a printed two-liquid dome tops out at.
+
+    A solid crystallizing at a dome's crest melts by a syntectic reaction, ``L1 + L2 -> S``,
+    not congruently. Each printed label claims its nearest maximum, and the claim stands only
+    where a two-phase shape tops out there and brackets it in composition -- the pairing
+    ``_miscibility_gap_records`` makes.
+
+    Args:
+        mpds_json: the MPDS record, in its own component frame.
+        components: component names in the evaluation frame.
+        maxima: interior liquidus maxima; not modified.
+        t_tol: kelvin tolerance between a shape's top and a maximum.
+
+    Returns:
+        set: ``(x, T)`` tuples; empty when the diagram prints no two-liquid label.
+    """
+    if not maxima:
+        return set()
+    labels, shapes = _two_liquid_lens_pool(mpds_json, components)
+    claimed = set()
+    for anchor in labels:
+        nearest = min(maxima, key=lambda m: abs(m[0] - anchor[0]))
+        for data in shapes:
+            by_t = sorted(data, key=lambda p: p[1])
+            if abs(by_t[-1][1] - nearest[1]) >= t_tol or abs(by_t[-1][0] - nearest[0]) >= 0.05:
+                continue
+            by_x = sorted(data, key=lambda p: p[0])
+            if by_x[0][0] < nearest[0] < by_x[-1][0]:
+                claimed.add((nearest[0], nearest[1]))
+                break
+    return claimed
+
+
+def _walk_to_isotherm(liquidus, start, step, skip, temp):
+    """Composition where the liquidus first falls through ``temp``, walking away from ``start``.
+
+    Examines the segment ``(i, i + step)`` for ``i = start + step * skip``, then
+    ``i + step``, and so on while ``i + step`` is an index of ``liquidus``, and stops at the
+    first segment with ``liquidus[i + step][1] < temp <= liquidus[i][1]``.
+
+    Args:
+        liquidus: ``[x, T]`` points; not modified.
+        start: the index the walk starts from.
+        step: ``1`` to walk toward the end of the list, ``-1`` toward its start.
+        skip: how many steps from ``start`` the first examined segment begins.
+        temp: the isotherm temperature.
+
+    Returns:
+        The composition on the first crossing segment, linearly interpolated at ``temp``, or
+        None when no examined segment crosses it.
 
     Raises:
-        config.CacheModeError: on a LEAN record. Invariant points ARE the digitized solid
-            fields; without ``shapes`` there is nothing to identify, and an empty invariant
-            list would silently remove every invariant constraint from a fit.
+        ZeroDivisionError: the crossing segment is vertical and its coordinates are Python
+            floats.
     """
-    _require_full_record(
-        mpds_json,
-        "identify_invariant_points",
-        escape="fit without invariant constraints by passing disable_inv_constrs=True",
-    )
-    if mpds_json["reference"] is None:
-        logger.warning("System JSON does not contain any data!")
-        return [], [], False
+    i = start + step * skip
+    while 0 <= i + step <= len(liquidus) - 1:
+        j = i + step
+        if liquidus[j][1] < temp <= liquidus[i][1]:
+            m = (liquidus[j][1] - liquidus[i][1]) / (liquidus[j][0] - liquidus[i][0])
+            return (temp - liquidus[i][1]) / m + liquidus[i][0]
+        i += step
+    return None
 
-    # Identify phases from MPDS JSON. Polymorphs collapse to one entry per compound so a
-    # compound is not counted twice, and so a compound whose low-temperature form MPDS
-    # named but never digitized still reaches the tables (C-La's 'LaC2 rt').
-    phases = collapse_polymorphs(
-        identify_mpds_phases(mpds_json, elements=components, with_polymorph=True), mpds_json
-    )
-    if not mpds_frame_matches(mpds_json, components):
-        phases = mirror_mpds_phases(phases)
-    invariants = [
-        phase for phase in phases if phase["type"] == "mig"
-    ]  # Miscibility gaps are not phases.
-    # They are also not really 'invariant points' either but we classify them as such for algorithm purposes.
 
-    # Filter low-temperature phases
-    low_t_exp_phases = [
-        phase
-        for phase in phases
-        if (
-            phase["type"] in ["lc", "ss", "comp"]
-            and phase["tbounds"][0][1] < low_temp_threshold(mpds_json)
-        )
-        or "(" in phase["name"]
-    ]
+def _miscibility_gap_records(
+    mpds_json,
+    components,
+    digitized_liq,
+    maxima,
+    minima,
+    low_t_exp_phases,
+    component_data,
+    temp_range,
+    *,
+    t_tol,
+    holes,
+):
+    """``mig`` invariant records seeded by the diagram's printed two-liquid labels.
 
-    if verbose:
-        logger.info("--- Low temperature phases including component solid solutions ---")
-        for phase in low_t_exp_phases:
-            logger.info(phase)
+    Each label is matched to the nearest interior liquidus maximum, which becomes the
+    apex; a two-phase polygon topping out there supplies the feet, otherwise the walk from
+    the adjacent monotectic minimum does. A record is ``partial`` (``apex`` None) when a
+    liquidus hole lies between its feet or the matched polygon reaches the frame top. Every
+    label is processed; one falling inside a recorded dome is skipped. ``maxima`` and
+    ``minima`` lose the points a record consumes.
 
-    # Identify full composition solid solutions
-    phase_labels = [label[0] for label in mpds_json["labels"]]
-    ss_label = f"({components[0]}, {components[1]})"
-    ss_label_inv = f"({components[1]}, {components[0]})"
-    ss_labels = [
-        ss_label,
-        f"{ss_label} ht",
-        f"{ss_label} rt",
-        ss_label_inv,
-        f"{ss_label_inv} ht",
-        f"{ss_label_inv} rt",
-    ]
-    full_comp_ss = bool([label for label in phase_labels if label in ss_labels])
-    if full_comp_ss and check_full_ss:
-        # Notify-only: identification stops here (solidus processing is not implemented),
-        # but the caller decides whether fitting proceeds (it can with ss_models loaded).
-        logger.warning(
-            f"Full-composition solid solution detected in MPDS labels for "
-            f"{components[0]}-{components[1]}; invariant identification stopped early."
-        )
-        return invariants, low_t_exp_phases, True
+    Args:
+        mpds_json: the MPDS record, in its own component frame.
+        components: component names in the evaluation frame.
+        digitized_liq: ``[x, T]`` liquidus points in the evaluation frame.
+        maxima: interior liquidus maxima, consumed in place.
+        minima: liquidus minima, consumed in place.
+        low_t_exp_phases: phase records used to name the adjacent solid.
+        component_data: per-component reference data.
+        temp_range: ``[T_min, T_max]`` of the frame in K.
+        t_tol: kelvin tolerance for matching a polygon top to the apex.
+        holes: ``[lo, hi]`` composition intervals with no digitized liquidus.
 
-    def find_local_minima(points):
-        """
-        Args:
-            points (list of tuples): List of (x, y) points.
+    Returns:
+        list[dict]: records with keys ``type, comp, cbounds, tbounds, phases,
+        phase_comps, apex, partial, source``.
+    """
+    misc_gap_labels, two_phase_shapes = _two_liquid_lens_pool(mpds_json, components)
+    frame_top = temp_range[1] if temp_range else None
 
-        Returns:
-            list: Local minima points.
-        """
-
-        def is_lt_prev(index):
-            return index > 0 and points[index][1] < points[index - 1][1]
-
-        local_minima = []
-        current_section = []
-
-        for i in range(len(points)):
-            if is_lt_prev(i):
-                current_section = [points[i]]
-            elif current_section and current_section[-1][1] == points[i][1]:
-                current_section.append(points[i])
-            elif current_section:
-                local_minima.append(current_section[len(current_section) // 2])
-                current_section = []
-
-        return local_minima
-
-    def find_local_maxima(points):
-        """
-        Args:
-            points (list of tuples): List of (x, y) points.
-
-        Returns:
-            list: Local maxima points.
-        """
-
-        def is_gt_prev(index):
-            return index > 0 and points[index][1] > points[index - 1][1]
-
-        local_maxima = []
-        current_section = []
-
-        for i in range(len(points)):
-            if is_gt_prev(i):
-                current_section = [points[i]]
-            elif current_section and current_section[-1][1] == points[i][1]:
-                current_section.append(points[i])
-            elif current_section:
-                local_maxima.append(current_section[len(current_section) // 2])
-                current_section = []
-
-        return local_maxima
-
-    # Locate maxima and minima in liquidus
-    maxima = find_local_maxima(digitized_liq)
-    minima = find_local_minima(digitized_liq)
-
-    # Assign congruent melting points
-    if low_t_exp_phases:
-        for coords in maxima[:]:
-            low_t_exp_phases.sort(key=lambda x: abs(x["comp"] - coords[0]))
-            phase = low_t_exp_phases[0]
-            if (
-                phase["type"] in ["lc", "ss", "comp"]
-                and abs(phase["comp"] - coords[0]) <= 0.02
-                and phase["tbounds"][1][1] + t_tol >= coords[1]
-            ):
-                phase["type"] = "cmp"
-                invariants.append(
-                    {
-                        "type": phase["type"],
-                        "comp": phase["comp"],
-                        "temp": phase["tbounds"][1][1],
-                        "phases": [phase["name"]],
-                        "phase_comps": [phase["comp"]],
-                    }
-                )
-                maxima.remove(coords)
-
-    # Sort by descending temperature for peritectic identification
-    low_t_exp_phases.sort(key=lambda x: x["tbounds"][1][1], reverse=True)
-
-    def find_adj_phases(point: list | tuple) -> tuple[dict, dict]:
-        """
-        Finds adjacent phases near a given point.
-
-        Args:
-            point (list | tuple): A point in composition-temperature space.
-
-        Returns:
-            tuple: Two nearest adjacent phases.
-        """
-        all_lowt_phases = low_t_exp_phases + [
-            {
-                "name": components[0],
-                "comp": 0,
-                "type": "lc",
-                "tbounds": [[], [0, component_data[components[0]].t_fusion]],
-            },
-            {
-                "name": components[1],
-                "comp": 1,
-                "type": "lc",
-                "tbounds": [[], [1, component_data[components[1]].t_fusion]],
-            },
-        ]
-        all_lowt_phases = [p for p in all_lowt_phases if p["tbounds"][1][1] + t_tol >= point[1]]
-        lhs_phases = [phase for phase in all_lowt_phases if phase["comp"] < point[0]]
-        adj_lhs_phase = (
-            None if not lhs_phases else min(lhs_phases, key=lambda x: abs(x["comp"] - point[0]))
-        )
-        rhs_phases = [phase for phase in all_lowt_phases if phase["comp"] > point[0]]
-        adj_rhs_phase = (
-            None if not rhs_phases else min(rhs_phases, key=lambda x: abs(x["comp"] - point[0]))
-        )
-        return adj_lhs_phase, adj_rhs_phase
-
-    # Identify liquid-liquid miscibility gap labels
-    misc_gap_labels = []
-    for label in mpds_json["labels"]:
-        delim_label = label[0].split(" ")
-        if len(delim_label) == 3 and delim_label[0][0] == "L" and delim_label[2][0] == "L":
-            misc_gap_labels.append([label[1][0] / 100.0, label[1][1] + 273.15])
-
-    # Process miscibility gap labels and find the nearest two-phase region which each corresponds to
+    records = []
     for mgl in misc_gap_labels:
         if len(maxima) < 1:
             break
+        if any(
+            rec["cbounds"][0][0] - 1e-6 <= mgl[0] <= rec["cbounds"][1][0] + 1e-6 for rec in records
+        ):
+            continue
         nearest_maxima = min(maxima, key=lambda x: abs(x[0] - mgl[0]))
 
         tbounds = [None, nearest_maxima]
         cbounds = None
+        matched = None
         phases = None
         phase_comps = None
 
-        for shape in mpds_json["shapes"]:
-            # 'drawing' shapes (tie/construction lines) carry no nphases key in
-            # native MPDS data (e.g. Mn-Pb), so .get() — this loop only became
-            # reachable for such systems once multi-L extraction started
-            # returning a liquidus for disjoint-L diagrams.
-            if shape.get("nphases") != 2:
-                continue
-            data = shape_to_list(shape["svgpath"])
-            if not data:
-                continue
-            data.sort(key=lambda x: x[1])
+        for data in two_phase_shapes:
+            data = sorted(data, key=lambda x: x[1])
             if not (
                 abs(data[-1][1] - nearest_maxima[1]) < t_tol
                 and abs(data[-1][0] - nearest_maxima[0]) < 0.05
             ):
                 continue
             tbounds = [data[0], data[-1]]
-            data.sort(key=lambda x: x[0])
+            data = sorted(data, key=lambda x: x[0])
             if not data[0][0] < nearest_maxima[0] < data[-1][0]:
                 continue
-            cbounds = [data[0], data[-1]]
+            cbounds = [list(data[0]), list(data[-1])]
+            matched = data
             break
 
         if len(minima) >= 1:
-            # Adjacent monotectic should be a minima point at minimum distance in x-t space from the misc gap dome
             adj_mono = min(
                 minima,
                 key=lambda x: (
@@ -1931,7 +2241,9 @@ def identify_invariant_points(
                 ),
             )
             tbounds[0] = [tbounds[1][0], adj_mono[1]]
-            adj_phases = find_adj_phases(adj_mono)
+            adj_phases = _find_adj_phases(
+                adj_mono, low_t_exp_phases, components, component_data, t_tol
+            )
 
             if adj_mono[0] < tbounds[1][0]:
                 if adj_phases[0] is not None:
@@ -1939,47 +2251,136 @@ def identify_invariant_points(
                     phases = [adj_phases[0]["name"]]
                 if not cbounds:
                     lhs_ind = digitized_liq.index(adj_mono)
-                    for i in range(lhs_ind + 1, len(digitized_liq) - 1):
-                        if digitized_liq[i + 1][1] < adj_mono[1] <= digitized_liq[i][1]:
-                            m = (digitized_liq[i + 1][1] - digitized_liq[i][1]) / (
-                                digitized_liq[i + 1][0] - digitized_liq[i][0]
-                            )
-                            rhs_comp = (adj_mono[1] - digitized_liq[i][1]) / m + digitized_liq[i][0]
-                            cbounds = [adj_mono, [rhs_comp, adj_mono[1]]]
-                            break
+                    rhs_comp = _walk_to_isotherm(
+                        digitized_liq, lhs_ind, step=1, skip=1, temp=adj_mono[1]
+                    )
+                    if rhs_comp is not None:
+                        cbounds = [adj_mono, [rhs_comp, adj_mono[1]]]
             elif adj_mono[0] > tbounds[1][0]:
                 if adj_phases[1] is not None:
                     phase_comps = [adj_phases[1]["comp"]]
                     phases = [adj_phases[1]["name"]]
                 if not cbounds:
                     rhs_ind = digitized_liq.index(adj_mono)
-                    for i in reversed(range(1, rhs_ind - 1)):
-                        if digitized_liq[i - 1][1] < adj_mono[1] <= digitized_liq[i][1]:
-                            m = (digitized_liq[i - 1][1] - digitized_liq[i][1]) / (
-                                digitized_liq[i - 1][0] - digitized_liq[i][0]
-                            )
-                            lhs_comp = (adj_mono[1] - digitized_liq[i][1]) / m + digitized_liq[i][0]
-                            cbounds = [[lhs_comp, adj_mono[1]], adj_mono]
-                            break
+                    # skip=2 here and skip=1 on the left is a preserved asymmetry; do not unify.
+                    lhs_comp = _walk_to_isotherm(
+                        digitized_liq, rhs_ind, step=-1, skip=2, temp=adj_mono[1]
+                    )
+                    if lhs_comp is not None:
+                        cbounds = [[lhs_comp, adj_mono[1]], adj_mono]
             if cbounds and cbounds[0][1] != cbounds[1][1]:
                 cbounds[0][1] = adj_mono[1]
                 cbounds[1][1] = adj_mono[1]
             minima.remove(adj_mono)
 
-        if cbounds:
-            invariants.append(
+        if not cbounds:
+            continue
+
+        x_lo, x_hi = cbounds[0][0], cbounds[1][0]
+        hole_inside = any(x_lo - 1e-6 <= a and b <= x_hi + 1e-6 for a, b in holes)
+        at_frame = (
+            matched is not None
+            and frame_top is not None
+            and abs(max(p[1] for p in matched) - frame_top) <= _FRAME_EDGE_TOL_K
+        )
+        partial = bool(hole_inside or at_frame)
+        records.append(
+            {
+                "type": "mig",
+                "comp": tbounds[1][0],
+                "cbounds": cbounds,
+                "tbounds": tbounds,
+                "phases": phases,
+                "phase_comps": phase_comps,
+                "apex": None if partial else [float(tbounds[1][0]), float(tbounds[1][1])],
+                "partial": partial,
+                "source": "label",
+            }
+        )
+        maxima.remove(nearest_maxima)
+    return records
+
+
+def _congruent_invariants(low_t_exp_phases, maxima, endpoint_candidates, syntectic_maxima, t_tol):
+    """``cmp`` invariant records: liquidus maxima matched to a congruently melting phase.
+
+    The interior maxima and the endpoint candidates are visited in composition order, and
+    each is tested against the nearest phase. A phase matches when its type is ``lc``,
+    ``ss`` or ``comp``, its composition is within ``_CONGRUENT_MATCH_TOL`` of the maximum,
+    and its top temperature plus ``t_tol`` reaches the maximum's temperature. An endpoint
+    candidate never matches a terminal phase; an interior maximum in ``syntectic_maxima``
+    never matches.
+
+    Args:
+        low_t_exp_phases: low-temperature phase records. MUTATED: re-sorted in place by
+            distance to each candidate in turn, and each matched phase's ``type`` is set to
+            ``"cmp"``.
+        maxima: interior liquidus maxima as ``[comp, temp]``. MUTATED: each matched maximum
+            is removed.
+        endpoint_candidates: liquidus endpoint maxima as ``[comp, temp]``; not modified.
+        syntectic_maxima: ``(comp, temp)`` tuples of the maxima a two-liquid dome tops out
+            at; not modified.
+        t_tol: kelvin tolerance between a phase's top temperature and a maximum.
+
+    Returns:
+        list[dict]: ``cmp`` records with keys ``type, comp, temp, phases, phase_comps``, in
+        match order.
+    """
+    records = []
+    candidates = [(coords, False) for coords in maxima] + [
+        (coords, True) for coords in endpoint_candidates
+    ]
+    candidates.sort(key=lambda item: float(item[0][0]))
+    for coords, from_endpoint in candidates:
+        low_t_exp_phases.sort(key=lambda x: abs(x["comp"] - coords[0]))
+        phase = low_t_exp_phases[0]
+        # A liquidus endpoint near a terminal solid solution is not taken as a congruent maximum.
+        if from_endpoint and _is_terminal_phase(phase):
+            continue
+        if not from_endpoint and (coords[0], coords[1]) in syntectic_maxima:
+            continue
+        if (
+            phase["type"] in ["lc", "ss", "comp"]
+            and abs(phase["comp"] - coords[0]) <= _CONGRUENT_MATCH_TOL
+            and phase["tbounds"][1][1] + t_tol >= coords[1]
+        ):
+            phase["type"] = "cmp"
+            records.append(
                 {
-                    "type": "mig",
-                    "comp": tbounds[1][0],
-                    "cbounds": cbounds,
-                    "tbounds": tbounds,
-                    "phases": phases,
-                    "phase_comps": phase_comps,
+                    "type": phase["type"],
+                    "comp": phase["comp"],
+                    "temp": phase["tbounds"][1][1],
+                    "phases": [phase["name"]],
+                    "phase_comps": [phase["comp"]],
                 }
             )
-            maxima.remove(nearest_maxima)
-        break
+            if not from_endpoint:
+                maxima.remove(coords)
 
+    return records
+
+
+def _peritectic_invariants(low_t_exp_phases, digitized_liq, maxima):
+    """``per`` invariant records: the liquidus point each non-congruent phase melts onto.
+
+    Phases are visited in list order. A phase whose name contains ``(`` is skipped, and a
+    ``cmp`` phase records nothing but bounds the search for the phases after it. Each other
+    phase records the end of a liquidus section at its top temperature that lies nearest
+    it, placed on the curve at that temperature. The curve's own two ends, ends with an
+    earlier-visited phase in between and ends with an unclaimed maximum in between are
+    excluded; a phase left with no end records nothing.
+
+    Args:
+        low_t_exp_phases: low-temperature phase records, in visiting order; not modified.
+        digitized_liq: ``[x, T]`` liquidus points. MUTATED: each record's liquidus point is
+            inserted where the curve does not already carry it (see ``_place_on_liquidus``).
+        maxima: interior liquidus maxima no ``cmp`` record claimed; not modified.
+
+    Returns:
+        list[dict]: ``per`` records with keys ``type, comp, temp, phases, phase_comps``, in
+        phase order.
+    """
+    records = []
     stable_phase_comps = []
 
     # Main loop for peritectic phase identification
@@ -1987,7 +2388,7 @@ def identify_invariant_points(
         if "(" in phase["name"]:  # Ignore component SS phases
             continue
 
-        # Congruent melting points will not be considered for peritectic formation but will limit comp search range
+        # cmp phases record nothing but bound the composition search
         if phase["type"] == "cmp":
             stable_phase_comps.append(phase["comp"])
             continue
@@ -2037,15 +2438,20 @@ def identify_invariant_points(
                 or abs(comp - phase["comp"]) > abs(phase["comp"] - ep[0])
             ]
 
+        # A congruent dome the cmp pass left unclaimed also separates this phase from the liquid.
+        endpoints = [
+            ep for ep in endpoints if not _unclaimed_maximum_between(maxima, phase["comp"], ep[0])
+        ]
+
         # Sort by increasing distance to liquidus to find the shortest distance
         endpoints.sort(key=lambda x: abs(x[0] - phase["comp"]))
 
-        # Take the closest liquidus point to the phase as the peritectic point
+        # The peritectic point: the liquidus point closest to the phase, refined onto the curve.
         if endpoints:
-            invariants.append(
+            records.append(
                 {
                     "type": "per",
-                    "comp": endpoints[0][0],
+                    "comp": _place_on_liquidus(digitized_liq, endpoints[0][0], phase_temp),
                     "temp": phase_temp,
                     "phases": [phase["name"]],
                     "phase_comps": [phase["comp"]],
@@ -2054,9 +2460,26 @@ def identify_invariant_points(
 
         stable_phase_comps.append(phase["comp"])
 
-    # Identify eutectic points
+    return records
+
+
+def _eutectic_invariants(minima, low_t_exp_phases, components, component_data, t_tol):
+    """``eut`` invariant records, one per liquidus minimum, with the nearest phase on each side.
+
+    Args:
+        minima: liquidus minima as ``[comp, temp]``; not modified.
+        low_t_exp_phases: candidate phases for ``_find_adj_phases``; not modified.
+        components: the two component names.
+        component_data: per-component data, read for ``t_fusion``.
+        t_tol: passed to ``_find_adj_phases``.
+
+    Returns:
+        list[dict]: ``eut`` records with keys ``type, comp, temp, phases, phase_comps``, in
+        ``minima`` order; a side with no phase is None in ``phases`` and ``phase_comps``.
+    """
+    records = []
     for coords in minima:
-        adj_phases = find_adj_phases(coords)
+        adj_phases = _find_adj_phases(coords, low_t_exp_phases, components, component_data, t_tol)
         phases, phase_comps = zip(
             *[
                 (None, None) if phase is None else (phase["name"], phase["comp"])
@@ -2064,7 +2487,7 @@ def identify_invariant_points(
             ]
         )
 
-        invariants.append(
+        records.append(
             {
                 "type": "eut",
                 "comp": coords[0],
@@ -2074,6 +2497,148 @@ def identify_invariant_points(
             }
         )
 
+    return records
+
+
+def identify_invariant_points(
+    mpds_json: dict,
+    components,
+    digitized_liq: list[list],
+    component_data: dict,
+    temp_range,
+    *,
+    verbose=False,
+    check_full_ss=True,
+    t_tol=15,
+    liquidus_holes=None,
+) -> tuple[list[dict], list[dict], bool]:
+    """Identifies invariant points in the MPDS data from the digitized liquidus and JSON.
+
+    DFT phases are not considered. Requires both the liquidus and the JSON of a binary system.
+
+    Args:
+        mpds_json (dict): MPDS digitized phase equilibrium data for the system.
+        components (list): Component names in the evaluation frame ([A, B]).
+        digitized_liq (list): Digitized liquidus points as [x, T] pairs.
+        component_data (dict): Per-component reference data; only ``.t_fusion`` is read.
+        temp_range (list): Evaluation temperature range [min, max] in K; the max scales
+            the composition-vs-temperature distance metric used to pair a miscibility-gap
+            dome with its adjacent monotectic.
+        verbose (bool): If True, outputs additional debugging information.
+        check_full_ss (bool): If True, stop early when the MPDS labels report a solid
+            solution over the full composition range.
+        t_tol (int): Temperature tolerance for invariant point identification.
+        liquidus_holes (list | None): ``[lo, hi]`` composition intervals with no digitized
+            liquidus, in the evaluation frame; None means no hole is known.
+
+    Returns:
+        tuple: (invariant points, low-temperature phases from the MPDS JSON, full_comp_ss).
+        full_comp_ss is True when identification stopped at a full-composition solid solution;
+        the caller decides whether fitting proceeds.
+
+    Raises:
+        config.CacheModeError: on a LEAN record.
+    """
+    require_full_record(
+        mpds_json,
+        "identify_invariant_points",
+        escape="fit without invariant constraints by passing disable_inv_constrs=True",
+    )
+    if mpds_json["reference"] is None:
+        logger.warning("System JSON does not contain any data!")
+        return [], [], False
+
+    # Phases from the MPDS JSON, polymorphs collapsed to one entry per compound.
+    raw_phases = identify_mpds_phases(mpds_json, elements=components, with_polymorph=True)
+    unpaired_ht = mark_unpaired_ht_forms(raw_phases, components, mpds_json=mpds_json)
+    phases = collapse_polymorphs(raw_phases, mpds_json, elements=components)
+    if not mpds_frame_matches(mpds_json, components):
+        phases = mirror_mpds_phases(phases)
+        unpaired_ht = frozenset((base, 1 - comp) for base, comp in unpaired_ht)
+    invariants = [
+        phase for phase in phases if phase["type"] == "mig"
+    ]  # Miscibility gaps are not phases.
+    # ...nor true invariant points, but the invariant list carries them.
+
+    # Filter low-temperature phases
+    threshold = low_temp_threshold(mpds_json)
+    low_t_exp_phases = [
+        phase
+        for phase in phases
+        if is_low_temperature_phase(phase, threshold, unpaired_ht=unpaired_ht)
+        or "(" in phase["name"]
+    ]
+
+    if verbose:
+        logger.info("--- Low temperature phases including component solid solutions ---")
+        for phase in low_t_exp_phases:
+            logger.info(phase)
+
+    # Identify full composition solid solutions
+    phase_labels = [label[0] for label in mpds_json["labels"]]
+    ss_label = f"({components[0]}, {components[1]})"
+    ss_label_inv = f"({components[1]}, {components[0]})"
+    ss_labels = [
+        ss_label,
+        f"{ss_label} ht",
+        f"{ss_label} rt",
+        ss_label_inv,
+        f"{ss_label_inv} ht",
+        f"{ss_label_inv} rt",
+    ]
+    full_comp_ss = bool([label for label in phase_labels if label in ss_labels])
+    if full_comp_ss and check_full_ss:
+        # Logs and stops identification; the caller decides whether fitting proceeds.
+        logger.warning(
+            f"Full-composition solid solution detected in MPDS labels for "
+            f"{components[0]}-{components[1]}; invariant identification stopped early."
+        )
+        return invariants, low_t_exp_phases, True
+
+    # Locate maxima and minima in liquidus
+    maxima = find_local_maxima(digitized_liq)
+    minima = find_local_minima(digitized_liq)
+
+    # The ends of the digitized curve are candidates for congruent melting only; ``maxima`` holds
+    # interior maxima.
+    endpoint_candidates = _endpoint_maxima(digitized_liq)
+
+    # Dome crests are reserved from the full maxima list before _congruent_invariants runs.
+    syntectic_maxima = _two_liquid_apex_maxima(mpds_json, components, maxima, t_tol=t_tol)
+
+    # Assign congruent melting points
+    if low_t_exp_phases:
+        invariants.extend(
+            _congruent_invariants(
+                low_t_exp_phases, maxima, endpoint_candidates, syntectic_maxima, t_tol
+            )
+        )
+
+    # Sort by descending temperature for peritectic identification
+    low_t_exp_phases.sort(key=lambda x: x["tbounds"][1][1], reverse=True)
+
+    invariants.extend(
+        _miscibility_gap_records(
+            mpds_json,
+            components,
+            digitized_liq,
+            maxima,
+            minima,
+            low_t_exp_phases,
+            component_data,
+            temp_range,
+            t_tol=t_tol,
+            holes=liquidus_holes or [],
+        )
+    )
+
+    invariants.extend(_peritectic_invariants(low_t_exp_phases, digitized_liq, maxima))
+
+    # Identify eutectic points
+    invariants.extend(
+        _eutectic_invariants(minima, low_t_exp_phases, components, component_data, t_tol)
+    )
+
     invariants.sort(key=lambda x: x["comp"])
     invariants = [inv for inv in invariants if inv["type"] not in ["lc", "ss", "comp"]]
     if verbose:
@@ -2081,3 +2646,122 @@ def identify_invariant_points(
         for inv in invariants:
             logger.info(inv)
     return invariants, low_t_exp_phases, False
+
+
+def mig_apex(iv: dict) -> list | None:
+    """The ``[x, T]`` apex of a ``mig`` invariant, or None when the record does not know it.
+
+    Reads ``apex`` when the key is present, reports None for a record marked ``partial``,
+    and falls back to the upper ``tbounds`` point of a record without an ``apex`` key.
+
+    Args:
+        iv: one invariant record.
+
+    Returns:
+        list | None: ``[x, T]`` in the record's own units, or None.
+    """
+    if "apex" in iv:
+        apex = iv["apex"]
+        return None if apex is None else [float(apex[0]), float(apex[1])]
+    if iv.get("partial"):
+        return None
+    tbounds = iv.get("tbounds") or []
+    if len(tbounds) < 2 or not tbounds[1]:
+        return None
+    return [float(tbounds[1][0]), float(tbounds[1][1])]
+
+
+def mig_feet(invariants):
+    """``(lo, hi)`` composition feet of every miscibility gap, in composition order.
+
+    The feet come from ``cbounds``. A ``mig`` record's ``comp`` is the dome APEX, which is
+    not a field boundary.
+    """
+    feet = []
+    for iv in invariants:
+        if iv.get("type") != "mig":
+            continue
+        cbounds = iv.get("cbounds") or []
+        if len(cbounds) < 2 or not cbounds[0] or not cbounds[1]:
+            continue
+        a, b = float(cbounds[0][0]), float(cbounds[1][0])
+        feet.append((min(a, b), max(a, b)))
+    return sorted(feet)
+
+
+def bounding_invariant_comps(invariants) -> list[float]:
+    """Compositions at which an invariant may bound a neighbouring phase's field.
+
+    Every invariant contributes its ``comp`` except a ``mig``, which contributes the two
+    feet ``mig_feet`` reads from its ``cbounds``; a ``mig`` carrying no usable ``cbounds``
+    contributes nothing.
+
+    Args:
+        invariants: invariant records.
+
+    Returns:
+        list[float]: sorted, de-duplicated compositions.
+    """
+    comps = {
+        round(float(iv["comp"]), 9)
+        for iv in (invariants or [])
+        if isinstance(iv, dict) and iv.get("comp") is not None and iv.get("type") != "mig"
+    }
+    comps |= {round(float(c), 9) for pair in mig_feet(invariants or []) for c in pair}
+    return sorted(comps)
+
+
+def subtract_ranges(ranges, cuts):
+    """``ranges`` with every part of ``cuts`` removed, merged and in composition order."""
+    if not cuts:
+        return merge_ranges([list(r) for r in ranges])
+    out = []
+    for lo, hi in merge_ranges([list(r) for r in ranges]):
+        cursor = lo
+        for a, b in merge_ranges([list(c) for c in cuts]):
+            if b <= cursor or a >= hi:
+                continue
+            if a > cursor:
+                out.append([cursor, min(a, hi)])
+            cursor = max(cursor, b)
+            if cursor >= hi:
+                break
+        if hi - cursor > SEGMENT_TOL:
+            out.append([cursor, hi])
+    return merge_ranges(out)
+
+
+def mig_feet_on_liquidus(iv, liquidus, foot_tol):
+    """True when both feet of a ``mig`` record sit on the digitized liquidus at its isotherm.
+
+    A two-liquid dome meets the liquidus at both feet, on the monotectic isotherm. The
+    matcher accepts any two-phase shape whose top is near a liquidus maximum, so it also
+    catches ordinary ``L + solid`` fields -- and trimming one of those from the mask would
+    declare a real solid-conjugate liquidus supported.
+
+    Args:
+        iv: one invariant record.
+        liquidus: digitized ``[x, T]`` pairs, in the report's component frame.
+        foot_tol: kelvin a foot may sit off the liquidus before the record is rejected.
+    """
+    cbounds = iv.get("cbounds") or []
+    if iv.get("type") != "mig" or len(cbounds) < 2 or not liquidus:
+        return False
+    xs = [float(pt[0]) for pt in liquidus]
+    ts = [float(pt[1]) for pt in liquidus]
+    for foot in cbounds[:2]:
+        if foot is None or len(foot) < 2:
+            return False
+        x, temp = float(foot[0]), float(foot[1])
+        if not xs[0] - SEGMENT_TOL <= x <= xs[-1] + SEGMENT_TOL:
+            return False
+        if abs(float(np.interp(x, xs, ts)) - temp) > foot_tol:
+            return False
+    return True
+
+
+def validated_mig_feet(invariants, liquidus, foot_tol):
+    """``mig_feet`` restricted to the records whose feet the liquidus actually confirms."""
+    return mig_feet(
+        [iv for iv in (invariants or []) if mig_feet_on_liquidus(iv, liquidus, foot_tol)]
+    )

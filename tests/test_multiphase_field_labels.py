@@ -2,16 +2,12 @@
 
 MPDS labels a field between two phases by joining their names with '+', dropping a
 component phase's parentheses ('HgZr3 + G', 'Mn2B Mn + rt' for the figure's
-'Mn2B + (Mn) rt'), and routinely tags the shape ``nphases: 1``. Since
-``identify_mpds_phases`` names a boundary line from ``shape['label'].split()[0]``, the
-first constituent was being promoted to a compound sitting at the FIELD's composition.
+'Mn2B + (Mn) rt'), and routinely tags the shape ``nphases: 1``. ``identify_mpds_phases``
+must not promote the first constituent to a compound at the FIELD's composition.
 
-The two cases below are real and were confirmed against the source figures in
-``dev/data/mpds_source_images``: Hg-Zr draws Hg3Zr at 25 at.% Zr and HgZr3 at 75 at.%,
-and the 25 at.% line came back named 'HgZr3'; B-Mn draws Mn2B at 66.7 at.% Mn and grew a
-second 'Mn2B' at 80 at.%, where the figure prints only a two-phase field annotation.
-Across the cache the pattern covers 23 shapes in 18 systems -- these two are merely the
-ones whose phantom collided with a correctly named shape and so were visible at all.
+The two cases below are real, checked against the source figures: Hg-Zr draws Hg3Zr at
+25 at.% Zr and HgZr3 at 75 at.%; B-Mn draws Mn2B at 66.7 at.% Mn and prints only a
+two-phase field annotation at 80 at.%.
 
 Fixtures are synthetic but carry the real labels, compositions and temperature frames.
 """
@@ -20,40 +16,13 @@ import pytest
 
 from gliquid import mpds
 
-
-def _line(label, x, y_lo, y_hi, phase=None):
-    """A line compound / boundary: MPDS draws these as a bare vertical line. y is degC."""
-    return {
-        "nphases": 1,
-        "is_solid": True,
-        "kind": "compound",
-        "label": label,
-        "phase": phase,
-        "svgpath": f"M {x},{y_lo} L {x},{y_hi}",
-    }
-
-
-def _field(label, points, phase=None):
-    """A shape MPDS typed as an area (kind='phase'); it would carry cbounds."""
-    return {
-        "nphases": 1,
-        "is_solid": True,
-        "kind": "phase",
-        "label": label,
-        "phase": phase,
-        "svgpath": "M " + " L ".join(f"{x},{y}" for x, y in points),
-    }
+from ._mpds_builders import field_shape as _field
+from ._mpds_builders import line_shape as _line
+from ._mpds_builders import mpds_record
 
 
 def _json(shapes, temp=(-200.0, 2000.0), labels=(), elements=("Hg", "Zr")):
-    return {
-        "reference": {"entry": "synthetic"},
-        "chemical_elements": list(elements),
-        "temp": list(temp),
-        "comp_range": [0.0, 100.0],
-        "shapes": list(shapes),
-        "labels": [list(entry) for entry in labels],
-    }
+    return mpds_record(shapes, elements, temp, labels)
 
 
 class TestLabelRecognition:
@@ -193,7 +162,7 @@ class TestCollapseLabelBlock:
     """The labels block goes through the same rule, so the two blocks stay joinable."""
 
     def test_a_field_annotation_does_not_seed_a_thermal_form(self):
-        # Threshold for temp=(200, 2600) is 713.15 K == 440 degC; the dome bottom sits
+        # Threshold for temp=(200, 2600) is 593.15 K == 320 degC; the dome bottom sits
         # above it, so an 'rt' form named in the labels block would pull tbounds down.
         data = _json(
             [_line("XY2 ht", 33.33, 600.0, 1800.0)],
@@ -206,7 +175,6 @@ class TestCollapseLabelBlock:
         )
         xy2 = next(p for p in collapsed if p["name"] == "XY2")
         assert xy2["tbounds"][0][1] == pytest.approx(873.15)
-        assert "distinct_melting_polymorph" not in xy2
 
     def test_a_genuine_rt_label_still_seeds_one(self):
         """Guard rails only the '+' case -- the C-La recovery must keep working."""
@@ -221,4 +189,3 @@ class TestCollapseLabelBlock:
         )
         xy2 = next(p for p in collapsed if p["name"] == "XY2")
         assert xy2["tbounds"][0][1] == pytest.approx(373.15)
-        assert xy2["distinct_melting_polymorph"] is True

@@ -1,4 +1,4 @@
-# Contributing to GLiquid
+# Contributing to G<sub>Liquid</sub>
 
 Pull requests are welcome. For anything larger than a bug fix, please open an issue first so
 the change can be discussed before it is written.
@@ -13,17 +13,16 @@ git clone https://github.com/willwerj/gliquid_python.git
 cd gliquid_python
 conda create --name gliquidenv python=3.10   # 3.11, 3.12 and 3.13 are also supported
 conda activate gliquidenv
-pip install -e .[test]
+pip install -e ".[test]"
 ```
 
-`.[test]` adds `pytest` and `ruff` on top of the runtime dependencies. Add other extras as the
-work needs them — `.[editor]` for `ConvexHullEditor`, `.[mpds]` for live MPDS downloads,
-`.[notebook]` for local Jupyter, `.[models]` for the exact `scikit-learn`/`xgboost` versions the
-serialized model artifacts were pickled against.
+`.[test]` adds `pytest`, `pytest-xdist`, `ruff` and the ML test stack (`gliquid[ml]`, `scikit-learn`, `joblib`, `openpyxl`) on top of the runtime dependencies. Add other extras as the
+work needs them — `.[mpds]` for live MPDS downloads, `.[ml]` for `ProductionModelRunner`, and
+`.[notebook]` for local Jupyter and `ConvexHullEditor`.
 
-Working from a clone also means the data corpus resolves automatically: `gliquid.config` falls
-back to the checkout's own `cache/` directory when neither `set_data_dir()` nor
-`GLIQUID_DATA_DIR` has been used. See the README for the full resolution order.
+Working from a clone also means the data corpus resolves automatically when the checkout
+directory is named `gliquid_python`. The store is the first of: `set_cache_dir()`,
+`GLIQUID_CACHE_DIR`, the checkout's `cache/`, then `./gliquid_cache`.
 
 ## Running the tests
 
@@ -33,22 +32,45 @@ what you pass:
 ```bash
 pytest                        # the public tests/ suite -- the default, and what a contributor runs
 pytest tests_internal         # the maintainer tier: value pins, figure goldens, gated families
-pytest tests tests_internal   # everything; this is what CI runs
+pytest tests tests_internal   # everything
 ```
 
 A bare `pytest` collects only `tests/` because `testpaths = ["tests"]` says so in
 `pyproject.toml`; `tests_internal/` is tracked in git but never collected implicitly, and it is
 excluded from the sdist.
 
-For the fast edit/run loop, deselect the slow fits:
+The gate is the whole suite in parallel under pytest-xdist. Run it before you push; CI runs the
+same command with `-m "not needs_network"`:
 
 ```bash
-pytest -m "not slow"
+pytest tests tests_internal -n auto --dist worksteal
 ```
 
-That is roughly a 2.7x speedup on the public suite — measured at 84.7 s against 225.7 s for the
-full run on a maintainer machine. It is a faster loop, not an instant one; run the full suite
-before you push.
+- Use `-n 8` instead of `-n auto` while a fit campaign or another heavy job runs: each worker
+  commits about 1.7 GB of memory.
+- Run serially (no `-n`) to attribute a failure to one test.
+- Never put `-n` in `addopts`.
+
+For the inner loop, `pytest-testmon` reruns only the tests that execute code you changed. It is
+optional and not part of `.[test]`:
+
+```bash
+pip install pytest-testmon
+pytest tests tests_internal --testmon   # first run: the whole suite, recording what each test executes
+pytest tests tests_internal --testmon   # later runs: only the tests your edits affect
+```
+
+It keeps its record in `.testmondata` at the repository root (git-ignored), needs the cache
+provider (do not pass `-p no:cacheprovider`), and also works with `-n auto`. An edit that changes
+no code, such as a comment, selects nothing. Tests that start a fresh interpreter, or read the
+source as text, are not selected by a change under `src/`, so run the gate before you push.
+
+Without testmon, run one module (`pytest tests/test_phase.py`), or rerun the last failures with
+`--lf` (it also needs the cache provider).
+
+Only git-tracked test files are collected from `tests/` and `tests_internal/`. An untracked or
+ignored `test_*.py` is skipped and listed in the terminal summary; `git add` it, or name it on
+the command line, to run it.
 
 ### Markers
 
@@ -58,9 +80,34 @@ one fails the run instead of silently applying no marker at all.
 | marker | meaning |
 | --- | --- |
 | `pins` | A frozen-value characterization pin. It asserts that today's numbers equal the numbers captured when the pin was frozen. |
-| `needs_cache` | Needs the workspace `matrix_data/` store of per-system DFT and digitized-diagram caches. **Skips**, rather than fails, on a checkout without it. |
+| `needs_cache` | Needs the maintainer's per-system corpus store. **Skips**, rather than fails, without it. |
 | `needs_network` | Needs `NEW_MP_API_KEY` and a live Materials Project connection. |
-| `slow` | A multi-second Nelder–Mead fit or hull build. Deselect with `-m "not slow"`. |
+| `directory_only` | Needs a directory cache store. Skipped when `GLIQUID_TEST_SQLITE_STORE` swaps in a single-file store. |
+
+### Writing a test
+
+- A test passes alone and in any order: the gate's workers reorder tests. Build what you read,
+  and never rely on another test having run.
+- Build expensive objects once.
+  - The root `conftest.py` memoises DFT hulls for the session, so do not cache hulls yourself.
+  - Reuse the session fits and builders in `tests/_mpds_builders.py`, and scope your own
+    fixtures to the module or session.
+  - Deep-copy a shared object before you change it: the hull memo fails a test that mutates a
+    shared hull.
+- Fit each system once per module, with the smallest `n_opts` and `max_iter` that still return a
+  fit.
+- Start a fresh interpreter only for an import or install contract that an in-process test
+  cannot check. Do it through `tests/_fresh.py`, with one probe per target.
+- Keep a test under about 5 s; CI prints the 25 slowest. There is no slow marker: the parallel
+  gate is the fast path.
+- Assert something no other test asserts, and make each pin case change the pinned output.
+- Do not assume the checkout directory is named `gliquid_python`, and do not build paths from
+  `config.project_root`. Anchor on the test file's own location.
+- A removed released name keeps one test that it raises `TypeError` (`AttributeError` for a
+  removed attribute). A name that never shipped
+  gets no absence test.
+- A comment says what the test checks, never why it changed. A docstring states what the test
+  asserts and, for a pin, which script re-freezes it.
 
 ### Re-freezing a pin
 
@@ -82,8 +129,24 @@ calls that read fine today.
 ```bash
 ruff format src/gliquid tests tests_internal   # before you push
 ruff format --check src/gliquid tests tests_internal
-ruff check src/gliquid                          # advisory for now, not yet a gate
+ruff check src/gliquid tests tests_internal     # CI fails on any finding, as on unformatted code
 ```
+
+A pre-commit hook in `.githooks/` runs `ruff format` over the staged files in those same three
+paths and re-stages them, so a commit records formatted code. It is **not active until you
+switch git's hook path to it** — that setting lives in `.git/config` and is not carried by a
+clone:
+
+```bash
+git config core.hooksPath .githooks   # once per clone
+git commit --no-verify                # skip the hook for one commit
+```
+
+The hook formats only the paths above, and only files that are wholly staged: a file with
+unstaged changes alongside staged ones is left alone, and the commit aborts only if ruff would
+reformat it, because `git add` on a partially staged file would sweep the unstaged hunks in as
+well. If neither `ruff` nor `python -m ruff` is available it warns and lets the commit through rather than blocking you; set `GLIQUID_RUFF` to an
+explicit binary if it lives somewhere unusual.
 
 Scattered `# noqa: WPS...` comments survive in the source. They are inherited from a retired
 wemake-python-styleguide configuration and **are enforced by nothing today** — no tool in the
@@ -103,13 +166,14 @@ so does any call to `basicConfig`, `addHandler`, `setLevel`, `StreamHandler`, `F
 `NullHandler` inside the package. The scan is over the source tree, not the import graph, so a
 `print()` on a branch no test happens to execute is still caught.
 
-There are exactly two documented exemptions, listed in `EXEMPT` in that test file:
+There are three documented exemptions, listed in `EXEMPT` in that test file:
 
 - `mpds.print_phase_mismatch_chart` — the function *is* a console chart renderer; the aligned
   monospace rows are the product, not diagnostics.
 - `hull_editor._log` — writes into an `ipywidgets` `Output` pane. Widget UI, not logging.
+- `cache._emit` — prints the `python -m gliquid.cache` command-line tool's output.
 
-Adding a third exemption requires editing that test, which is the point. If your output is
+Adding another exemption requires editing that test, which is the point. If your output is
 diagnostic, use the module logger.
 
 ## Release checklist
@@ -118,11 +182,14 @@ The distribution version is derived from the git tag by `hatch-vcs` — tagging 
 and no version literal lives in `src/`. `tests/test_version.py` enforces that.
 
 1. **Bump `CITATION.cff` by hand.** Its `version:` and `date-released:` are literals and nothing
-   derives them; this is the one file that must be edited at every release.
-2. **Add the `CHANGELOG.md` entry.** Move what is under `## [Unreleased]` into a new
+   derives them.
+2. **Repoint the notebooks' Colab pin.** Every notebook's Colab cell installs
+   `gliquid==<version>`; set it to `X.Y.Z` in all of them. `tests/test_notebook_colab_pins.py`
+   checks they agree.
+3. **Add the `CHANGELOG.md` entry.** Move what is under `## [Unreleased]` into a new
    `## [X.Y.Z] - YYYY-MM-DD` section and update the link definitions at the bottom.
-3. **Commit** those two changes.
-4. **Tag** the commit `vX.Y.Z` (SemVer, `v` prefix) and **push the tag**.
+4. **Commit** those changes.
+5. **Tag** the commit `vX.Y.Z` (SemVer, `v` prefix) and **push the tag**.
 
 The release workflow does the rest — building the sdist and wheel from the tag and publishing
 them. Do not hand-edit a version anywhere else; if the built artifact reports `0.0.x`, the

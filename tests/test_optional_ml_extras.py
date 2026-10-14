@@ -1,37 +1,28 @@
-"""The ML stack is an OPTIONAL extra — pinned here, because nothing else can catch it.
+"""The ML stack is an OPTIONAL extra.
 
 XGBoost, SHAP, joblib and scikit-learn are reachable from exactly one module,
-``gliquid.production_model_runner``. As base dependencies they cost ~935 MB of
-site-packages on an image whose app never constructs a runner. The split is easy to make
-and easy to undo by accident: adding ``import xgboost`` back to the top of that module, or
-one line back to ``[project.dependencies]``, restores the whole payload and breaks nothing
-in an environment that already has the packages — which is every developer environment.
-So the checks here run the way that failure would have to be seen:
+``gliquid.production_model_runner``. An eager import there, or a line back in
+``[project.dependencies]``, breaks nothing in an environment that already has the packages,
+so the checks here read:
 
-* **The declared metadata**, read from the INSTALLED distribution rather than from
-  ``pyproject.toml``, so it also catches a stale build.
-* **In a subprocess with the package blocked at import**, because an in-process test cannot
-  observe an eager import in an environment that has the module — ``sys.modules`` is
-  already populated by the time the test runs. This is the same technique
-  ``test_portable_model_bundle.py`` uses for ``openpyxl``, and for the same reason.
+* **The declared metadata** from the INSTALLED distribution rather than from
+  ``pyproject.toml``, so a stale build fails too.
+* **A subprocess with the package blocked at import**, since in-process ``sys.modules`` is
+  already populated.
 
-The claim in each case is BOTH halves: that the module still imports, and that the failure
-when the extra is genuinely needed names the extra rather than raising a bare
-``ModuleNotFoundError`` at whatever depth it happens to surface.
+Each case asserts BOTH halves: the module still imports, and the failure when the extra is
+genuinely needed names the extra rather than raising a bare ``ModuleNotFoundError``.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
-import sys
-import textwrap
 from importlib import metadata
 from pathlib import Path
 
 import pytest
 
-SRC = str(Path(__file__).resolve().parents[1] / "src")
+from ._fresh import ok, run_fresh
 
 
 def _dist_name(requirement: str) -> str:
@@ -44,68 +35,23 @@ def _dist_name(requirement: str) -> str:
         head = head.split(separator)[0]
     return head.strip().lower()
 
+
 #: Distributions that must not be reachable from a bare ``pip install gliquid``.
 ML_DISTRIBUTIONS = ("xgboost", "xgboost-cpu", "shap", "scikit-learn", "joblib", "numba")
 
 #: Extras that must exist, and the runner capability each one buys.
-EXPECTED_EXTRAS = {"ml", "ml-gpu", "shap", "models", "mpds", "editor", "test", "notebook"}
+EXPECTED_EXTRAS = {"ml", "mpds", "test", "notebook"}
 
 
-def _run_blocked(blocked: tuple[str, ...], body: str, tmp_path: Path) -> subprocess.CompletedProcess:
-    """Run ``body`` in a subprocess where importing any of ``blocked`` raises ImportError.
-
-    The block is asserted to have TAKEN before the body runs; without that the test passes
-    just as happily in an environment where the module was never importable for some other
-    reason, and would keep passing after the guard it checks was deleted.
-
-    cwd is a tmp_path outside the repo: ``gliquid.config`` walks out from the package's own
-    ``__file__`` to adopt a ``cache/``, and several of these bodies want no cache.
-    """
-    preamble = textwrap.dedent(
-        f"""
-        import builtins, sys
-        _BLOCKED = {tuple(blocked)!r}
-        _real_import = builtins.__import__
-        def _blocker(name, *args, **kwargs):
-            if name.split(".")[0] in _BLOCKED:
-                raise ImportError(name + " is blocked for this test")
-            return _real_import(name, *args, **kwargs)
-        builtins.__import__ = _blocker
-        # Drop anything already imported, or a cached module would satisfy an import that
-        # the blocker never sees and the block would be half-applied.
-        for _name in [m for m in sys.modules if m.split(".")[0] in _BLOCKED]:
-            del sys.modules[_name]
-        for _name in _BLOCKED:
-            try:
-                __import__(_name)
-            except ImportError:
-                pass
-            else:
-                raise AssertionError("the " + _name + " block did not take; test is vacuous")
-        """
-    )
-    env = os.environ.copy()
-    for name in ("GLIQUID_CACHE_DIR", "GLIQUID_DATA_DIR"):
-        env.pop(name, None)
-    env["PYTHONPATH"] = SRC + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.run(
-        [sys.executable, "-c", preamble + textwrap.dedent(body)],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(tmp_path),
-    )
+def _run_blocked(
+    blocked: tuple[str, ...], body: str, tmp_path: Path
+) -> subprocess.CompletedProcess:
+    """Run ``body`` in a fresh interpreter from ``tmp_path`` with ``blocked`` unimportable
+    and ``GLIQUID_CACHE_DIR`` unset."""
+    return run_fresh(body, tmp_path, blocked=blocked, env={"GLIQUID_CACHE_DIR": None})
 
 
-def _ok(result: subprocess.CompletedProcess) -> str:
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "OK" in result.stdout, result.stdout + result.stderr
-    return result.stdout
-
-
-# =======================================================================================
-# What the distribution DECLARES
-# =======================================================================================
+# -- What the distribution DECLARES --
 
 
 class TestDeclaredDependencies:
@@ -127,8 +73,7 @@ class TestDeclaredDependencies:
 
         A requirement carrying ``extra == "..."`` is opt-in; anything else is not. Markers
         that merely narrow the PLATFORM (``sys_platform != 'darwin'``) still count as
-        unconditional, which is the point — a Linux-only base dependency is exactly the
-        shape of the payload this test exists to keep out.
+        unconditional.
         """
         return 'extra == "' not in req and "extra == '" not in req
 
@@ -142,7 +87,7 @@ class TestDeclaredDependencies:
             f"these are declared as BASE dependencies: {offenders}. Every one of them is "
             f"reachable only from gliquid.production_model_runner, and together they cost "
             f"~935 MB of site-packages to a consumer that never constructs a runner. They "
-            f"belong in the `ml` / `shap` / `models` extras."
+            f"belong in the `ml` extra or an explicit install."
         )
 
     def test_the_base_dependency_set_is_the_expected_one(self):
@@ -166,50 +111,21 @@ class TestDeclaredDependencies:
         missing = EXPECTED_EXTRAS - declared
         assert not missing, f"missing extras {sorted(missing)}; declared: {sorted(declared)}"
 
-    def test_ml_and_models_agree_on_one_xgboost_distribution(self):
-        """``gliquid[ml,models]`` must not resolve to xgboost AND xgboost-cpu at once.
 
-        Both install a package directory named ``xgboost``; an environment holding both
-        keeps whichever pip wrote last, and uninstalling either breaks the other.
-        """
-        by_extra: dict[str, set[str]] = {}
-        for req in self._requirements():
-            if "extra ==" not in req:
-                continue
-            extra = req.split("extra ==")[1].strip().strip("\"'")
-            name = _dist_name(req)
-            if name.startswith("xgboost"):
-                by_extra.setdefault(extra, set()).add(name)
-        assert by_extra.get("ml") == by_extra.get("models"), (
-            f"`ml` asks for {sorted(by_extra.get('ml') or [])} and `models` for "
-            f"{sorted(by_extra.get('models') or [])}; installing both extras together would "
-            f"put two conflicting xgboost distributions in one environment."
-        )
-
-
-# =======================================================================================
-# What happens with the extras genuinely ABSENT
-# =======================================================================================
+# -- What happens with the extras genuinely ABSENT --
 
 
 class TestImportsWithoutTheMlStack:
-    #: ``joblib`` is deliberately NOT blocked here, and the reason is measured rather than
-    #: assumed. It is not optional for gliquid at all: ``pymatgen/analysis/compatibility/
-    #: __init__.py`` runs ``from joblib import Parallel, delayed`` at import time, and
-    #: ``gliquid.api`` imports ``pymatgen.entries.computed_entries``, which re-exports from
-    #: it — so every gliquid install has joblib whatever gliquid declares (``pymatgen-core``
-    #: requires ``joblib>=1.3.2``). The compat matrix is what settled it: blocking joblib
-    #: here passed on py310 and on every -min env and failed on py311/312/313-max, because
-    #: only the newest pymatgen imports it eagerly. gliquid still DECLARES joblib under
-    #: `models`, since _load_legacy_artifacts imports it directly and a transitive
-    #: dependency is not a contract — but a test asserting `import gliquid` survives without
-    #: it would be asserting something false about the dependency graph.
+    #: ``joblib`` is NOT blocked: the newest pymatgen imports it eagerly through
+    #: ``pymatgen.analysis.compatibility``, which ``gliquid.api`` reaches, so ``import gliquid``
+    #: does not survive without it there. gliquid still declares joblib under ``models``,
+    #: since ``_load_legacy_artifacts`` imports it directly.
     BLOCKED_FOR_FACADE = ("xgboost", "shap", "sklearn", "numba")
 
     def test_importing_gliquid_needs_none_of_it(self, tmp_path):
         """The façade is lazy; naming the export must not drag the stack in either."""
         blocked = self.BLOCKED_FOR_FACADE
-        out = _ok(
+        out = ok(
             _run_blocked(
                 blocked,
                 f"""
@@ -231,7 +147,7 @@ class TestImportsWithoutTheMlStack:
 
     def test_the_runner_module_imports_without_the_ml_stack(self, tmp_path):
         """Importing the module is what must not raise. Constructing is what raises."""
-        _ok(
+        ok(
             _run_blocked(
                 ("xgboost", "shap", "sklearn", "joblib"),
                 """
@@ -255,7 +171,7 @@ class TestImportsWithoutTheMlStack:
 
 class TestErrorsNameTheirExtra:
     def test_constructing_without_xgboost_names_the_ml_extra(self, tmp_path):
-        _ok(
+        ok(
             _run_blocked(
                 ("xgboost",),
                 """
@@ -279,7 +195,7 @@ class TestErrorsNameTheirExtra:
         bundle = tmp_path / "legacy"
         (bundle / "model").mkdir(parents=True)
         (bundle / "model" / "L0_a_model.joblib").write_bytes(b"not really a pickle")
-        _ok(
+        ok(
             _run_blocked(
                 ("joblib",),
                 f"""
@@ -290,16 +206,16 @@ class TestErrorsNameTheirExtra:
                     message = str(exc)
                 else:
                     raise AssertionError("constructing succeeded with joblib blocked")
-                assert "gliquid[models]" in message, message
+                assert "pip install joblib openpyxl scikit-learn" in message, message
                 print("OK")
                 """,
                 tmp_path,
             )
         )
 
-    def test_shap_explanations_without_shap_name_the_shap_extra(self, tmp_path):
+    def test_shap_explanations_without_shap_name_the_shap_install(self, tmp_path):
         """And the PREDICTION path still works in the same process — that is the split."""
-        _ok(
+        ok(
             _run_blocked(
                 ("shap",),
                 """
@@ -328,7 +244,7 @@ class TestErrorsNameTheirExtra:
                     message = str(exc)
                 else:
                     raise AssertionError("get_shap_explanation succeeded with shap blocked")
-                assert "gliquid[shap]" in message, message
+                assert "pip install shap" in message, message
                 print("OK")
                 """,
                 tmp_path,
@@ -337,12 +253,8 @@ class TestErrorsNameTheirExtra:
 
 
 class TestShapPatchesStillApply:
-    """Deferring ``apply_patches`` must not mean it stops happening.
-
-    It used to run at module import, while ``shap`` was a base dependency. It now runs
-    inside the ``_shap()`` accessor — which every SHAP call site in the runner goes through
-    — so the ordering ``shap_compat`` documents ("before any TreeExplainer is created") is
-    preserved. Without this, the deferral would silently drop the ``base_score`` fix.
+    """``apply_patches`` runs inside the ``_shap()`` accessor, which every SHAP call site in
+    the runner goes through, so it precedes any TreeExplainer as ``shap_compat`` documents.
     """
 
     def test_the_patches_are_applied_before_the_first_explainer(self):
@@ -368,8 +280,8 @@ class TestShapPatchesStillApply:
         assert getattr(tree_mod, "float", float) is not float
 
     def test_importing_the_runner_module_no_longer_imports_shap(self, tmp_path):
-        """The deferral itself, stated as a fact about sys.modules rather than about code."""
-        _ok(
+        """Importing the runner module loads none of shap, xgboost and matplotlib."""
+        ok(
             _run_blocked(
                 (),
                 """
@@ -378,6 +290,7 @@ class TestShapPatchesStillApply:
                 import gliquid.production_model_runner  # noqa: F401
                 assert "shap" not in sys.modules, "importing the runner module imported shap"
                 assert "xgboost" not in sys.modules, "importing the runner module imported xgboost"
+                assert "matplotlib" not in sys.modules, "matplotlib imported by the runner"
                 print("OK")
                 """,
                 tmp_path,

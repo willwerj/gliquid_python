@@ -2,9 +2,11 @@
 
 ``write_image_with_timeout`` isolates the kaleido/orca export in a child interpreter so a hung
 export raises ``TimeoutError`` instead of blocking the caller. Used by both
-``gliquid.binary.BLPlotter`` and ``gliquid.ternary.TLIPlotter``.
+``gliquid.binary.BLPlotter`` and ``gliquid.ternary.TLIPlotter``. ``side_by_side_html`` lays
+Plotly figures out in columns for a notebook cell.
 """
 
+import html
 import json
 import logging
 import os
@@ -86,19 +88,76 @@ def write_image_with_timeout(
 
 
 def show_figure(fig) -> None:
-    """Display a produced figure: Plotly via ``fig.show``, Matplotlib via its canvas."""
+    """Display a produced figure: Plotly via ``fig.show``, Matplotlib via its canvas.
+
+    Under the inline backend (Jupyter, Colab) a Matplotlib figure is passed to
+    ``IPython.display.display`` and then closed, so it is drawn once, where it was shown.
+    """
     if isinstance(fig, go.Figure):
         fig.show()
         return
-    import matplotlib.pyplot as plt  # lazy: keeps this module plotly-only for mpl-free callers
+    import matplotlib  # lazy: keeps this module plotly-only for mpl-free callers
+    import matplotlib.pyplot as plt
 
     if isinstance(fig, plt.Figure):
-        fig.figure.show()
+        if "inline" in matplotlib.get_backend().lower():
+            from IPython.display import display
+
+            display(fig)
+            plt.close(fig)
+        else:
+            fig.show()
         return
     # Neither backend claimed it: nothing was displayed. Audible, not silent.
     logger.warning(
         "show_figure got an unsupported figure type %s; nothing was displayed.", type(fig).__name__
     )
+
+
+def side_by_side_html(figures, *, configs=None, post_scripts=None, height: str = "520px") -> str:
+    """HTML drawing each Plotly figure in its own equal-width column.
+
+    Each column is an ``<iframe>`` holding the figure's standalone page (its ``to_html``, with
+    plotly.js from the CDN), so it draws in Colab, JupyterLab, VS Code, classic Jupyter and
+    exported notebooks whatever the notebook page has loaded. A figure whose ``to_html`` adds a
+    script of its own (:class:`gliquid.plotting.ternary_surface.LiquidusFigure`) runs it.
+
+    Args:
+        figures: the Plotly figures, left to right.
+        configs: one plotly config dict per figure, or ``None`` for the defaults; each is merged
+            over ``{"responsive": True}``.
+        post_scripts: one JavaScript string per figure, or ``None``, run once that figure is
+            drawn, with ``{plot_id}`` replaced by its div id as ``Figure.write_html`` does.
+        height: the CSS height of every column.
+
+    Returns:
+        str: an HTML fragment, e.g. for ``IPython.display.HTML``.
+
+    Raises:
+        ValueError: ``configs`` or ``post_scripts`` does not hold one entry per figure.
+    """
+    figures = list(figures)
+    configs = [None] * len(figures) if configs is None else list(configs)
+    post_scripts = [None] * len(figures) if post_scripts is None else list(post_scripts)
+    if not len(configs) == len(post_scripts) == len(figures):
+        raise ValueError("configs and post_scripts need one entry per figure.")
+
+    cells = []
+    for fig, config, script in zip(figures, configs, post_scripts):
+        page = fig.to_html(
+            config={"responsive": True, **(config or {})},
+            include_plotlyjs="cdn",
+            default_height="100%",
+            post_script=script,
+        ).replace(
+            "<head>", "<head><style>html, body, body > div { height: 100%; margin: 0; }</style>", 1
+        )
+        cells.append(
+            f'<iframe srcdoc="{html.escape(page, quote=True)}" '
+            f'style="width:100%;height:{height};border:0"></iframe>'
+        )
+    columns = f"repeat({len(cells)},minmax(0,1fr))"
+    return f'<div style="display:grid;grid-template-columns:{columns}">{"".join(cells)}</div>'
 
 
 def save_figure(
@@ -131,8 +190,7 @@ def save_figure(
         fig.figure.savefig(stream, format=image_format)
         plt.close(fig)
         return
-    # Neither backend claimed it: NOTHING was written to `stream`, and the caller would
-    # otherwise learn that only from the missing file.
+    # Neither backend wrote anything.
     logger.warning(
         "save_figure got an unsupported figure type %s for '%s'; no image was written to '%s'.",
         type(fig).__name__,

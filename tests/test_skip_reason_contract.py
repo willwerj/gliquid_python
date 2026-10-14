@@ -1,13 +1,12 @@
 """``BinaryLiquid.skip_reason``: the machine-readable refinement of ``init_error``.
 
-Five independent gates set that one bool, and until now the cause was destroyed at the
-point of decision — every skipped system reached the campaign workbook as the same
-string. ``skip_reason`` names which gate fired, so downstream consumers can tell "no
-usable liquidus" from "not enough liquidus" from "not enough solid free energy".
+Five independent gates set that one bool; ``skip_reason`` names which gate fired, so
+downstream consumers can tell "no usable liquidus" from "not enough liquidus" from "not
+enough solid free energy".
 
 The contract this pins:
-  * ``init_error`` stays a plain bool and is set exactly where and when it was before —
-    ``skip_reason`` is additive and nothing in the package branches on it;
+  * ``init_error`` stays a plain bool; ``skip_reason`` is additive and nothing in the
+    package branches on it;
   * every flagged system carries **exactly one** reason, the earliest gate to fire
     (``_flag_skip`` is first-wins);
   * ``None`` whenever ``init_error`` is False;
@@ -21,7 +20,6 @@ are driven against the offline-cached Hf-Zr system.
 
 import pytest
 
-import gliquid.mpds as mpds
 from gliquid.binary import (
     SKIP_MASK_FRACTION,
     SKIP_NARROW_SPAN,
@@ -29,24 +27,13 @@ from gliquid.binary import (
     SKIP_REASONS,
     SKIP_SOLID_COVERAGE,
     SKIP_SPARSE_LIQUIDUS,
+    SKIP_UNION_COVERAGE,
     BinaryLiquid,
 )
 
-
-def _svgpath(points):
-    """[[x_pct, T_celsius], ...] -> MPDS-style svgpath string."""
-    return "M " + " L ".join(f"{x},{t}" for x, t in points)
-
-
-def _make_json(shapes, elements=("Hf", "Zr"), temp=(0, 2600)):
-    return {
-        "reference": {"entry": "synthetic-test-json"},
-        "chemical_elements": list(elements),
-        "comp_range": [0, 100],
-        "temp": list(temp),
-        "labels": [],
-        "shapes": shapes,
-    }
+from ._mpds_builders import from_record as _from_cache
+from ._mpds_builders import liquidus_record as _make_json
+from ._mpds_builders import svgpath as _svgpath
 
 
 def _liquidus_json(points):
@@ -55,7 +42,7 @@ def _liquidus_json(points):
 
 # No 'L' shape at all: the digitizer finds no liquidus to extract.
 NO_LIQUIDUS_JSON = _make_json([])
-# Well-sampled, but only half the composition axis -> endpoint span 0.5 < comp_range_fit_lim.
+# Well-sampled, but only half the composition axis -> assessed range 0.5 < assessed_crange_floor.
 NARROW_POINTS = [[x, 2233 - 8 * x] for x in range(0, 51, 2)]
 # Bi-Si class: wedges near the pure ends, an ~85 at.% hole between them.
 GAPPY_POINTS = [
@@ -74,14 +61,6 @@ GAPPY_POINTS = [
 DENSE_POINTS = [[x, 2233 - (2233 - 1400) * x / 50] for x in range(0, 50, 2)] + [
     [x, 1400 + (1855 - 1400) * (x - 50) / 50] for x in range(50, 101, 2)
 ]
-
-
-def _from_cache(monkeypatch, mpds_json, **kwargs):
-    def fake_load(input, pd_ind=None):
-        return mpds_json, mpds.extract_digitized_liquidus(mpds_json)
-
-    monkeypatch.setattr(mpds, "load_mpds_data", fake_load)
-    return BinaryLiquid.from_cache("Hf-Zr", **kwargs)
 
 
 class TestFromCacheReasons:
@@ -135,7 +114,7 @@ class TestFitParametersReasons:
 
     def test_mask_fraction_cap_exceeded(self):
         """Synthetic solid-solution invariants at 0.45 and 0.75 make the auto-detected
-        ignored ranges span 70% of the liquidus, over the 60% cap. The solid-coverage
+        unsupported ranges span 70% of the liquidus, over the 60% cap. The solid-coverage
         gate is bypassed so the mask gate is the one under test."""
         bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
         bl.invariants = [
@@ -156,7 +135,9 @@ class TestFitParametersReasons:
         ]
         bl.low_t_exp_phases = []
         assert (
-            bl.fit_parameters(n_opts=1, max_iter=2, check_solid_coverage=False, ignored_ranges=True)
+            bl.fit_parameters(
+                n_opts=1, max_iter=2, check_solid_coverage=False, unsupported_range_mode="ignore"
+            )
             == []
         )
         assert bl.init_error is True
@@ -202,6 +183,7 @@ class TestReasonIsSingleValued:
             SKIP_SPARSE_LIQUIDUS,
             SKIP_SOLID_COVERAGE,
             SKIP_MASK_FRACTION,
+            SKIP_UNION_COVERAGE,
         }
         assert len(set(SKIP_REASONS)) == len(SKIP_REASONS)
 

@@ -25,9 +25,7 @@ SOFTWARE.
 
 from importlib import import_module, metadata
 
-# Public API façade (PEP 562): names resolve lazily so `import gliquid` stays light —
-# no matplotlib/plotly/pymatgen import until the consuming submodule is actually needed.
-# Changing this mapping changes the public surface and requires explicit sign-off.
+# Public names, resolved lazily on first attribute access (PEP 562).
 _EXPORTS = {
     "BinaryLiquid": "gliquid.binary",
     "BLPlotter": "gliquid.binary",
@@ -43,28 +41,15 @@ _EXPORTS = {
     "Phase": "gliquid.phase",
     "identify_invariant_points": "gliquid.mpds",
     "load_mpds_data": "gliquid.mpds",
-    # Added by spec 07 (dev/plans/gliquid-cache-layout/07-portable-ml-bundle.md), which is
-    # the recorded sign-off this mapping asks for. Additive: the pickle-free bundle now
-    # ships inside the wheel at gliquid/models/, so the runner is usable straight from
-    # `import gliquid` with no bundle path to find.
-    #
-    # The ML stack behind it (xgboost, and shap/joblib/scikit-learn for the SHAP and legacy
-    # paths) is an optional extra as of spec 08b, so this entry has the same shape as
-    # ConvexHullEditor's: the laziness here is what keeps the NAME resolvable on a bare
-    # install, and production_model_runner guards its own imports so that CONSTRUCTING the
-    # runner is what raises, with a message naming the extra.
+    # Constructing it without the ``ml`` extra installed raises, naming the extra.
     "ProductionModelRunner": "gliquid.production_model_runner",
     "set_cache_dir": "gliquid.config",
-    "set_data_dir": "gliquid.config",  # deprecated alias of set_cache_dir; still public
     "ConfigError": "gliquid.config",
 }
 
 __all__ = [*_EXPORTS, "__version__"]
 
-# Single-sourced from the git tag. Installed distributions carry it in their metadata; a
-# built-but-uninstalled tree carries it in _version.py, written by the hatch-vcs build hook.
-# A source tree with neither is genuinely unversioned, and says so rather than asserting a
-# stale number -- no version literal belongs in this package.
+# Version from the installed metadata, else from _version.py, else unversioned.
 try:
     __version__ = metadata.version("gliquid")
 except metadata.PackageNotFoundError:

@@ -3,8 +3,7 @@ Runtime compatibility patches for the ``shap`` package.
 
 Old XGBoost pickles (≤ v1.x) may serialize ``base_score`` as a single-element
 list or array (e.g. ``[0.305]``).  SHAP ≥ 0.44 calls ``float()`` on that value
-directly, which raises ``TypeError`` or ``ValueError``.  Rather than editing
-site-packages (which is lost on every env rebuild), this module monkey-patches
+directly, which raises ``TypeError`` or ``ValueError``.  This module monkey-patches
 the relevant SHAP internals at runtime.
 
 The ``waterfall`` plot patch removes the E[f(X)] and f(x) twin-axis tick marks
@@ -39,9 +38,7 @@ logger = logging.getLogger(__name__)
 
 _APPLIED: set[str] = set()
 
-# ---------------------------------------------------------------------------
-# Patch 1 – XGBTreeModelLoader base_score bracket fix
-# ---------------------------------------------------------------------------
+# -- Patch 1: XGBTreeModelLoader base_score bracket fix --
 
 _builtin_float = float  # stash the real builtin
 
@@ -96,9 +93,7 @@ def unpatch_xgb_base_score() -> None:
     _APPLIED.discard(tag)
 
 
-# ---------------------------------------------------------------------------
-# Patch 2 – Remove E[f(X)] / f(x) twin-axis tick marks from waterfall plot
-# ---------------------------------------------------------------------------
+# -- Patch 2: remove the E[f(X)] / f(x) twin-axis tick marks from the waterfall plot --
 
 
 def patch_waterfall_no_twin_axes() -> None:
@@ -130,16 +125,13 @@ def patch_waterfall_no_twin_axes() -> None:
         # Save interactive state; the original calls plt.ioff() when show=False
         was_interactive = plt.isinteractive()
 
-        # Snapshot axes that exist *before* the waterfall call so we only
-        # remove the twin axes that SHAP adds, not user-created subplots.
+        # Axes that exist before the waterfall call are kept.
         fig = plt.gcf()
         axes_before = set(fig.get_axes())
         # The *real* main axis is the one the caller set (e.g. via plt.sca).
         main_ax = plt.gca()
 
-        # Run the original without displaying.
-        # Note: the original returns plt.gca() which ends up being ax3
-        # (the second twin axis for f(x)), NOT the main plotting axis.
+        # The original returns plt.gca(), the second twin axis.
         _original_waterfall(shap_values, max_display=max_display, show=False)
 
         # Remove ALL newly created axes (both E[f(X)] and f(x) twins).
@@ -188,9 +180,7 @@ def unpatch_waterfall_no_twin_axes() -> None:
     _APPLIED.discard(tag)
 
 
-# ---------------------------------------------------------------------------
-# Public convenience
-# ---------------------------------------------------------------------------
+# -- Public convenience --
 
 
 def apply_patches() -> None:

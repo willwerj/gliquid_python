@@ -1,15 +1,12 @@
 """HSX._collapse_gap_runs: thinning continuous two-phase boundaries in 'Misc Gaps'.
 
 A miscibility gap or solvus is a continuous field, but the hull emits one collapsed-
-triangle facet per composition grid step along it -- Hf-W 64, Cr-W 75, Hf-Zr-with-SS 220
--- all walking the same boundary. Reported as distinct invariants they inflate the
-``migs`` fit column and the matrix-plotter counts with grid artifacts.
+triangle facet per composition grid step along it, all walking the same boundary.
 
-The collapse must thin those runs WITHOUT eating genuine three-phase horizontals that
-happen to share a phase multiset with a long run (Cr-W's monotectic family at ~1932 C
-sits in the same ('BCC','BCC','L') bucket as the W-rich solidus, which climbs to
-3338 C). That is what the span-jump run break protects, and it is the case most likely
-to regress if the tolerance is ever retuned.
+The collapse thins those runs WITHOUT eating genuine three-phase horizontals that share a
+phase multiset with a long run (Cr-W's monotectic family at ~1932 C sits in the same
+('BCC','BCC','L') bucket as the W-rich solidus, which climbs to 3338 C); the span-jump run
+break protects that case.
 """
 
 import pytest

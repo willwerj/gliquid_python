@@ -1,7 +1,6 @@
 """Tests for gliquid.solution: the ComponentRef-native solid-solution reference resolvers.
 
-Re-pins the dev-code numbers frozen in fixtures/ss_characterization_pins.json through the
-package implementation — the pins must reproduce bit-for-bit (rtol 1e-9). Runs entirely
+Re-pins the numbers frozen in fixtures/ss_characterization_pins.json (rtol 1e-9). Runs
 offline against the Hf-Zr fixtures shipped in the package data/ directory.
 """
 
@@ -23,24 +22,6 @@ PINS = json.loads(
 )
 
 
-def _approx_deep(actual, expected, rel=1e-9, path=""):
-    if isinstance(expected, dict):
-        assert isinstance(actual, dict), f"{path}: expected dict, got {type(actual)}"
-        assert set(actual) == set(expected), f"{path}: key mismatch {set(actual) ^ set(expected)}"
-        for k in expected:
-            _approx_deep(actual[k], expected[k], rel, f"{path}.{k}")
-    elif isinstance(expected, (list, tuple)):
-        assert len(actual) == len(expected), f"{path}: length mismatch"
-        for i, (a, e) in enumerate(zip(actual, expected)):
-            _approx_deep(a, e, rel, f"{path}[{i}]")
-    elif isinstance(expected, float) and not isinstance(expected, bool):
-        assert actual == pytest.approx(expected, rel=rel, abs=1e-12), (
-            f"{path}: {actual} != {expected}"
-        )
-    else:
-        assert actual == expected, f"{path}: {actual!r} != {expected!r}"
-
-
 def test_constants_come_from_unary():
     import gliquid.phase as phase
 
@@ -50,10 +31,8 @@ def test_constants_come_from_unary():
 
 
 def _pin_to_keyed(pin_models, components):
-    """The frozen dev-pin models (binary-locked schema) re-expressed in the keyed schema.
-
-    Same VALUES, new packaging (omega/delta_h/delta_s maps) — the fixture itself stays
-    byte-frozen for provenance.
+    """The frozen pin models (binary-locked schema) re-expressed in the keyed schema
+    (omega/delta_h/delta_s maps). The fixture itself stays byte-frozen.
     """
     comps = sorted(components)
     pair = "-".join(comps)
@@ -75,19 +54,19 @@ def test_ref_modes_match_dev_pins(ref_mode):
     models = sd.load_solid_solution_models(
         components=["Hf", "Zr"], component_data=component_data, ref_mode=ref_mode
     )
-    # fixtures are byte-frozen under the old labels; translate the lookup key and relabel
-    # the pin's ref_mode/source strings to the new API names for the value comparison.
+    # the fixture is byte-frozen under its own labels; translate the lookup key and relabel
+    # the pin's ref_mode/source strings to the API names for the value comparison.
     pin = PINS["pin3"][pu.FIXTURE_REF_MODE[ref_mode]]
-    _approx_deep(
-        models,
+    pu.assert_deep_approx(
         pu.relabel_ref_modes(_pin_to_keyed(pin["models"], ["Hf", "Zr"])),
+        models,
         path=f"{ref_mode}.models",
     )
     reconciled = {
         el: {"H_liq": component_data[el].h_liq, "S_liq": component_data[el].s_liq}
         for el in component_data
     }
-    _approx_deep(reconciled, pin["reconciled"], path=f"{ref_mode}.reconciled")
+    pu.assert_deep_approx(pin["reconciled"], reconciled, path=f"{ref_mode}.reconciled")
 
 
 def test_binary_cache_mode_matches_dev_pins():
@@ -99,23 +78,22 @@ def test_binary_cache_mode_matches_dev_pins():
         entries=entries,
         ref_mode="from_dft_entries",
     )
-    pin = PINS["pin3"]["binary-cache"]  # frozen fixture key stays under the old label
-    _approx_deep(
-        models,
+    pin = PINS["pin3"]["binary-cache"]  # the fixture's own key
+    pu.assert_deep_approx(
         pu.relabel_ref_modes(_pin_to_keyed(pin["models"], ["Hf", "Zr"])),
+        models,
         path="from_dft_entries.models",
     )
     reconciled = {
         el: {"H_liq": component_data[el].h_liq, "S_liq": component_data[el].s_liq}
         for el in component_data
     }
-    _approx_deep(reconciled, pin["reconciled"], path="binary-cache.reconciled")
+    pu.assert_deep_approx(pin["reconciled"], reconciled, path="binary-cache.reconciled")
 
 
 def test_lattice_stability_block_supplies_missing_phases():
-    # Since the tiered-policy rebuild, from_unary_db never reads config.omegas_file at
-    # runtime: structures the ladder lacks come from the unary DB's builder-baked
-    # lattice_stabilities block (same omegas energies, same anchoring math, baked in).
+    # from_unary_db never reads config.omegas_file at runtime: structures the ladder lacks
+    # come from the unary DB's lattice_stabilities block.
     component_data = UNARY.component_data(["Hf", "Zr"])
     models = sd.load_solid_solution_models(
         components=["Hf", "Zr"], component_data=component_data, ref_mode="from_unary_db"
@@ -163,11 +141,11 @@ def test_ordered_solid_steps_matches_dev_pin():
     steps = sd._ordered_solid_steps(
         hf, "Hf", {"BCC": {"Hf": {"delta_h_jmol": 5000.0}}, "HCP": {"Hf": {"delta_h_jmol": 0.0}}}
     )
-    # t_melt from the registry (2500 in the dev pin was an explicit arg; Hf melts at 2506 K,
-    # so the BCC step at 2016 K survives either way and HCP (T=0) is excluded)
-    _approx_deep(
-        [list(t) for t in steps],
+    # t_melt from the registry: Hf melts at 2506 K, so the BCC step at 2016 K survives and
+    # HCP (T=0) is excluded
+    pu.assert_deep_approx(
         [list(t) for t in PINS["pin4"]["ordered_steps_hf"]],
+        [list(t) for t in steps],
         path="ordered_steps_hf",
     )
 
@@ -180,21 +158,12 @@ def test_get_dft_structure_entries_offline_and_typed():
     assert all(e.structure is not None for e in entries)
 
 
-# ---------------------------------------------------------------------------------------
-# Reference-frame invariants.
-#
-# The pure-element edge of a fitted diagram is not a tabulated melting point -- it is the hull
-# crossing of G_liquid with the lowest endpoint solid. It therefore lands on t_fusion only while
-# the SS phase references and the elemental polymorph line compounds share one reference frame.
-# The Hf-Zr fixtures above cannot see a break in that frame: both elements have exactly ONE solid
-# transition below melting, so their step and cumulative enthalpies coincide. Ti, Mn, Fe, La, U
-# and Pu do not, and publishing step values for them moved Ti's edge by 458 K.
-#
-# These tests are driven off the whole unary registry so a multi-transition element cannot slip
-# through again, and they sweep every subset of {BCC, FCC, HCP} because which SS phases survive
-# packaging -- and therefore which polymorphs are excluded from the line compounds -- is a
-# property of the PARTNER element, not of the element under test.
-# ---------------------------------------------------------------------------------------
+# -- Reference-frame invariants --
+# A fitted diagram's pure-element edge is the hull crossing of G_liquid with the lowest endpoint
+# solid, so it lands on t_fusion only while the SS phase references and the elemental polymorph
+# line compounds share one reference frame. Driven off the whole unary registry, sweeping every
+# subset of {BCC, FCC, HCP}: which SS phases survive packaging, and so which polymorphs leave
+# the line compounds, is a property of the partner element.
 def _elements_with_ss_polymorphs():
     return sorted(
         el
@@ -224,11 +193,8 @@ def _endpoint_melting_point(ref, phase_refs, el, subset):
 
 @pytest.mark.parametrize("el", _elements_with_ss_polymorphs())
 def test_stored_ladder_is_internally_consistent(el):
-    """Every element's stored (h_liq, s_liq) must be reproducible from its own full ladder.
-
-    This is the property the from_unary_db frame relies on: because its refs ARE the stored
-    ladder, the liquid reference is already in their frame and must not be re-derived. A DB entry
-    whose cumulative values disagree with its steps would break that silently.
+    """Every element's stored (h_liq, s_liq) is reproducible from its own full ladder, as the
+    from_unary_db frame requires: its refs ARE the stored ladder.
     """
     ref = UNARY[el]
     h, s = ref.liquid_ref_from_solids()  # None -> the element's full solid ladder
@@ -301,14 +267,10 @@ def test_reconciled_liquid_ref_two_step_ladder():
     assert s == pytest.approx(1000.0 / 200.0 + 4000.0 / 1000.0 + 20000.0 / 2000.0)
 
 
-# ---------------------------------------------------------------------------------------
-# Omegas fallback: an element that never exhibits a structure has no polymorph entry for it, so
-# the primary resolver produces no reference and the whole SS phase is dropped -- blocking a
-# solid solution the omegas file could support. Since the tiered-policy rebuild this path
-# serves the from_dft_entries / legacy modes only (from_unary_db bakes the same energies into
-# its lattice_stabilities block at build time), so these tests drive it with synthetic refs
-# rather than live registry elements, whose coverage is now complete.
-# ---------------------------------------------------------------------------------------
+# -- Omegas fallback --
+# An element with no polymorph entry for a structure takes that SS reference from the omegas
+# file's ``elements`` block instead of dropping the SS phase. Only the from_dft_entries / legacy
+# modes reach this path, so these tests drive it with synthetic refs.
 def _omegas_elements_block(**per_phase):
     """{phase: {element: eV/atom}} shaped like the omegas file's `elements` block."""
     return {phase: dict(vals) for phase, vals in per_phase.items()}
@@ -353,11 +315,8 @@ def test_fallback_uses_the_omegas_zero_when_no_phase_is_shared():
 
 
 def test_fallback_refuses_a_phase_below_the_primary_ground_state(caplog):
-    """A negative anchored enthalpy means the two sources disagree about the ground state.
-
-    The phase stays edge-only and the conflict is logged. (For from_unary_db this guard's
-    job moved into the BUILDER as a hard error; the runtime path keeps it for the modes
-    that still resolve references at load time.)
+    """A negative anchored enthalpy means the two sources disagree about the ground state:
+    the phase stays edge-only and the conflict is logged.
     """
     bcc_ev = -9.5
     phase_refs = _bcc_only_phase_refs("Xx", bcc_ev, delta_h=1234.0)
@@ -383,8 +342,6 @@ def test_uncovered_system_is_a_clean_noop(ref_mode):
     component_data and WITHOUT raising — so 'SS enabled + uncovered' == 'SS off'.
 
     Cr-Eu is uncovered by the shipped 3-element (Hf/Ti/Zr) omegas fixture: Eu is absent.
-    Before the coverage gate, from_unary_db raised KeyError (after already mutating Cr's
-    s_liq) and from_omegas_file raised on the empty available_phases set.
     """
     component_data = UNARY.component_data(["Cr", "Eu"])
     before = {el: (r.h_liq, r.s_liq) for el, r in component_data.items()}
