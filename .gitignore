@@ -5,6 +5,9 @@ notebooks/_executed/
 .tox/
 compat-test-phase1.log
 
+# pytest-testmon's record (the optional inner loop in CONTRIBUTING.md)
+.testmondata*
+
 # Python build / cache / packaging artifacts
 __pycache__/
 *.py[cod]

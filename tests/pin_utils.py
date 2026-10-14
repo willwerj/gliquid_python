@@ -1,9 +1,8 @@
-"""Shared helpers for the nd-reductionist-refactor characterization-pin tests.
+"""Shared helpers for the characterization-pin tests.
 
-Used by test_hull_numerics.py and test_ternary_pipeline.py. The resolver helpers make the
-pin tests SELF-ADAPTING across the refactor's atomic steps (module renames, builder moves,
-SS-schema change) without ever touching the pinned VALUES — the numbers frozen by
-dev/scripts/_scratch/freeze_refactor_pins.py are the invariant.
+Fixture ref-mode relabelling, the comb-exp liquid builder, deep comparison at ``RTOL`` and
+canonical forms of hull simplices and solid-solution models. Test modules import it flat,
+with ``tests/`` on ``sys.path``.
 """
 
 from __future__ import annotations
@@ -15,9 +14,9 @@ import numpy as np
 RTOL = 1e-9
 ABS_FLOOR = 1e-12
 
-# Ref-mode label rename (S14). The pin fixtures stay byte-frozen with the OLD labels
-# ('omegas-legacy'/'binary-cache'/'element-db'); the live code emits the NEW API names,
-# so tests translate at the fixture boundary rather than regenerating any fixture.
+# Ref-mode labels. The pin fixtures stay byte-frozen with their own labels
+# ('omegas-legacy'/'binary-cache'/'element-db'); the code emits the API names, so tests
+# translate at the fixture boundary. Never regenerate a fixture to match.
 FIXTURE_REF_MODE = {  # new API name -> frozen fixture key/label
     "from_omegas_file": "omegas-legacy",
     "from_dft_entries": "binary-cache",
@@ -26,14 +25,12 @@ FIXTURE_REF_MODE = {  # new API name -> frozen fixture key/label
 _REF_MODE_RELABEL = {old: new for new, old in FIXTURE_REF_MODE.items()}
 
 
-# Tiered-policy renames (2026-08): the from_unary_db runtime omegas fallback became the
-# builder-baked lattice_stabilities block. Same energies and anchoring math, new provenance
-# labels — translated here so the byte-frozen pins keep comparing equal. These labels only
-# ever appear under the element-db pin; the other modes still use the runtime fallback and
-# keep their original labels.
+# The element-db pin's provenance labels for the lattice_stabilities block, translated so
+# the byte-frozen pins compare equal. The other modes keep their labels.
 _UNARY_FALLBACK_SOURCE_PREFIX = "from_unary_db+omegas_fallback"
 _LATTICE_STABILITY_SOURCE = (
-    "from_unary_db:lattice_stability (omegas_hcp.json; Chen et al., Nat. Commun. 14, 2856 (2023))"
+    "from_unary_db:lattice_stability (Chen et al., Nat. Commun. 14, 2856 (2023); "
+    "data: Zenodo 10.5281/zenodo.7633180, model_params/omegas.json)"
 )
 
 
@@ -53,99 +50,16 @@ def relabel_ref_modes(obj):
     return obj
 
 
-# ----------------------------------------------------------------------------------
-# Module/function resolution across refactor steps
-# ----------------------------------------------------------------------------------
-
-
-def get_lower_hull_fn():
-    """The live lower-hull function: gliquid.hsx.lower_convex_hull once absorbed,
-    gliquid.extensive_hull_main.gliq_lowerhull3 before."""
-    try:
-        from gliquid.hsx import lower_convex_hull
-
-        return lower_convex_hull
-    except ImportError:
-        from gliquid.extensive_hull_main import gliq_lowerhull3
-
-        return gliq_lowerhull3
-
-
-def get_solution_mod():
-    """gliquid.solution once renamed, gliquid.solution_data before."""
-    try:
-        import gliquid.solution as m
-
-        return m
-    except ImportError:
-        import gliquid.solution_data as m
-
-        return m
-
-
-def get_ternary_mod():
-    """gliquid.ternary once renamed, gliquid.hsx_ternary before."""
-    try:
-        import gliquid.ternary as m
-
-        return m
-    except ImportError:
-        import gliquid.hsx_ternary as m
-
-        return m
-
-
-def get_builder_and_symbols():
-    """(binary eqs builder, t_sym, binary module) wherever the builder lives.
-
-    Post-RK-refactor there is no standalone binary wrapper; an equivalent callable is
-    assembled over SolutionModel.binary_eqs (certified equivalent at rtol<=1e-9)."""
-    import gliquid.binary as binary
-
-    try:
-        from gliquid.solution import build_thermodynamic_expressions, t_sym
-
-        return build_thermodynamic_expressions, t_sym, binary
-    except ImportError:
-        try:
-            return binary.build_thermodynamic_expressions, binary.t_sym, binary
-        except AttributeError:
-            from gliquid.solution import DEFAULT_TAU, RKPolyExp, SolutionModel, t_sym
-
-            def build_thermodynamic_expressions(
-                param_format="linear", ga_expr=0 * t_sym, gb_expr=0 * t_sym, tau=DEFAULT_TAU
-            ):
-                return SolutionModel(
-                    ("A", "B"), (ga_expr, gb_expr), {(0, 1): RKPolyExp(param_format, tau=tau)}
-                ).binary_eqs()
-
-            return build_thermodynamic_expressions, t_sym, binary
-
-
-def get_x_vals():
-    try:
-        from gliquid.solution import x_vals
-
-        return np.asarray(x_vals, dtype=float)
-    except ImportError:
-        from gliquid.binary import _x_vals
-
-        return np.asarray(_x_vals, dtype=float)
-
-
 def build_combexp_eqs(ga_expr, gb_expr, tau):
-    """comb-exp eqs at a given tau via the first-class tau kwarg.
+    """The comb-exp binary liquid expressions at ``tau``, from ``SolutionModel.binary_eqs``."""
+    from gliquid.solution import RKPolyExp, SolutionModel
 
-    The pinned tau=3000 values were originally frozen through the retired module-global
-    monkeypatch; the kwarg reproducing them at rtol<=1e-9 IS the tau certificate.
-    """
-    builder, _, _binary = get_builder_and_symbols()
-    return builder("comb-exp", ga_expr=ga_expr, gb_expr=gb_expr, tau=tau)
+    return SolutionModel(
+        ("A", "B"), (ga_expr, gb_expr), {(0, 1): RKPolyExp("comb-exp", tau=tau)}
+    ).binary_eqs()
 
 
-# ----------------------------------------------------------------------------------
-# Comparison helpers
-# ----------------------------------------------------------------------------------
+# -- Comparison helpers --
 
 
 def to_jsonable(obj):
@@ -204,7 +118,7 @@ def canonical_simplices(simplices):
 def canonical_ss_model(model, components):
     """Element/pair-keyed value view of one per-phase SS model dict, old or new schema."""
     comps = sorted(components)
-    if "omega_jmol" in model:  # pre-refactor binary-locked schema
+    if "omega_jmol" in model:  # binary-locked schema
         pair = "-".join(comps)
         return {
             "omega": {pair: float(model["omega_jmol"])},
