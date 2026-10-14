@@ -1,6 +1,6 @@
 """Characterization pins for the ternary interpolation + GTX hull pipeline and SS models.
 
-Frozen pre-refactor by dev/scripts/_scratch/freeze_refactor_pins.py into
+Frozen by freeze_refactor_pins.py into
 fixtures/ternary_pipeline_pins.json. Gates: rtol <= 1e-9 numerics; simplex SETS exact.
 Runs offline (unary registry + shipped omegas_hcp.json + cached Al-Mg-Si MP entries).
 """
@@ -12,6 +12,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
+import gliquid.solution as sd
+import gliquid.ternary as tmod
+from gliquid.hsx import lower_convex_hull
+from gliquid.phase import UNARY
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 import pin_utils as pu  # noqa: E402
@@ -50,7 +55,6 @@ class TestLiquidSurfacePins:
     @pytest.mark.parametrize("key", sorted(LIQUID_CONFIGS))
     def test_surface(self, key):
         l_dict, delta, interp_type, param_format = LIQUID_CONFIGS[key]
-        tmod = pu.get_ternary_mod()
         ti = tmod.TernaryLiquidInterpolation(
             TERN_HTZ,
             xs_mix={k: list(v) for k, v in l_dict.items()},
@@ -71,9 +75,6 @@ class TestLiquidSurfacePins:
 class TestSSModelPins:
     @pytest.mark.parametrize("ref_mode", ["from_unary_db", "from_omegas_file"])
     def test_edge_models(self, ref_mode):
-        sd = pu.get_solution_mod()
-        from gliquid.phase import UNARY
-
         pinned = PINS[f"ss_{pu.FIXTURE_REF_MODE[ref_mode]}"]["edge_models"]
         for pair in ALPHA_PAIRS:
             comps = pair.split("-")
@@ -89,24 +90,12 @@ class TestSSModelPins:
 
     @pytest.mark.parametrize("ref_mode", ["from_unary_db", "from_omegas_file"])
     def test_merged_ternary_models(self, ref_mode):
-        """Single-pass N=3 loading (post-refactor) must equal the retired 3-edge merge
-        (frozen pre-refactor)."""
-        sd = pu.get_solution_mod()
-        from gliquid.phase import UNARY
+        """Single-pass N=3 loading equals the frozen 3-edge-merge models."""
 
         pinned = PINS[f"ss_{pu.FIXTURE_REF_MODE[ref_mode]}"]["merged_ternary"]
-        if hasattr(sd, "build_ternary_ss_models"):
-            edge_models = {}
-            for pair in ALPHA_PAIRS:
-                comps = pair.split("-")
-                edge_models[pair] = sd.load_solid_solution_models(
-                    comps, UNARY.component_data(comps), ref_mode=ref_mode
-                )
-            live = sd.build_ternary_ss_models(TERN_HTZ, edge_models)
-        else:
-            live = sd.load_solid_solution_models(
-                sorted(TERN_HTZ), UNARY.component_data(sorted(TERN_HTZ)), ref_mode=ref_mode
-            )
+        live = sd.load_solid_solution_models(
+            sorted(TERN_HTZ), UNARY.component_data(sorted(TERN_HTZ)), ref_mode=ref_mode
+        )
         assert set(live) == set(pinned), f"{ref_mode}: merged phase set changed"
         for phase, model in live.items():
             pu.assert_deep_approx(
@@ -125,9 +114,14 @@ AMS_LD = {
 
 @pytest.fixture(scope="module")
 def ams_plotter():
-    tmod = pu.get_ternary_mod()
     plotter = tmod.TLIPlotter.from_components(
-        ["Al", "Mg", "Si"], delta=0.1, T_incr=100, xs_mix={k: list(v) for k, v in AMS_LD.items()}
+        ["Al", "Mg", "Si"],
+        delta=0.1,
+        T_incr=100,
+        hull_mode="gtx",
+        xs_mix={k: list(v) for k, v in AMS_LD.items()},
+        temp_range=(0.0, None),
+        param_format="linear",
     )
     plotter.process_data()
     return plotter
@@ -150,7 +144,7 @@ class TestAlMgSiGtxPipeline:
     def test_hull_input_slices(self, ams_plotter):
         """The exact per-T hull inputs and their simplex sets — the live-data golden for
         the absorbed lower-hull function."""
-        hull_fn = pu.get_lower_hull_fn()
+        hull_fn = lower_convex_hull
         t_by_key = {f"{t:.1f}": float(t) for t in np.asarray(ams_plotter.T_grid, dtype=float)}
         for t_key, blk in AMS_PIN["hull_input_slices"].items():
             live_pts = np.array(ams_plotter.df_Tgroups[t_by_key[t_key]][["x0", "x1", "G"]])
@@ -160,11 +154,9 @@ class TestAlMgSiGtxPipeline:
 
 
 class TestInterMeltingTemps:
-    """Characterization for get_inter_melting_temps (secondary-track S1; zero prior coverage).
-
-    Runs after get_plot('tx') — today the method needs _plot_tx state to have been built;
-    the executable spec below (max T per phase over the concatenated equilibrium slices)
-    is the behavior contract that must survive the processing→TLI move.
+    """Characterization for get_inter_melting_temps: max T per phase over the concatenated
+    equilibrium slices. Runs after get_plot('tx'), which builds the _plot_tx state the method
+    reads.
     """
 
     def test_matches_max_temp_per_phase(self, ams_plotter):

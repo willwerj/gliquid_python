@@ -7,7 +7,7 @@ binary L0 terms differ in sign and magnitude:
   * Ag-Cu-Pb  — demixing / monotectic-like (positive L0 on every edge)
   * Cu-Fe-Si  — mixed-sign, L1-heavy asymmetric edges (linear + Muggianu)
 
-Frozen pre-refactor by dev/scripts/_generated/freeze_diverse_ternary_pins.py into
+Frozen by freeze_diverse_ternary_pins.py into
 fixtures/ternary_diverse_pins.json. The fixture is self-describing: each entry
 embeds its construction config (elements, L_dict, delta, interp_type,
 param_format) beside the pinned x0/x1/H/S/phase arrays, so parameters are defined
@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+import gliquid.ternary as tmod
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 import pin_utils as pu  # noqa: E402
@@ -36,7 +38,6 @@ PINS = json.loads(
 def test_liquid_surface(key):
     blk = PINS[key]
     cfg = blk["config"]
-    tmod = pu.get_ternary_mod()
     ti = tmod.TernaryLiquidInterpolation(
         list(cfg["elements"]),
         xs_mix={k: list(v) for k, v in cfg["L_dict"].items()},
