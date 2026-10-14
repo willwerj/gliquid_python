@@ -1,0 +1,3780 @@
+{
+ "asymmetric": {
+  "0": {
+   "set": [
+    {
+     "tuple": [
+      "str:'Mg2Cu'",
+      "float:0.66"
+     ]
+    }
+   ]
+  },
+  "0.025": {
+   "set": [
+    {
+     "tuple": [
+      "str:'Mg2Cu'",
+      "float:0.66"
+     ]
+    }
+   ]
+  },
+  "1": {
+   "set": []
+  },
+  "None": {
+   "set": []
+  },
+  "patched": {
+   "set": [
+    {
+     "tuple": [
+      "str:'Mg2Cu'",
+      "float:0.66"
+     ]
+    }
+   ]
+  }
+ },
+ "direct": {
+  "expected_gap_ranges:10.0": [
+   [
+    "float:0.0",
+    "float:1.0"
+   ]
+  ],
+  "expected_gap_ranges:None": [
+   [
+    "float:0.2",
+    "float:0.8"
+   ]
+  ]
+ },
+ "entry": {
+  "missing_cmp": {
+   "tuple": [
+    {
+     "tuple": [
+      "float:0.4",
+      "float:0.7"
+     ]
+    },
+    "str:'invariant'",
+    "str:'invariant'"
+   ]
+  },
+  "missing_no_controlling_invariant": {
+   "tuple": [
+    {
+     "tuple": [
+      "float:0.4",
+      "float:0.7"
+     ]
+    },
+    "str:'invariant'",
+    "str:'invariant'"
+   ]
+  },
+  "missing_per_liquid_above_stoichiometry": {
+   "tuple": [
+    {
+     "tuple": [
+      "float:0.7",
+      "float:0.8"
+     ]
+    },
+    "str:'peritectic'",
+    "str:'invariant'"
+   ]
+  },
+  "missing_per_liquid_below_stoichiometry": {
+   "tuple": [
+    {
+     "tuple": [
+      "float:0.2",
+      "float:0.4"
+     ]
+    },
+    "str:'invariant'",
+    "str:'peritectic'"
+   ]
+  },
+  "missing_per_off_span": {
+   "tuple": [
+    {
+     "tuple": [
+      "float:0.4",
+      "float:0.7"
+     ]
+    },
+    "str:'invariant'",
+    "str:'invariant'"
+   ]
+  }
+ },
+ "exhausted": {
+  "sequential_errors": [
+   "Optimization attempt #1 failed with exception [Cu-Mg]: stub worker failure",
+   "Optimization attempt #2 failed with exception [Cu-Mg]: stub worker failure"
+  ],
+  "threaded_errors": [
+   "Optimization attempt #1 failed with exception [Cu-Mg]: stub worker failure",
+   "Optimization attempt #2 failed with exception [Cu-Mg]: stub worker failure"
+  ],
+  "zero_candidate_errors": [
+   "Nelder-Mead process encountered a fatal error while deriving H-S partition constraints [Cu-Mg]: stub H-S partition failure"
+  ]
+ },
+ "flank": {
+  "left_duplicates": {
+   "tuple": [
+    "float:0.3",
+    "str:'invariant'"
+   ]
+  },
+  "right_duplicates": {
+   "tuple": [
+    "float:0.7",
+    "str:'invariant'"
+   ]
+  },
+  "window_at_segment_tol_excluded": {
+   "tuple": [
+    "float:0.0",
+    "float:1.0"
+   ]
+  },
+  "window_at_twice_segment_tol_included": {
+   "tuple": [
+    "float:0.499999998",
+    "float:0.500000002"
+   ]
+  },
+  "window_duplicates_int_float64": {
+   "tuple": [
+    "float64:0.2",
+    "float64:0.8"
+   ]
+  }
+ },
+ "latent": {
+  "al_cu_base": "bfb21ebb381e1d66",
+  "al_cu_pair_tol_0.01": "e6de00ff681f7035",
+  "l2_config": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "int:0",
+     "float:0.4"
+    ]
+   ]
+  },
+  "l2_default": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  }
+ },
+ "mig": {
+  "adjacent_left": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.1",
+     "float:1080.0"
+    ],
+    [
+     "float:0.2",
+     "float:1000.0"
+    ],
+    [
+     "float:0.35",
+     "float:1200.0"
+    ],
+    [
+     "float:0.5",
+     "float:950.0"
+    ],
+    [
+     "float:0.7",
+     "float:1050.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [],
+   "minima": [],
+   "records": [
+    {
+     "apex": [
+      "float:0.35",
+      "float:1200.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.2",
+       "float:1000.0"
+      ],
+      [
+       "float:0.47",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.35",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:0"
+     ],
+     "phases": [
+      "str:'A'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.35",
+       "float:1000.0"
+      ],
+      [
+       "float:0.35",
+       "float:1200.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    }
+   ]
+  },
+  "adjacent_right": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.3",
+     "float:1050.0"
+    ],
+    [
+     "float:0.5",
+     "float:950.0"
+    ],
+    [
+     "float:0.65",
+     "float:1200.0"
+    ],
+    [
+     "float:0.8",
+     "float:1000.0"
+    ],
+    [
+     "float:0.9",
+     "float:1080.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [
+    [
+     "float:0.65",
+     "float:1200.0"
+    ]
+   ],
+   "minima": [],
+   "records": []
+  },
+  "far_left": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.1",
+     "float:1080.0"
+    ],
+    [
+     "float:0.2",
+     "float:1000.0"
+    ],
+    [
+     "float:0.3",
+     "float:1100.0"
+    ],
+    [
+     "float:0.4",
+     "float:1150.0"
+    ],
+    [
+     "float:0.5",
+     "float:1200.0"
+    ],
+    [
+     "float:0.6",
+     "float:1150.0"
+    ],
+    [
+     "float:0.7",
+     "float:1050.0"
+    ],
+    [
+     "float:0.8",
+     "float:900.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [],
+   "minima": [],
+   "records": [
+    {
+     "apex": [
+      "float:0.5",
+      "float:1200.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.2",
+       "float:1000.0"
+      ],
+      [
+       "float:0.7333333333333333",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:0"
+     ],
+     "phases": [
+      "str:'A'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:1000.0"
+      ],
+      [
+       "float:0.5",
+       "float:1200.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    }
+   ]
+  },
+  "far_right": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.2",
+     "float:900.0"
+    ],
+    [
+     "float:0.3",
+     "float:1050.0"
+    ],
+    [
+     "float:0.4",
+     "float:1150.0"
+    ],
+    [
+     "float:0.5",
+     "float:1200.0"
+    ],
+    [
+     "float:0.6",
+     "float:1150.0"
+    ],
+    [
+     "float:0.7",
+     "float:1100.0"
+    ],
+    [
+     "float:0.8",
+     "float:1000.0"
+    ],
+    [
+     "float:0.9",
+     "float:1080.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [],
+   "minima": [],
+   "records": [
+    {
+     "apex": [
+      "float:0.5",
+      "float:1200.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.26666666666666666",
+       "float:1000.0"
+      ],
+      [
+       "float:0.8",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:1"
+     ],
+     "phases": [
+      "str:'B'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:1000.0"
+      ],
+      [
+       "float:0.5",
+       "float:1200.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    }
+   ]
+  },
+  "label_inside_dome": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.1",
+     "float:1080.0"
+    ],
+    [
+     "float:0.2",
+     "float:1000.0"
+    ],
+    [
+     "float:0.3",
+     "float:1100.0"
+    ],
+    [
+     "float:0.4",
+     "float:1150.0"
+    ],
+    [
+     "float:0.5",
+     "float:1200.0"
+    ],
+    [
+     "float:0.6",
+     "float:1150.0"
+    ],
+    [
+     "float:0.7",
+     "float:1050.0"
+    ],
+    [
+     "float:0.8",
+     "float:900.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "minima": [],
+   "records": [
+    {
+     "apex": [
+      "float:0.5",
+      "float:1200.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.2",
+       "float:1000.0"
+      ],
+      [
+       "float:0.7333333333333333",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:0"
+     ],
+     "phases": [
+      "str:'A'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:1000.0"
+      ],
+      [
+       "float:0.5",
+       "float:1200.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    }
+   ]
+  },
+  "polygons_miss": {
+   "liquidus": [
+    [
+     "float:0.0",
+     "float:1173.0"
+    ],
+    [
+     "float:0.1",
+     "float:1080.0"
+    ],
+    [
+     "float:0.2",
+     "float:1000.0"
+    ],
+    [
+     "float:0.35",
+     "float:1200.0"
+    ],
+    [
+     "float:0.5",
+     "float:950.0"
+    ],
+    [
+     "float:0.7",
+     "float:1050.0"
+    ],
+    [
+     "float:1.0",
+     "float:1173.0"
+    ]
+   ],
+   "maxima": [],
+   "minima": [],
+   "records": [
+    {
+     "apex": [
+      "float:0.34",
+      "float:1195.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.2",
+       "float:1000.0"
+      ],
+      [
+       "float:0.47",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.34",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:0"
+     ],
+     "phases": [
+      "str:'A'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.34",
+       "float:1000.0"
+      ],
+      [
+       "float:0.34",
+       "float:1195.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    }
+   ]
+  }
+ },
+ "passes": {
+  "apex_without_label_is_congruent": {
+   "full_comp_ss": "bool:False",
+   "invariants": [
+    {
+     "comp": "float:0.2",
+     "phase_comps": [
+      "int:0",
+      "float:0.5"
+     ],
+     "phases": [
+      "str:'A'",
+      "str:'AB'"
+     ],
+     "temp": "float:1000.0",
+     "type": "str:'eut'"
+    },
+    {
+     "comp": "float:0.5",
+     "phase_comps": [
+      "float:0.5"
+     ],
+     "phases": [
+      "str:'AB'"
+     ],
+     "temp": "float:1190.0",
+     "type": "str:'cmp'"
+    },
+    {
+     "comp": "float:0.8",
+     "phase_comps": [
+      "float:0.5",
+      "int:1"
+     ],
+     "phases": [
+      "str:'AB'",
+      "str:'B'"
+     ],
+     "temp": "float:1000.0",
+     "type": "str:'eut'"
+    }
+   ],
+   "low_t_exp_phases": [
+    {
+     "cbounds": [
+      [
+       "float:0.5",
+       "float:700.0"
+      ],
+      [
+       "float:0.5",
+       "float:1190.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "name": "str:'AB'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:700.0"
+      ],
+      [
+       "float:0.5",
+       "float:1190.0"
+      ]
+     ],
+     "type": "str:'cmp'"
+    }
+   ]
+  },
+  "reference_none_returns_nothing": {
+   "full_comp_ss": "bool:False",
+   "invariants": [],
+   "low_t_exp_phases": []
+  },
+  "syntectic_apex_is_not_congruent": {
+   "full_comp_ss": "bool:False",
+   "invariants": [
+    {
+     "comp": "float:0.45",
+     "phase_comps": [
+      "float:0.5"
+     ],
+     "phases": [
+      "str:'AB'"
+     ],
+     "temp": "float:1190.0",
+     "type": "str:'per'"
+    },
+    {
+     "apex": [
+      "float:0.5",
+      "float:1200.0"
+     ],
+     "cbounds": [
+      [
+       "float:0.2",
+       "float:1000.0"
+      ],
+      [
+       "float:0.8",
+       "float:1000.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "partial": "bool:False",
+     "phase_comps": [
+      "int:0"
+     ],
+     "phases": [
+      "str:'A'"
+     ],
+     "source": "str:'label'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:1000.0"
+      ],
+      [
+       "float:0.5",
+       "float:1200.0"
+      ]
+     ],
+     "type": "str:'mig'"
+    },
+    {
+     "comp": "float:0.8",
+     "phase_comps": [
+      "float:0.5",
+      "int:1"
+     ],
+     "phases": [
+      "str:'AB'",
+      "str:'B'"
+     ],
+     "temp": "float:1000.0",
+     "type": "str:'eut'"
+    }
+   ],
+   "low_t_exp_phases": [
+    {
+     "cbounds": [
+      [
+       "float:0.5",
+       "float:700.0"
+      ],
+      [
+       "float:0.5",
+       "float:1190.0"
+      ]
+     ],
+     "comp": "float:0.5",
+     "name": "str:'AB'",
+     "tbounds": [
+      [
+       "float:0.5",
+       "float:700.0"
+      ],
+      [
+       "float:0.5",
+       "float:1190.0"
+      ]
+     ],
+     "type": "str:'ss'"
+    }
+   ]
+  },
+  "terminal_endpoint_maximum_is_skipped": {
+   "full_comp_ss": "bool:False",
+   "invariants": [
+    {
+     "comp": "float:0.2",
+     "phase_comps": [
+      "float:0.0",
+      "int:1"
+     ],
+     "phases": [
+      "str:'(A)'",
+      "str:'B'"
+     ],
+     "temp": "float:1000.0",
+     "type": "str:'eut'"
+    }
+   ],
+   "low_t_exp_phases": [
+    {
+     "cbounds": [
+      [
+       "float:0.0",
+       "float:500.0"
+      ],
+      [
+       "float:0.04",
+       "float:1250.0"
+      ]
+     ],
+     "comp": "float:0.0",
+     "name": "str:'(A)'",
+     "tbounds": [
+      [
+       "float:0.0",
+       "float:500.0"
+      ],
+      [
+       "float:0.0",
+       "float:1300.0"
+      ]
+     ],
+     "type": "str:'ss'"
+    }
+   ]
+  }
+ },
+ "plot": {
+  "env_liquidus_partly_short_of_the_a_axis": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:300.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:974.9756097560976",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.9756097560976",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:66.31578947368422",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:50.009650180940895",
+     "float:1150.0579010856454",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1500.0"
+   ],
+   "pack_calls": [
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ]
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "env_liquidus_short_of_the_a_axis": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:300.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:1000.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.9756097560976",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:66.31578947368422",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:44.33268516881739",
+     "float:1184.0038889870957",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1500.0"
+   ],
+   "pack_calls": [
+    [
+     "int:2",
+     "float:1500.0"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1500.0"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ]
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:1400.0",
+     "x0": "float:0.0",
+     "x1": "float:100.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "env_v_notch_under_the_a_label": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:300.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:-90",
+     "bool:True",
+     "float:46.125",
+     "float:19.267102832642145"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:67.10330935251798",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.03667890812884",
+     "float:1164.6864013713707",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "pack_calls": [
+    [
+     "int:2",
+     "float:682.0"
+    ],
+    [
+     "int:1",
+     "float:1271.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:681.7862446043165"
+    ],
+    [
+     "int:1",
+     "float:1271.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:681.7862446043165"
+    ],
+    [
+     "int:1",
+     "float:1271.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ]
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_dense_ties_over_compound": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:180.1231207875805",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:973.2956714274396",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:130.1231207875805",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:923.2956714274396",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:50.0",
+     "float:280.1231207875805",
+     "int:0",
+     "bool:True",
+     "float:-9.225000000000001",
+     "float:-161.65218702270508"
+    ],
+    [
+     "str:'L'",
+     "float:69.77552904984918",
+     "float:1288.7711558081703",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:-239.75375842483905",
+    "float:1540.2359630181504"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-260.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-220.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-180.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-140.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-100.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-60.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:-20.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:20.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:60.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:100.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:140.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:180.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:220.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:260.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:300.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:340.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:380.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:420.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:460.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:45.0",
+     "x1": "float:100.0"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:540.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:580.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:620.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:660.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:700.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:740.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:780.0",
+     "x0": "float:45.0",
+     "x1": "float:55.00000000000001"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    }
+   ]
+  },
+  "layout_extra_compounds": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:67.65",
+     "float:-94.59673002038379"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:974.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:51.5",
+     "float:67.10330935251798",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'AC'",
+     "float:10.5",
+     "float:46.73266187050359",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'AD'",
+     "float:5.5",
+     "float:46.73266187050359",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'AE'",
+     "float:61.5",
+     "float:46.73266187050359",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.99999999999999",
+     "float:1158.906474820144",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:3.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    },
+    {
+     "sources": [
+      "str:'safety-net'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:8.0",
+     "x1": "float:40.0"
+    }
+   ]
+  },
+  "layout_horizontal_only": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:6.15",
+     "float:-110.92968299711818"
+    ],
+    [
+     "str:'Ahi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:0",
+     "bool:True",
+     "float:18.450000000000003",
+     "float:15.376138469108039"
+    ],
+    [
+     "str:'Blo'",
+     "float:99.5",
+     "float:250.0",
+     "int:-90",
+     "bool:True",
+     "float:-6.15",
+     "float:-95.90806916426516"
+    ],
+    [
+     "str:'Bhi'",
+     "float:99.5",
+     "float:950.0",
+     "int:0",
+     "bool:True",
+     "float:-18.450000000000003",
+     "float:15.376138469108005"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:67.10330935251798",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:50.000000000000014",
+     "float:1158.906474820144",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_long_names_never_places": {
+   "annotations": [
+    [
+     "str:'Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxlo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:46.125",
+     "float:-578.6547128698952"
+    ],
+    [
+     "str:'Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxhi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:-90",
+     "bool:True",
+     "float:46.125",
+     "float:-895.7761192099529"
+    ],
+    [
+     "str:'Blo'",
+     "float:99.5",
+     "float:250.0",
+     "int:-90",
+     "bool:True",
+     "float:-6.15",
+     "float:-353.678962536023"
+    ],
+    [
+     "str:'Bhi'",
+     "float:99.5",
+     "float:950.0",
+     "int:0",
+     "bool:True",
+     "float:-18.450000000000003",
+     "float:-163.20036887608063"
+    ],
+    [
+     "str:'Cyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'",
+     "float:50.0",
+     "float:400.0",
+     "int:-90",
+     "bool:True",
+     "float:-9.225000000000001",
+     "float:-575.4013987488579"
+    ],
+    [
+     "str:'L'",
+     "float:66.85241242972758",
+     "float:1260.0209493985094",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_never_places": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:6.15",
+     "float:-326.9958283853965"
+    ],
+    [
+     "str:'Ahi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:0",
+     "bool:True",
+     "float:18.450000000000003",
+     "float:-144.23279637237422"
+    ],
+    [
+     "str:'Blo'",
+     "float:99.5",
+     "float:250.0",
+     "int:-90",
+     "bool:True",
+     "float:-6.15",
+     "float:-341.46633067204095"
+    ],
+    [
+     "str:'Bhi'",
+     "float:99.5",
+     "float:950.0",
+     "int:0",
+     "bool:True",
+     "float:-18.450000000000003",
+     "float:-158.70329865901869"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:69.65895032754557",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.99999999999999",
+     "float:1187.809557275813",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1575.619114551626"
+   ],
+   "pack_calls": [
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:1",
+     "float:1271.9512195121952"
+    ],
+    [
+     "int:1",
+     "float:1297.8536585365853"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:1",
+     "float:1271.9512195121952"
+    ],
+    [
+     "int:1",
+     "float:1297.8536585365855"
+    ],
+    [
+     "int:2",
+     "float:1349.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1271.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1296.9462291619657"
+    ],
+    [
+     "int:2",
+     "float:1349.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1271.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1296.946229161966"
+    ],
+    [
+     "int:2",
+     "float:1349.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1271.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1296.9462291619657"
+    ],
+    [
+     "int:2",
+     "float:1349.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1271.0437901375756"
+    ],
+    [
+     "int:1",
+     "float:1296.946229161966"
+    ]
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_no_inband": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:6.15",
+     "float:-110.92968299711818"
+    ],
+    [
+     "str:'Ahi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:-90",
+     "bool:True",
+     "float:46.125",
+     "float:19.267102832642145"
+    ],
+    [
+     "str:'Blo'",
+     "float:99.5",
+     "float:250.0",
+     "int:-90",
+     "bool:True",
+     "float:-6.15",
+     "float:-95.90806916426516"
+    ],
+    [
+     "str:'Bhi'",
+     "float:99.5",
+     "float:950.0",
+     "int:-90",
+     "bool:True",
+     "float:-46.125",
+     "float:19.267102832642145"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:67.10330935251798",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:50.000000000000014",
+     "float:1158.906474820144",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_real": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:300.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:974.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A<sub>0</sub>+B'",
+     "float:48.5",
+     "float:67.10330935251798",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.99999999999999",
+     "float:1158.906474820144",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "pack_calls": [
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.9512195121952"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ],
+    [
+     "int:2",
+     "float:1349.7374641165118"
+    ]
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_stacked_compound_never": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:0.5",
+     "float:300.0",
+     "int:-90",
+     "bool:True",
+     "float:6.15",
+     "float:-326.9958283853965"
+    ],
+    [
+     "str:'Ahi'",
+     "float:0.5",
+     "float:1000.0",
+     "int:0",
+     "bool:True",
+     "float:18.450000000000003",
+     "float:-144.23279637237422"
+    ],
+    [
+     "str:'Blo'",
+     "float:99.5",
+     "float:250.0",
+     "int:-90",
+     "bool:True",
+     "float:-6.15",
+     "float:-341.46633067204095"
+    ],
+    [
+     "str:'Bhi'",
+     "float:99.5",
+     "float:950.0",
+     "int:0",
+     "bool:True",
+     "float:-18.450000000000003",
+     "float:-158.70329865901869"
+    ],
+    [
+     "str:'ABlo'",
+     "float:51.5",
+     "float:73.39067980937836",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'ABhi'",
+     "float:51.5",
+     "float:173.16261387226913",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.99999999999999",
+     "float:1187.809557275813",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1575.619114551626"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "layout_stacked_compound_real": {
+   "annotations": [
+    [
+     "str:'Alo'",
+     "float:1.5",
+     "float:300.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Ahi'",
+     "float:1.5",
+     "float:974.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Blo'",
+     "float:98.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'Bhi'",
+     "float:98.5",
+     "float:924.8687320582559",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'ABlo'",
+     "float:51.5",
+     "float:250.0",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'ABhi'",
+     "float:51.5",
+     "float:642.8687320582558",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:49.99999999999999",
+     "float:1158.906474820144",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1517.8129496402878"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:800.0",
+     "x0": "float:25.0",
+     "x1": "float:75.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'polymorph'"
+     ],
+     "temp": "float:500.0",
+     "x0": "float:50.0",
+     "x1": "float:100.0"
+    }
+   ]
+  },
+  "ss_minimum_axis_fallback": {
+   "annotations": [
+    [
+     "str:'CB'",
+     "float:92.5",
+     "float:43.59789473684211",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'LOW'",
+     "float:38.5",
+     "float:54.77684210526316",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:50.0",
+     "float:1308.0",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1416.0"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'ss_minimum'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:0.0",
+     "x1": "float:95.0"
+    }
+   ]
+  },
+  "ss_minimum_bracketed": {
+   "annotations": [
+    [
+     "str:'CA'",
+     "float:7.5",
+     "float:43.59789473684211",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'CB'",
+     "float:92.5",
+     "float:43.59789473684211",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'LOW'",
+     "float:41.5",
+     "float:54.77684210526316",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:50.0",
+     "float:1308.0",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1416.0"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'ss_minimum'"
+     ],
+     "temp": "float:600.0",
+     "x0": "float:5.0",
+     "x1": "float:95.0"
+    }
+   ]
+  },
+  "ss_minimum_unbracketed": {
+   "annotations": [
+    [
+     "str:'CA'",
+     "float:7.5",
+     "float:43.59789473684211",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'LOW'",
+     "float:41.5",
+     "float:54.77684210526316",
+     "int:-90",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'L'",
+     "float:63.527239150507846",
+     "float:958.0",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'A'",
+     "float:-0.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ],
+    [
+     "str:'B'",
+     "float:1.05",
+     "float:-0.086",
+     "NoneType:None",
+     "bool:False",
+     "NoneType:None",
+     "NoneType:None"
+    ]
+   ],
+   "conds": [
+    "float:0.0",
+    "float:1416.0"
+   ],
+   "ties": [
+    {
+     "sources": [
+      "str:'safety-net'"
+     ],
+     "temp": "float:1000.0",
+     "x0": "float:5.0",
+     "x1": "float:41.42857142857143"
+    }
+   ]
+  },
+  "tie_contained_span_keeps_trace": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:10.0",
+     "x1": "float:80.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float64:10.0",
+      "float64:80.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  },
+  "tie_disjoint_spans_stay_apart": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:2.0",
+     "x1": "float:20.0"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:50.0",
+     "x1": "float:70.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float64:2.0",
+      "float64:20.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ],
+    [
+     [
+      "float64:50.0",
+      "float64:70.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  },
+  "tie_just_inside_tolerance": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:10.0",
+     "x1": "float:70.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float:10.0",
+      "float:70.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  },
+  "tie_just_outside_tolerance": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:10.0",
+     "x1": "float:60.0"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:907.575",
+     "x0": "float:12.0",
+     "x1": "float:70.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float64:10.0",
+      "float64:60.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ],
+    [
+     [
+      "float64:12.0",
+      "float64:70.0"
+     ],
+     [
+      "float64:907.575",
+      "float64:907.575"
+     ]
+    ]
+   ]
+  },
+  "tie_overlapping_spans_merge": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:10.0",
+     "x1": "float:70.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float:10.0",
+      "float:70.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  },
+  "tie_three_way_chain": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:10.0",
+     "x1": "float:50.0"
+    },
+    {
+     "sources": [
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:50.0",
+     "x1": "float:70.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float:10.0",
+      "float:50.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ],
+    [
+     [
+      "float64:50.0",
+      "float64:70.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  },
+  "tie_touching_spans_merge": {
+   "ties": [
+    {
+     "sources": [
+      "str:'invariant:Eutectics'",
+      "str:'invariant:Eutectics'"
+     ],
+     "temp": "float:900.0",
+     "x0": "float:2.0",
+     "x1": "float:50.0"
+    }
+   ],
+   "traces": [
+    [
+     [
+      "float:2.0",
+      "float:50.0"
+     ],
+     [
+      "float64:900.0",
+      "float64:900.0"
+     ]
+    ]
+   ]
+  }
+ },
+ "resolvers": {
+  "gliquid.binary:BinaryLiquid._mig_constraint_equations:foot_tol": {
+   "default": [],
+   "explicit": [
+    [
+     "str:'mig - 0.2-0.8 1st'",
+     "str:'1st order'",
+     "float:900.0"
+    ]
+   ],
+   "patched": [
+    [
+     "str:'mig - 0.2-0.8 1st'",
+     "str:'1st order'",
+     "float:900.0"
+    ]
+   ]
+  },
+  "gliquid.mpds:_collapse_polymorph_clusters:comp_tol": {
+   "default": [
+    {
+     "comp": "float:0.66",
+     "name": "str:'Mg2Cu'",
+     "tbounds": [
+      [
+       "float:0.66",
+       "float:300.0"
+      ],
+      [
+       "float:0.69",
+       "float:900.0"
+      ]
+     ],
+     "type": "str:'lc'"
+    }
+   ],
+   "explicit": [
+    {
+     "comp": "float:0.66",
+     "name": "str:'Mg2Cu'",
+     "tbounds": [
+      [
+       "float:0.66",
+       "float:300.0"
+      ],
+      [
+       "float:0.66",
+       "float:700.0"
+      ]
+     ],
+     "type": "str:'lc'"
+    },
+    {
+     "comp": "float:0.69",
+     "name": "str:'Mg2Cu'",
+     "tbounds": [
+      [
+       "float:0.69",
+       "float:700.0"
+      ],
+      [
+       "float:0.69",
+       "float:900.0"
+      ]
+     ],
+     "type": "str:'lc'"
+    }
+   ],
+   "patched": [
+    {
+     "comp": "float:0.66",
+     "name": "str:'Mg2Cu'",
+     "tbounds": [
+      [
+       "float:0.66",
+       "float:300.0"
+      ],
+      [
+       "float:0.66",
+       "float:700.0"
+      ]
+     ],
+     "type": "str:'lc'"
+    },
+    {
+     "comp": "float:0.69",
+     "name": "str:'Mg2Cu'",
+     "tbounds": [
+      [
+       "float:0.69",
+       "float:700.0"
+      ],
+      [
+       "float:0.69",
+       "float:900.0"
+      ]
+     ],
+     "type": "str:'lc'"
+    }
+   ]
+  },
+  "gliquid.mpds:low_temp_threshold:fraction": {
+   "default": "float:423.15",
+   "explicit": "float:443.15",
+   "patched": "float:463.15"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:bound_by_supported": {
+   "default": "bool:True",
+   "explicit": "bool:False",
+   "patched": "bool:False"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:dft_cover_tol": {
+   "default": "float:0.1",
+   "explicit": "float:0.123",
+   "patched": "float:0.137"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:dft_edge_tol": {
+   "default": "float:0.01",
+   "explicit": "float:0.023",
+   "patched": "float:0.017"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:dft_structure_tol": {
+   "default": "float:0.05",
+   "explicit": "float:0.063",
+   "patched": "float:0.071"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:field_ceiling_tol": {
+   "default": "float:10.0",
+   "explicit": "float:3.0",
+   "patched": "float:4.0"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:mask_miscibility_gaps": {
+   "default": "bool:False",
+   "explicit": "bool:True",
+   "patched": "bool:True"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:mig_foot_tol": {
+   "default": "float:20.0",
+   "explicit": "float:33.0",
+   "patched": "float:27.0"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:polymorph_pair_tol": {
+   "default": "float:0.04",
+   "explicit": "float:0.03",
+   "patched": "float:0.02"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:ss_extension_cap": {
+   "default": "float:0.05",
+   "explicit": "float:0.08",
+   "patched": "float:0.09"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:ss_narrow_tol": {
+   "default": "float:0.1",
+   "explicit": "float:0.123",
+   "patched": "float:0.137"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:ss_rescue_max_width": {
+   "default": "float:0.25",
+   "explicit": "float:0.33",
+   "patched": "float:0.29"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:ss_width_guard": {
+   "default": "float:0.67",
+   "explicit": "float:0.5",
+   "patched": "float:0.55"
+  },
+  "gliquid.solid_coverage:assess_solid_coverage:subliquidus_margin": {
+   "default": "float:0.0",
+   "explicit": "float:7.0",
+   "patched": "float:12.5"
+  },
+  "gliquid.solid_coverage:assign_dft_phases:edge_tol": {
+   "default": {
+    "0": {
+     "dataclass": "DftMatch",
+     "fields": {
+      "extra": {
+       "tuple": []
+      },
+      "hull": "float:0.57",
+      "residual": "float:0.019999999999999907",
+      "structure": "str:'match'",
+      "via": "str:'structure'"
+     }
+    }
+   },
+   "explicit": {
+    "0": {
+     "dataclass": "DftMatch",
+     "fields": {
+      "extra": {
+       "tuple": []
+      },
+      "hull": "float:0.57",
+      "residual": "float:0.019999999999999907",
+      "structure": "str:'match'",
+      "via": "str:'on'"
+     }
+    }
+   },
+   "patched": {
+    "0": {
+     "dataclass": "DftMatch",
+     "fields": {
+      "extra": {
+       "tuple": []
+      },
+      "hull": "float:0.57",
+      "residual": "float:0.019999999999999907",
+      "structure": "str:'match'",
+      "via": "str:'on'"
+     }
+    }
+   }
+  },
+  "gliquid.solid_coverage:assign_dft_phases:structure_tol": {
+   "default": {
+    "0": {
+     "dataclass": "DftMatch",
+     "fields": {
+      "extra": {
+       "tuple": []
+      },
+      "hull": "float:0.57",
+      "residual": "float:0.019999999999999907",
+      "structure": "str:'match'",
+      "via": "str:'structure'"
+     }
+    }
+   },
+   "explicit": {},
+   "patched": {}
+  },
+  "gliquid.solid_coverage:rescuable_ss_indices:ss_narrow_tol": {
+   "default": {
+    "set": [
+     "int:0"
+    ]
+   },
+   "explicit": {
+    "set": []
+   },
+   "patched": {
+    "set": []
+   }
+  },
+  "gliquid.solid_coverage:rescuable_ss_indices:ss_rescue_max_width": {
+   "default": {
+    "set": [
+     "int:0"
+    ]
+   },
+   "explicit": {
+    "set": []
+   },
+   "patched": {
+    "set": [
+     "int:0",
+     "int:1"
+    ]
+   }
+  }
+ },
+ "walk": {
+  "cmp_paren_at_half": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "cmp_paren_caller_supplied_ranges": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "d6410c902bf4278f"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.9",
+     "float:0.95"
+    ]
+   ]
+  },
+  "cmp_paren_covered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "cmp_paren_right": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.8",
+     "float:0.9"
+    ]
+   ]
+  },
+  "covers_at_exact_tolerance": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "covers_one_ulp_below_tolerance": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "int:0",
+     "float:0.4"
+    ]
+   ]
+  },
+  "eut_left_missing_uncovered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.3",
+     "float:0.5"
+    ]
+   ]
+  },
+  "eut_left_paren_beyond_0.05": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_left_paren_within_0.05": {
+   "eqs": [
+    [
+     "eut - 0.5 1st",
+     "1st order",
+     "float:800.0",
+     "dfbe42ee66ab98f6"
+    ],
+    [
+     "eut - 0.5 0th",
+     "0th order rhs",
+     "float:800.0",
+     "a301b8917b1ce3ef"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_left_past_comp_covered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_left_past_comp_uncovered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.1",
+     "float:0.3"
+    ]
+   ]
+  },
+  "eut_none_in_phase_comps": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_right_paren_below_0.95": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_right_paren_within_0.95": {
+   "eqs": [
+    [
+     "eut - 0.5 1st",
+     "1st order",
+     "float:800.0",
+     "0bc0bd7e57bd3db2"
+    ],
+    [
+     "eut - 0.5 0th",
+     "0th order lhs",
+     "float:800.0",
+     "c9bdf577a590df16"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_right_past_comp_covered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "eut_right_past_comp_uncovered": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.7",
+     "float:0.9"
+    ]
+   ]
+  },
+  "flank_2e-6_candidates": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.449998",
+     "float:0.45"
+    ]
+   ]
+  },
+  "flank_5e-7_not_candidates": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.3",
+     "float:0.45"
+    ]
+   ]
+  },
+  "flank_no_candidate_cap_skips": {
+   "eqs": [],
+   "result": [],
+   "skip_reason": "str:'mask_fraction_exceeded'",
+   "unsupported": [
+    [
+     "int:0",
+     "float:0.45"
+    ],
+    [
+     "float:0.55",
+     "int:1"
+    ]
+   ]
+  },
+  "cmp_emits": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "d6410c902bf4278f"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "cmp_per_eut_emit": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "d6410c902bf4278f"
+    ],
+    [
+     "per - 0.3 0th",
+     "0th order",
+     "float:1000.0",
+     "9121135d3d5c0817"
+    ],
+    [
+     "eut - 0.5 1st",
+     "1st order",
+     "float:800.0",
+     "32cfea3966977b14"
+    ],
+    [
+     "eut - 0.5 0th",
+     "0th order lhs",
+     "float:800.0",
+     "c9bdf577a590df16"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "init_error_returns_empty": {
+   "eqs": [],
+   "result": [],
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "mask_walked_label_at_hi_plus_1e-9": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "mask_walked_label_at_hi_plus_3e-9": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.1",
+     "float:0.2"
+    ]
+   ]
+  },
+  "mask_walked_label_at_lo_minus_1e-9": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "mask_walked_label_at_lo_minus_3e-9": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.1",
+     "float:0.2"
+    ]
+   ]
+  },
+  "mask_walked_no_label": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.1",
+     "float:0.2"
+    ]
+   ]
+  },
+  "merge_gap_of_2e-9_stays_apart": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.2",
+     "float:0.3"
+    ],
+    [
+     "float:0.300000002",
+     "float:0.4"
+    ]
+   ]
+  },
+  "merge_touching_within_1e-9": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.2",
+     "float:0.4"
+    ]
+   ]
+  },
+  "merge_union_with_coverage_ranges": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.3",
+     "float:0.6"
+    ]
+   ]
+  },
+  "mig_delegates": {
+   "eqs": [
+    [
+     "mig - 0.5 2nd",
+     "2nd order",
+     "float:1200.0",
+     "fa493a97acf0a610"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_cmp_beyond_0.02": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_cmp_within_0.02": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "d6410c902bf4278f"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_eut_left_beyond_0.04": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_eut_left_within_0.04": {
+   "eqs": [
+    [
+     "eut - 0.5 1st",
+     "1st order",
+     "float:800.0",
+     "32cfea3966977b14"
+    ],
+    [
+     "eut - 0.5 0th",
+     "0th order lhs",
+     "float:800.0",
+     "c9bdf577a590df16"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_eut_right_beyond_0.04": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_eut_right_within_0.04": {
+   "eqs": [
+    [
+     "eut - 0.5 1st",
+     "1st order",
+     "float:800.0",
+     "32cfea3966977b14"
+    ],
+    [
+     "eut - 0.5 0th",
+     "0th order lhs",
+     "float:800.0",
+     "c9bdf577a590df16"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_per_beyond_0.04": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_per_within_0.04": {
+   "eqs": [
+    [
+     "per - 0.3 0th",
+     "0th order",
+     "float:1000.0",
+     "9121135d3d5c0817"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_tie_twin_first": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "b5a9a91f0651c927"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_tie_twin_second": {
+   "eqs": [
+    [
+     "cmp - 0.33 0th",
+     "0th order",
+     "float:1000.0",
+     "d6410c902bf4278f"
+    ]
+   ],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "nearest_with_no_fixed_phase": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "no_liquidus_returns_empty": {
+   "eqs": [],
+   "result": [],
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "per_paren_phase_above": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.2",
+     "float:0.35"
+    ]
+   ]
+  },
+  "per_paren_phase_below": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.05",
+     "float:0.2"
+    ]
+   ]
+  },
+  "per_paren_phase_equal": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": []
+  },
+  "union_gate_admits": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "float:0.0",
+     "float:0.25"
+    ],
+    [
+     "float:0.55",
+     "float:0.75"
+    ]
+   ]
+  },
+  "union_gate_skips": {
+   "eqs": [],
+   "result": [],
+   "skip_reason": "str:'insufficient_union_coverage'",
+   "unsupported": [
+    [
+     "float:0.0",
+     "float:0.25"
+    ],
+    [
+     "float:0.55",
+     "float:0.75"
+    ]
+   ]
+  }
+ },
+ "walk_extra": {
+  "l7_int_fallbacks": {
+   "eqs": [],
+   "result": "probe_stop",
+   "skip_reason": "NoneType:None",
+   "unsupported": [
+    [
+     "int:0",
+     "float:0.45"
+    ],
+    [
+     "float:0.55",
+     "int:1"
+    ]
+   ]
+  }
+ }
+}
