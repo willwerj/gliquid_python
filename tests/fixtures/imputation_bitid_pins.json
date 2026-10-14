@@ -1,0 +1,1810 @@
+{
+ "Cu-Mg": {
+  "params": [
+   -41302.26,
+   -5.1627,
+   -8148.05,
+   0.0
+  ],
+  "liquid_gibbs": [
+   [
+    6423.660783356664,
+    5341.863909028349,
+    -6358.696110992358,
+    -10085.924029398162,
+    -7577.035873227453,
+    2048.7044640662225
+   ],
+   [
+    2517.212315695353,
+    1214.980068124045,
+    -12004.341421665127,
+    -16129.917162622165,
+    -13242.9423169189,
+    -1626.3051946563355
+   ],
+   [
+    -1389.2360920548417,
+    -2911.129129158913,
+    -17637.088679009434,
+    -22154.49327108872,
+    -18891.963012636872,
+    -5301.314757953967
+   ]
+  ],
+  "synthetic": [
+   [
+    -18454.708545916328,
+    -14913.748462686646,
+    -13968.373172988078,
+    -16032.522663307403,
+    -16711.65593668765
+   ],
+   [
+    -6854.733386876831,
+    -14913.748462686646,
+    -13968.373172988078,
+    -14430.447576642278,
+    -16711.65593668765
+   ],
+   [
+    -6854.733386876831,
+    -6046.26978224068,
+    -13968.373172988078,
+    -14430.447576642278,
+    -10949.795541030095
+   ]
+  ],
+  "targets": [
+   {
+    "name": "MgCu2",
+    "x_s": 0.332825,
+    "invariant": {
+     "type": "cmp",
+     "comp": 0.332825,
+     "temp": 1086.657
+    },
+    "h_shipped": -14103.348737835004,
+    "h_tmatched": -14103.348737835004,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -3.4105846419073607,
+      "composition": {
+       "Cu": 0.6671750000000001,
+       "Mg": 0.332825
+      },
+      "entry_id": "imputed:MgCu2",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "MgCu2",
+       "x_b": 0.332825,
+       "h_form_j_per_mol": -14103.348737835004,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": {
+         "type": "cmp",
+         "comp": 0.332825,
+         "temp": 1086.657
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -3.405402489241143,
+      "composition": {
+       "Cu": 0.6671750000000001,
+       "Mg": 0.332825
+      },
+      "entry_id": "imputed:MgCu2",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "MgCu2",
+       "x_b": 0.332825,
+       "h_form_j_per_mol": -13603.348737835004,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": {
+         "type": "cmp",
+         "comp": 0.332825,
+         "temp": 1086.657
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   },
+   {
+    "name": "Mg2Cu",
+    "x_s": 0.6666030000000001,
+    "invariant": {
+     "type": "cmp",
+     "comp": 0.6666030000000001,
+     "temp": 838.482
+    },
+    "h_shipped": -10817.88124144917,
+    "h_tmatched": -10817.88124144917,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -2.5393492933093964,
+      "composition": {
+       "Cu": 0.33339699999999994,
+       "Mg": 0.6666030000000001
+      },
+      "entry_id": "imputed:Mg2Cu",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Mg2Cu",
+       "x_b": 0.6666030000000001,
+       "h_form_j_per_mol": -10817.88124144917,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": {
+         "type": "cmp",
+         "comp": 0.6666030000000001,
+         "temp": 838.482
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -2.534167140643179,
+      "composition": {
+       "Cu": 0.33339699999999994,
+       "Mg": 0.6666030000000001
+      },
+      "entry_id": "imputed:Mg2Cu",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Mg2Cu",
+       "x_b": 0.6666030000000001,
+       "h_form_j_per_mol": -10317.88124144917,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": {
+         "type": "cmp",
+         "comp": 0.6666030000000001,
+         "temp": 838.482
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   }
+  ],
+  "impute_shipped": {
+   "records": [
+    {
+     "name": "MgCu2",
+     "comp": 0.332825,
+     "enthalpy": -14103.348737835004,
+     "invariant_type": "cmp",
+     "invariant_comp": 0.332825,
+     "invariant_temp": 1086.657,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -3.4105846419073607,
+       "composition": {
+        "Cu": 0.6671750000000001,
+        "Mg": 0.332825
+       },
+       "entry_id": "imputed:MgCu2",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "MgCu2",
+        "x_b": 0.332825,
+        "h_form_j_per_mol": -14103.348737835004,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": {
+          "type": "cmp",
+          "comp": 0.332825,
+          "temp": 1086.657
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "Mg2Cu",
+     "comp": 0.6666030000000001,
+     "enthalpy": -10817.88124144917,
+     "invariant_type": "cmp",
+     "invariant_comp": 0.6666030000000001,
+     "invariant_temp": 838.482,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -2.5393492933093964,
+       "composition": {
+        "Cu": 0.33339699999999994,
+        "Mg": 0.6666030000000001
+       },
+       "entry_id": "imputed:Mg2Cu",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Mg2Cu",
+        "x_b": 0.6666030000000001,
+        "h_form_j_per_mol": -10817.88124144917,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": {
+          "type": "cmp",
+          "comp": 0.6666030000000001,
+          "temp": 838.482
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    }
+   ],
+   "phases": [
+    [
+     "Cu (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "L",
+     null,
+     false
+    ],
+    [
+     "Mg (hcp)",
+     0.0,
+     false
+    ],
+    [
+     "Mg2Cu",
+     -10817.881241449171,
+     true
+    ],
+    [
+     "MgCu2",
+     -14103.348737834996,
+     true
+    ]
+   ]
+  },
+  "impute_nearest": {
+   "records": [
+    {
+     "name": "MgCu2",
+     "comp": 0.332825,
+     "enthalpy": -14103.348737835004,
+     "invariant_type": "cmp",
+     "invariant_comp": 0.332825,
+     "invariant_temp": 1086.657,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -3.4105846419073607,
+       "composition": {
+        "Cu": 0.6671750000000001,
+        "Mg": 0.332825
+       },
+       "entry_id": "imputed:MgCu2",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "MgCu2",
+        "x_b": 0.332825,
+        "h_form_j_per_mol": -14103.348737835004,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": {
+          "type": "cmp",
+          "comp": 0.332825,
+          "temp": 1086.657
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "Mg2Cu",
+     "comp": 0.6666030000000001,
+     "enthalpy": -10817.88124144917,
+     "invariant_type": "cmp",
+     "invariant_comp": 0.6666030000000001,
+     "invariant_temp": 838.482,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -2.5393492933093964,
+       "composition": {
+        "Cu": 0.33339699999999994,
+        "Mg": 0.6666030000000001
+       },
+       "entry_id": "imputed:Mg2Cu",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Mg2Cu",
+        "x_b": 0.6666030000000001,
+        "h_form_j_per_mol": -10817.88124144917,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": {
+          "type": "cmp",
+          "comp": 0.6666030000000001,
+          "temp": 838.482
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    }
+   ],
+   "phases": [
+    [
+     "Cu (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "L",
+     null,
+     false
+    ],
+    [
+     "Mg (hcp)",
+     0.0,
+     false
+    ],
+    [
+     "Mg2Cu",
+     -10817.881241449171,
+     true
+    ],
+    [
+     "MgCu2",
+     -14103.348737834996,
+     true
+    ]
+   ]
+  },
+  "clamp": [
+   {
+    "x_s": 0.3,
+    "h_deep": -32655.13165552252,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -3.4946987761663237,
+      "composition": {
+       "Cu": 0.7,
+       "Mg": 0.3
+      },
+      "entry_id": "imputed:Probe0.3",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.3",
+       "x_b": 0.3,
+       "h_form_j_per_mol": -14275.313387700255,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -32655.13165552252,
+         "clamped_h_form_j_per_mol": -14275.313387700255,
+         "blocked_by": [
+          "mp-1038-GGA",
+          "mp-2481-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -3.4946987761663237,
+       "composition": {
+        "Cu": 0.7,
+        "Mg": 0.3
+       },
+       "entry_id": "imputed:Probe0.3",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.3",
+        "x_b": 0.3,
+        "h_form_j_per_mol": -14275.313387700255,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -32655.13165552252,
+          "clamped_h_form_j_per_mol": -14275.313387700255,
+          "blocked_by": [
+           "mp-1038-GGA",
+           "mp-2481-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   },
+   {
+    "x_s": 0.55,
+    "h_deep": -31954.218941935622,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -2.8696752073684233,
+      "composition": {
+       "Cu": 0.44999999999999996,
+       "Mg": 0.55
+      },
+      "entry_id": "imputed:Probe0.55",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.55",
+       "x_b": 0.55,
+       "h_form_j_per_mol": -14470.96228910359,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -31954.218941935622,
+         "clamped_h_form_j_per_mol": -14470.96228910359,
+         "blocked_by": [
+          "mp-1038-GGA",
+          "mp-2481-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -2.8696752073684233,
+       "composition": {
+        "Cu": 0.44999999999999996,
+        "Mg": 0.55
+       },
+       "entry_id": "imputed:Probe0.55",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.55",
+        "x_b": 0.55,
+        "h_form_j_per_mol": -14470.96228910359,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -31954.218941935622,
+          "clamped_h_form_j_per_mol": -14470.96228910359,
+          "blocked_by": [
+           "mp-1038-GGA",
+           "mp-2481-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   }
+  ]
+ },
+ "Al-Cu": {
+  "params": [
+   -68087.2,
+   -3.6819,
+   2945.42,
+   0.0
+  ],
+  "liquid_gibbs": [
+   [
+    2678.7554761246583,
+    1526.848376515767,
+    -11544.08768362828,
+    -15668.671947007668,
+    -10948.619420702704,
+    6423.6425890420705
+   ],
+   [
+    -1910.4913691019628,
+    -3261.776352109606,
+    -17493.643981244757,
+    -21753.08976276954,
+    -16594.59395484856,
+    2517.1946414440263
+   ],
+   [
+    -6499.738236708134,
+    -8050.690374232241,
+    -23447.998220056106,
+    -27844.707198941873,
+    -22246.814535002264,
+    -1389.2533413713754
+   ]
+  ],
+  "synthetic": [
+   [
+    -23484.967878261035,
+    -18869.711666403535,
+    -19731.493474536222,
+    -22310.23211341274,
+    -22940.605362394017
+   ],
+   [
+    -10396.263322818933,
+    -18869.711666403535,
+    -19731.493474536222,
+    -18244.341433916765,
+    -22940.605362394017
+   ],
+   [
+    -10396.263322818933,
+    -13537.042689725036,
+    -19731.493474536222,
+    -18244.341433916765,
+    -19504.838094118044
+   ]
+  ],
+  "targets": [
+   {
+    "name": "Cu9Al4",
+    "x_s": 0.642204,
+    "invariant": {
+     "type": "per",
+     "comp": 0.6606323948220064,
+     "temp": 1294.49
+    },
+    "h_shipped": -22536.377239278678,
+    "h_tmatched": -21352.873309800325,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.206252864766185,
+      "composition": {
+       "Al": 0.357796,
+       "Cu": 0.642204
+      },
+      "entry_id": "imputed:Cu9Al4",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Cu9Al4",
+       "x_b": 0.642204,
+       "h_form_j_per_mol": -22536.377239278678,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.6606323948220064,
+         "temp": 1294.49
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.201070712099968,
+      "composition": {
+       "Al": 0.357796,
+       "Cu": 0.642204
+      },
+      "entry_id": "imputed:Cu9Al4",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Cu9Al4",
+       "x_b": 0.642204,
+       "h_form_j_per_mol": -22036.377239278678,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.6606323948220064,
+         "temp": 1294.49
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   },
+   {
+    "name": "Cu33Al17 rt",
+    "x_s": 0.620473,
+    "invariant": {
+     "type": "per",
+     "comp": 0.40916907854032136,
+     "temp": 958.1469999999999
+    },
+    "h_shipped": -21625.104780596368,
+    "h_tmatched": -12335.687126003033,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.189123406979323,
+      "composition": {
+       "Al": 0.37952699999999995,
+       "Cu": 0.620473
+      },
+      "entry_id": "imputed:Cu33Al17 rt",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Cu33Al17 rt",
+       "x_b": 0.620473,
+       "h_form_j_per_mol": -21625.104780596368,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.40916907854032136,
+         "temp": 958.1469999999999
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.183941254313105,
+      "composition": {
+       "Al": 0.37952699999999995,
+       "Cu": 0.620473
+      },
+      "entry_id": "imputed:Cu33Al17 rt",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Cu33Al17 rt",
+       "x_b": 0.620473,
+       "h_form_j_per_mol": -21125.104780596368,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.40916907854032136,
+         "temp": 958.1469999999999
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   },
+   {
+    "name": "CuAl rt",
+    "x_s": 0.52135,
+    "invariant": {
+     "type": "per",
+     "comp": 0.3652373357487923,
+     "temp": 895.502
+    },
+    "h_shipped": -20445.71224330828,
+    "h_tmatched": -13266.775565918728,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.141846872862754,
+      "composition": {
+       "Al": 0.47865,
+       "Cu": 0.52135
+      },
+      "entry_id": "imputed:CuAl rt",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "CuAl rt",
+       "x_b": 0.52135,
+       "h_form_j_per_mol": -20445.71224330828,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.3652373357487923,
+         "temp": 895.502
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.136664720196536,
+      "composition": {
+       "Al": 0.47865,
+       "Cu": 0.52135
+      },
+      "entry_id": "imputed:CuAl rt",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "CuAl rt",
+       "x_b": 0.52135,
+       "h_form_j_per_mol": -19945.71224330828,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.3652373357487923,
+         "temp": 895.502
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   },
+   {
+    "name": "CuAl2",
+    "x_s": 0.33225299999999997,
+    "invariant": {
+     "type": "per",
+     "comp": 0.3177068565022421,
+     "temp": 863.064
+    },
+    "h_shipped": -16430.682506242912,
+    "h_tmatched": -15716.214301851185,
+    "hull_at": 0.0,
+    "below": true,
+    "entry": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.033363347797521,
+      "composition": {
+       "Al": 0.6677470000000001,
+       "Cu": 0.33225299999999997
+      },
+      "entry_id": "imputed:CuAl2",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "CuAl2",
+       "x_b": 0.33225299999999997,
+       "h_form_j_per_mol": -16430.682506242912,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.3177068565022421,
+         "temp": 863.064
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "reenergized": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.028181195131304,
+      "composition": {
+       "Al": 0.6677470000000001,
+       "Cu": 0.33225299999999997
+      },
+      "entry_id": "imputed:CuAl2",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "CuAl2",
+       "x_b": 0.33225299999999997,
+       "h_form_j_per_mol": -15930.682506242912,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": {
+         "type": "per",
+         "comp": 0.3177068565022421,
+         "temp": 863.064
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    }
+   }
+  ],
+  "impute_shipped": {
+   "records": [
+    {
+     "name": "Cu9Al4",
+     "comp": 0.642204,
+     "enthalpy": -22536.377239278678,
+     "invariant_type": "per",
+     "invariant_comp": 0.6606323948220064,
+     "invariant_temp": 1294.49,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.206252864766185,
+       "composition": {
+        "Al": 0.357796,
+        "Cu": 0.642204
+       },
+       "entry_id": "imputed:Cu9Al4",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Cu9Al4",
+        "x_b": 0.642204,
+        "h_form_j_per_mol": -22536.377239278678,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.6606323948220064,
+          "temp": 1294.49
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "CuAl rt",
+     "comp": 0.52135,
+     "enthalpy": -20445.71224330828,
+     "invariant_type": "per",
+     "invariant_comp": 0.3652373357487923,
+     "invariant_temp": 895.502,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.141846872862754,
+       "composition": {
+        "Al": 0.47865,
+        "Cu": 0.52135
+       },
+       "entry_id": "imputed:CuAl rt",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "CuAl rt",
+        "x_b": 0.52135,
+        "h_form_j_per_mol": -20445.71224330828,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.3652373357487923,
+          "temp": 895.502
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "CuAl2",
+     "comp": 0.33225299999999997,
+     "enthalpy": -16430.682506242912,
+     "invariant_type": "per",
+     "invariant_comp": 0.3177068565022421,
+     "invariant_temp": 863.064,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.033363347797521,
+       "composition": {
+        "Al": 0.6677470000000001,
+        "Cu": 0.33225299999999997
+       },
+       "entry_id": "imputed:CuAl2",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "CuAl2",
+        "x_b": 0.33225299999999997,
+        "h_form_j_per_mol": -16430.682506242912,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.3177068565022421,
+          "temp": 863.064
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    }
+   ],
+   "phases": [
+    [
+     "Al (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "Cu (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "Cu9Al4",
+     -22536.377239278663,
+     true
+    ],
+    [
+     "CuAl rt",
+     -20445.712243308324,
+     true
+    ],
+    [
+     "CuAl2",
+     -16430.68250624288,
+     true
+    ],
+    [
+     "L",
+     null,
+     false
+    ]
+   ]
+  },
+  "impute_nearest": {
+   "records": [
+    {
+     "name": "Cu9Al4",
+     "comp": 0.642204,
+     "enthalpy": -22536.377239278678,
+     "invariant_type": "per",
+     "invariant_comp": 0.6606323948220064,
+     "invariant_temp": 1294.49,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.206252864766185,
+       "composition": {
+        "Al": 0.357796,
+        "Cu": 0.642204
+       },
+       "entry_id": "imputed:Cu9Al4",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Cu9Al4",
+        "x_b": 0.642204,
+        "h_form_j_per_mol": -22536.377239278678,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.6606323948220064,
+          "temp": 1294.49
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "CuAl rt",
+     "comp": 0.52135,
+     "enthalpy": -20445.71224330828,
+     "invariant_type": "per",
+     "invariant_comp": 0.3652373357487923,
+     "invariant_temp": 895.502,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.141846872862754,
+       "composition": {
+        "Al": 0.47865,
+        "Cu": 0.52135
+       },
+       "entry_id": "imputed:CuAl rt",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "CuAl rt",
+        "x_b": 0.52135,
+        "h_form_j_per_mol": -20445.71224330828,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.3652373357487923,
+          "temp": 895.502
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    },
+    {
+     "name": "CuAl2",
+     "comp": 0.33225299999999997,
+     "enthalpy": -16430.682506242912,
+     "invariant_type": "per",
+     "invariant_comp": 0.3177068565022421,
+     "invariant_temp": 863.064,
+     "entry": {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.033363347797521,
+       "composition": {
+        "Al": 0.6677470000000001,
+        "Cu": 0.33225299999999997
+       },
+       "entry_id": "imputed:CuAl2",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "CuAl2",
+        "x_b": 0.33225299999999997,
+        "h_form_j_per_mol": -16430.682506242912,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": {
+          "type": "per",
+          "comp": 0.3177068565022421,
+          "temp": 863.064
+         },
+         "inversion_arm": "shipped"
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    }
+   ],
+   "phases": [
+    [
+     "Al (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "Cu (fcc)",
+     0.0,
+     false
+    ],
+    [
+     "Cu9Al4",
+     -22536.377239278663,
+     true
+    ],
+    [
+     "CuAl rt",
+     -20445.712243308324,
+     true
+    ],
+    [
+     "CuAl2",
+     -16430.68250624288,
+     true
+    ],
+    [
+     "L",
+     null,
+     false
+    ]
+   ]
+  },
+  "clamp": [
+   {
+    "x_s": 0.3,
+    "h_deep": -35462.64818139495,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.021410732688582,
+      "composition": {
+       "Al": 0.7,
+       "Cu": 0.3
+      },
+      "entry_id": "imputed:Probe0.3",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.3",
+       "x_b": 0.3,
+       "h_form_j_per_mol": -16377.90910668792,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -35462.64818139495,
+         "clamped_h_form_j_per_mol": -16377.90910668792,
+         "blocked_by": [
+          "mp-2500-GGA",
+          "mp-593-GGA",
+          "mp-985806-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.021410732688582,
+       "composition": {
+        "Al": 0.7,
+        "Cu": 0.3
+       },
+       "entry_id": "imputed:Probe0.3",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.3",
+        "x_b": 0.3,
+        "h_form_j_per_mol": -16377.90910668792,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -35462.64818139495,
+          "clamped_h_form_j_per_mol": -16377.90910668792,
+          "blocked_by": [
+           "mp-2500-GGA",
+           "mp-593-GGA",
+           "mp-985806-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   },
+   {
+    "x_s": 0.55,
+    "h_deep": -40458.72062514597,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -4.162756839278433,
+      "composition": {
+       "Al": 0.44999999999999996,
+       "Cu": 0.55
+      },
+      "entry_id": "imputed:Probe0.55",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.55",
+       "x_b": 0.55,
+       "h_form_j_per_mol": -21485.670301659644,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -68087.2,
+         -3.6819,
+         2945.42,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -40458.72062514597,
+         "clamped_h_form_j_per_mol": -21485.670301659644,
+         "blocked_by": [
+          "mp-2500-GGA",
+          "mp-593-GGA",
+          "mp-985806-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -4.162756839278433,
+       "composition": {
+        "Al": 0.44999999999999996,
+        "Cu": 0.55
+       },
+       "entry_id": "imputed:Probe0.55",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.55",
+        "x_b": 0.55,
+        "h_form_j_per_mol": -21485.670301659644,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -68087.2,
+          -3.6819,
+          2945.42,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -40458.72062514597,
+          "clamped_h_form_j_per_mol": -21485.670301659644,
+          "blocked_by": [
+           "mp-2500-GGA",
+           "mp-593-GGA",
+           "mp-985806-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   }
+  ]
+ }
+}
