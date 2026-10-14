@@ -1,7 +1,6 @@
-"""set_data equivalence certificate for the in-place HSX update (structural-refactor
-Task 2): swapping new H/S/X rows into a live HSX must be indistinguishable — exactly,
-not approximately — from constructing a fresh HSX with the same data, and
-BinaryLiquid.update_phase_points must reuse its HSX across parameter updates.
+"""set_data equivalence for the in-place HSX update: swapping new H/S/X rows into a live
+HSX is indistinguishable, exactly, from constructing a fresh HSX with the same data, and
+BinaryLiquid.update_phase_points reuses its HSX across parameter updates.
 Runs offline on the shipped Cu-Mg cache.
 """
 
@@ -24,9 +23,9 @@ class TestSetDataEquivalence:
         bl_a, bl_b = _fresh_bl(PARAMS_A), _fresh_bl(PARAMS_B)
         names = [p.name for p in bl_a.phases]
         conds = [bl_a.temp_range[0] - 273.15, bl_a.temp_range[-1] - 273.15]
-        data_b = bl_b.to_HSX()
+        data_b = bl_b.to_hsx()
 
-        mut = HSX({"data": bl_a.to_HSX(), "phases": names, "comps": bl_a.components}, conds)
+        mut = HSX({"data": bl_a.to_hsx(), "phases": names, "comps": bl_a.components}, conds)
         mut.compute_tx()  # populate every derived cache so set_data must reset them all
         mut.set_data(data_b)
         ref = HSX({"data": data_b, "phases": names, "comps": bl_b.components}, conds)

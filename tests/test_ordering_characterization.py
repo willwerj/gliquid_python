@@ -1,16 +1,11 @@
-"""Characterization pins for component-ordering semantics (pre-restructuring freeze).
+"""Characterization pins for component-ordering semantics.
 
-Written at the start of the compound-forward-compat refactor, BEFORE any code move:
-(a) a reversed-order DIRECT-constructed BinaryLiquid — the liquid path is already
-    orientation-correct today; these pins keep it that way through the restructuring
-    (from_cache with reversed input is exercised separately once cache keys are
-    canonicalized — today it cannot construct offline).
+(a) a reversed-order DIRECT-constructed BinaryLiquid: the liquid path is orientation-correct.
 (b) the ternary DFT-entry cache honors TernaryLiquidInterpolation's own ``data_dir``
-    (flat layout) — the read-path contract the unified api loader must preserve.
-(c) the ternary-L0 analytic oracle: a nonzero ``ternary_l0`` shifts the interpolated
-    liquid enthalpy surface by exactly ``l0 * x_A * x_B * x_C`` and leaves entropy
-    untouched. No pre-existing pin exercises a nonzero ternary_l0, so this is the
-    certificate that must stay green when the term moves into the solution model.
+    (flat layout).
+(c) the ternary-L0 analytic oracle: a nonzero 'A-B-C' triplet entry in ``xs_mix`` shifts the
+    interpolated liquid enthalpy surface by exactly ``l0 * x_A * x_B * x_C`` and leaves entropy
+    untouched.
 
 Runs fully offline (unary registry + shipped Hf-Zr / Al-Mg-Si data fixtures).
 """
@@ -71,8 +66,8 @@ class TestReversedDirectConstruction:
         assert bl_rev._phase_x(p) == pytest.approx(0.75, rel=RTOL)  # fraction of Hf
 
     def test_hsx_endpoints_follow_component_order(self, bl_alpha, bl_rev):
-        data_a = bl_alpha.to_HSX()
-        data_r = bl_rev.to_HSX()
+        data_a = bl_alpha.to_hsx()
+        data_r = bl_rev.to_hsx()
         assert data_a["X"] == [float(x) for x in _x_vals]
         assert data_r["X"] == [float(x) for x in _x_vals]
         assert data_a["H"][0] == pytest.approx(UNARY["Hf"].h_liq, rel=RTOL)
@@ -108,7 +103,7 @@ class TestTernaryCacheDataDir:
 
     @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_get_ternary_form_en_reads_instance_data_dir(self, tmp_path, monkeypatch):
-        src = Path(config.data_dir) / "Al-Mg-Si_ENTRIES_MP_GGA.json"
+        src = Path(config.cache_dir) / "Al-Mg-Si_ENTRIES_MP_GGA.json"
         assert src.exists(), f"fixture missing: {src}"
         shutil.copy(src, tmp_path / "Al-Mg-Si_ENTRIES_MP_GGA.json")
 
@@ -123,12 +118,11 @@ class TestTernaryCacheDataDir:
         assert not df.empty
         assert list(df.columns) == ["x0", "x1", "S", "H", "Phase Name"]
         assert (df["S"] == 0).all()
-        # The pure-element vertices are the ladder's GROUND-STATE phases now (Al (fcc),
+        # The pure-element vertices are the ladder's GROUND-STATE phases (Al (fcc),
         # Mg (hcp), Si (diamond cubic)), not the bare element symbols: get_ternary_form_en
         # replaces the DFT hull's elemental entry with the polymorph ladder, mirroring
         # binary.build_phases_from_chull. Assert the vertex COORDINATES, which no naming
-        # convention can move, and derive the expected names from the registry rather than
-        # hardcoding them, so a future rename does not re-break this cache-routing test.
+        # convention can move, and derive the expected names from the registry.
         vertices = {(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)}
         assert vertices <= {(round(r.x0, 6), round(r.x1, 6)) for r in df.itertuples()}
         ground_states = {UNARY[el].polymorphs[0].name for el in ("Al", "Mg", "Si")}
@@ -145,14 +139,17 @@ class TestTernaryL0Oracle:
     @pytest.fixture(scope="class")
     def surfaces(self):
         base = TernaryLiquidInterpolation(
-            ["Hf", "Ti", "Zr"], xs_mix={k: list(v) for k, v in ZERO_EDGES.items()}, delta=0.25
+            ["Hf", "Ti", "Zr"],
+            xs_mix={k: list(v) for k, v in ZERO_EDGES.items()},
+            delta=0.25,
+            param_format="linear",
         )
         base.interpolate_liquid_surface()
         shifted = TernaryLiquidInterpolation(
             ["Hf", "Ti", "Zr"],
-            xs_mix={k: list(v) for k, v in ZERO_EDGES.items()},
+            xs_mix={**{k: list(v) for k, v in ZERO_EDGES.items()}, "Hf-Ti-Zr": [L0_TEST_VALUE]},
             delta=0.25,
-            ternary_l0=L0_TEST_VALUE,
+            param_format="linear",
         )
         shifted.interpolate_liquid_surface()
         return base.hsx_df, shifted.hsx_df
@@ -180,8 +177,7 @@ class TestTernaryL0Oracle:
 
 
 class TestTripletKeyIntegration:
-    """The ternary L0 lives IN the mixing/solution model (S10): an explicit 'A-B-C'
-    triplet entry, the ternary_l0= folding sugar, and the analytic oracle all agree."""
+    """The ternary L0 is the 'A-B-C' triplet entry of the mixing model, in any element order."""
 
     def _surface(self, **kwargs):
         tli = TernaryLiquidInterpolation(
@@ -190,27 +186,23 @@ class TestTripletKeyIntegration:
                 **{k: list(v) for k, v in ZERO_EDGES.items()},
                 **kwargs.pop("extra_mixing", {}),
             },
+            param_format="linear",
             delta=0.25,
             **kwargs,
         )
         tli.interpolate_liquid_surface()
         return tli
 
-    def test_sugar_folds_into_mixing_no_separate_field(self):
-        tli = self._surface(ternary_l0=L0_TEST_VALUE)
-        assert not hasattr(tli, "ternary_l0")
-        assert "Hf-Ti-Zr" in tli.xs_mix
-        assert tli.xs_mix["Hf-Ti-Zr"].values == [L0_TEST_VALUE]
+    def test_the_removed_ternary_l0_names_its_replacement(self):
+        with pytest.raises(TypeError, match="use an 'A-B-C' entry in xs_mix"):
+            self._surface(ternary_l0=L0_TEST_VALUE)
 
-    def test_explicit_triplet_equals_sugar(self):
-        via_sugar = self._surface(ternary_l0=L0_TEST_VALUE)
-        via_key = self._surface(extra_mixing={"Hf-Ti-Zr": [L0_TEST_VALUE]})
-        np.testing.assert_allclose(
-            via_key.hsx_df["H"].to_numpy(), via_sugar.hsx_df["H"].to_numpy(), rtol=0
-        )
-        np.testing.assert_allclose(
-            via_key.hsx_df["S"].to_numpy(), via_sugar.hsx_df["S"].to_numpy(), rtol=0
-        )
+    def test_a_triplet_named_in_another_order_gives_the_same_surface(self):
+        in_order = self._surface(extra_mixing={"Hf-Ti-Zr": [L0_TEST_VALUE]})
+        reordered = self._surface(extra_mixing={"Zr-Ti-Hf": [L0_TEST_VALUE]})
+        assert list(reordered.xs_mix) == list(in_order.xs_mix)
+        np.testing.assert_array_equal(reordered.hsx_df["H"], in_order.hsx_df["H"])
+        np.testing.assert_array_equal(reordered.hsx_df["S"], in_order.hsx_df["S"])
 
     def test_triplet_term_is_permutation_symmetric(self):
         base = self._surface(extra_mixing={"Hf-Ti-Zr": [L0_TEST_VALUE]})
@@ -223,6 +215,7 @@ class TestTripletKeyIntegration:
                 "Zr-Ti": [0.0] * 4,
                 "Ti-Hf-Zr": [L0_TEST_VALUE],
             },
+            param_format="linear",
         )
         permuted.interpolate_liquid_surface()
 

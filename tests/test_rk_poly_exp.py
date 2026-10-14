@@ -2,22 +2,17 @@
 
 Covers: construction/validation (inherits validate_mixing_parameters' raising
 contract), symbolic per-order L_k(T) expressions and their H/S decomposition,
-component-order swap (odd orders negate — the generalization of flip_binary_l1),
+component-order swap (odd orders negate),
 fitting-metadata introspection for the binary Nelder-Mead loop, and pickling.
-
-Run with: python -m pytest tests/test_redlich_kister.py -v
 """
 
+import inspect
 import pickle
-import sys
-from pathlib import Path
 
 import pytest
 import sympy as sp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from gliquid.solution import (  # noqa: E402
+from gliquid.solution import (
     DEFAULT_TAU,
     ParamFormat,
     RKPolyExp,
@@ -29,11 +24,24 @@ from gliquid.solution import (  # noqa: E402
 
 
 class TestConstruction:
-    def test_default_is_linear_zeros(self):
+    def test_default_is_comb_exp_zeros(self):
         rk = RKPolyExp()
-        assert rk.format.name == "linear"
+        assert rk.format.name == "comb-exp"
         assert rk.values == [0.0, 0.0, 0.0, 0.0]
         assert rk.tau == DEFAULT_TAU
+
+    def test_every_model_constructor_shares_the_default_format(self):
+        from gliquid.binary import BinaryLiquid
+        from gliquid.ternary import TernaryLiquidInterpolation
+
+        constructors = (
+            RKPolyExp,
+            BinaryLiquid,
+            BinaryLiquid.from_cache,
+            TernaryLiquidInterpolation,
+        )
+        defaults = {inspect.signature(c).parameters["param_format"].default for c in constructors}
+        assert defaults == {RKPolyExp().format.name}
 
     def test_explicit_params_and_tau(self):
         rk = RKPolyExp("comb-exp", [-52000.0, 7.0, 10000.0, 0.0], tau=3000)

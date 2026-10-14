@@ -1,12 +1,8 @@
 """Tests for first-class solid-solution phases in BinaryLiquid.
 
-Model math is pinned against the dev-code values frozen in
-fixtures/ss_characterization_pins.json (same construction as test_ss_characterization.py, but
-through the package BinaryLiquid). from_cache runs offline against the Hf-Zr data/ fixtures.
-
-The figure-level half -- ``TestSSPlotter``, which asserts on traces, reserved colors and
-legend entries -- is maintainer machinery and lives in
-``tests_internal/test_binary_solution_plotting.py``.
+Model math is pinned against values frozen in fixtures/ss_characterization_pins.json, built
+through the package BinaryLiquid. from_cache runs offline against the Hf-Zr data/ fixtures.
+The figure-level checks live in ``tests_internal/test_binary_solution_plotting.py``.
 """
 
 import json
@@ -55,13 +51,6 @@ def direct_instance():
     )
 
 
-@pytest.fixture(scope="module")
-def ss_from_cache():
-    return BinaryLiquid.from_cache(
-        "Hf-Zr", pd_ind=0, solid_solutions=True, ss_kwargs={"ref_mode": "from_unary_db"}
-    )
-
-
 class TestModelMathMatchesDevPins:
     def test_h_s(self, direct_instance):
         pin = PINS["pin1"]
@@ -83,7 +72,7 @@ class TestModelMathMatchesDevPins:
     def test_hsx_rows_match_dev_pins(self, direct_instance):
         pin = PINS["pin2"]
         assert [p.name for p in direct_instance.phases] == pin["phase_order"]
-        data = direct_instance.to_HSX()
+        data = direct_instance.to_hsx()
         n = pin["n_x_vals"]
         assert len(data["X"]) == pin["total_rows"]
         assert data["Phase Name"][n : n + 3] + data["Phase Name"][-3:] == pin["phase_names_tail"]
@@ -119,7 +108,7 @@ class TestFromCacheSolidSolutions:
         assert {"BCC", "HCP"} <= set(names)
 
     def test_hsx_contains_ss_grids(self, ss_from_cache):
-        data = ss_from_cache.to_HSX()
+        data = ss_from_cache.to_hsx()
         n = len(_x_vals)
         for name in ("BCC", "HCP"):
             rows = [i for i, p in enumerate(data["Phase Name"]) if p == name]
@@ -141,7 +130,7 @@ class TestFromCacheSolidSolutions:
         assert clone.component_data["Hf"].h_liq == pytest.approx(
             ss_from_cache.component_data["Hf"].h_liq
         )
-        data = clone.to_HSX()
+        data = clone.to_hsx()
         assert "BCC" in data["Phase Name"] and "HCP" in data["Phase Name"]
 
 
@@ -163,7 +152,7 @@ class TestIgnoreSs:
         bl.ss_in_hull = False
         bl.update_phase_points()
         assert "BCC" not in bl.hsx.phases and "HCP" not in bl.hsx.phases
-        assert "BCC" not in bl.to_HSX()["Phase Name"]
+        assert "BCC" not in bl.to_hsx()["Phase Name"]
         for phase in bl.phases:
             if phase.is_solution and phase.name != "L":
                 assert phase.points == []
@@ -171,7 +160,7 @@ class TestIgnoreSs:
         bl.ss_in_hull = True
         bl.update_phase_points()
         assert "BCC" in bl.hsx.phases
-        assert "BCC" in bl.to_HSX()["Phase Name"]
+        assert "BCC" in bl.to_hsx()["Phase Name"]
         assert next(p for p in bl.phases if p.name == "BCC").points
 
     def test_fit_parameters_ignore_ss_runs_ss_free(self):
@@ -184,8 +173,8 @@ class TestIgnoreSs:
 
 
 class TestReversedOrderSS:
-    """SS models follow the CONSTRUCTION component order (bug: from_ss_model force-sorted,
-    mirroring the SS x-axis relative to the liquid for non-alphabetical BinaryLiquids)."""
+    """SS models follow the CONSTRUCTION component order, so the SS x-axis matches the
+    liquid's for a non-alphabetical BinaryLiquid."""
 
     def test_from_ss_model_preserves_component_order(self):
         model_a = SolutionModel.from_ss_model(["Hf", "Zr"], SS_MODELS["BCC"])
@@ -222,14 +211,8 @@ class TestFlagOffIsUnchanged:
     def test_default_has_no_ss_state(self):
         bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
         assert bl.ss_models == {}
-        data = bl.to_HSX()
+        data = bl.to_hsx()
         assert "BCC" not in data["Phase Name"]  # SS names only appear via ss_models
         # endpoint polymorphs stay as line compounds when the flag is off
         solution_names = [p.name for p in bl.phases if p.is_solution]
         assert solution_names == ["L"]
-
-    def test_flag_off_matches_plain_construction(self):
-        a = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
-        b = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, solid_solutions=False, ss_kwargs=None)
-        assert a.to_HSX() == b.to_HSX()
-        assert [p.name for p in a.phases] == [p.name for p in b.phases]

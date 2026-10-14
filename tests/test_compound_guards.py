@@ -1,12 +1,11 @@
-"""Compound-component guards (red->green, S5).
+"""Compound-component guards.
 
-Compound end-members (pseudo-binary systems) are a FUTURE feature: every user entry
-point must raise NotImplementedError with a clear message today, while the plumbing
-that already speaks CompoundPhaseDiagram stays reachable through the
-``allow_compounds`` escape hatch (used internally by the api cache layer and by these
-tests). The two solid-solution reference sources that will NEVER support compounds
-(omegas file, unary db) raise ValueError instead. The silent-empty registry contract
-for unknown/dummy symbols ('Xx') is unchanged.
+Compound end-members (pseudo-binary systems) are not supported: every user entry point
+raises NotImplementedError with a clear message, while the plumbing that speaks
+CompoundPhaseDiagram stays reachable through the ``allow_compounds`` escape hatch (used
+internally by the api cache layer and by these tests). The two solid-solution reference
+sources that never support compounds (omegas file, unary db) raise ValueError instead. The
+registry stays silent-empty for unknown/dummy symbols ('Xx').
 """
 
 import json

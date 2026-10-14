@@ -1,13 +1,9 @@
-"""
-Unit tests for BinaryLiquid fitting behavior across a diverse set of binary systems.
+"""Unit tests for BinaryLiquid fitting behavior across a diverse set of binary systems.
 
-Uses the same data paths and config as the production Fit_Binary_Systems.py script.
-Systems are drawn from the benchmark set in Benchmark_Models&Constraints.py and
-span simple eutectics, peritectics, congruent melters, miscibility gaps, and
-systems with varying numbers of DFT phases.
-
-Run with: python -m pytest tests/test_fitting_behavior.py -v
-    or:   python tests/test_fitting_behavior.py            (standalone)
+Uses the same data paths and config as production fitting. Systems are drawn from a
+benchmark set spanning simple eutectics, peritectics, congruent melters, miscibility
+gaps, and systems with varying numbers of DFT phases. ``python tests/test_fitting_behavior.py``
+runs it standalone.
 """
 
 import numpy as np
@@ -33,9 +29,7 @@ DEFAULT_MAX_ITER = 64
 VALID_PFORMATS = ["linear", "combined", "comb-exp"]
 
 
-# =============================================================================
-# Helpers
-# =============================================================================
+# -- Helpers --
 def _load_bl(sys_name: str, pformat: str = DEFAULT_PFORMAT, **kwargs) -> BinaryLiquid:
     """Load a BinaryLiquid from cache with standard settings."""
     return BinaryLiquid.from_cache(sys_name, param_format=pformat, **kwargs)
@@ -48,9 +42,7 @@ def _fit_bl(
     return bl.fit_parameters(n_opts=n_opts, verbose=False, max_iter=max_iter, **kwargs)
 
 
-# =============================================================================
-# Tests: Initialization
-# =============================================================================
+# -- Tests: Initialization --
 class TestBinaryLiquidInit:
     """Verify that BinaryLiquid objects initialize correctly from cached data."""
 
@@ -60,22 +52,12 @@ class TestBinaryLiquidInit:
         assert bl.sys_name == "-".join(sorted(sys_name.split("-")))
         assert len(bl.components) == 2
         assert bl.dft_ch is not None
-
-    @pytest.mark.parametrize("sys_name", BENCHMARK_SYSTEMS)
-    def test_has_digitized_liquidus(self, sys_name):
-        bl = _load_bl(sys_name)
         if bl.digitized_liq:
             assert len(bl.digitized_liq) >= 3, "Digitized liquidus should have at least 3 points"
-
-    @pytest.mark.parametrize("sys_name", BENCHMARK_SYSTEMS)
-    def test_default_params_zero(self, sys_name):
-        bl = _load_bl(sys_name)
         assert bl.get_params() == [0.0, 0.0, 0.0, 0.0]
 
 
-# =============================================================================
-# Tests: Input formatting and validation
-# =============================================================================
+# -- Tests: Input formatting and validation --
 class TestInputValidation:
     """Validate accepted and rejected system-name and parameter-input formats."""
 
@@ -122,7 +104,7 @@ class TestInputValidation:
         with pytest.raises(ValueError):
             _load_bl(bad_sys)
 
-    # Parameter-vector validation now lives on RKPolyExp (tests/test_redlich_kister.py).
+    # Parameter-vector validation lives on RKPolyExp (tests/test_redlich_kister.py).
 
     @pytest.mark.parametrize("params", ([0, 0, 0, 0], [10, -1, 5, 0]))
     def test_from_cache_param_validation_accepts_valid_formats(self, params):
@@ -146,9 +128,7 @@ class TestInputValidation:
             _load_bl("Cu-Mg", pformat=bad_pformat)
 
 
-# =============================================================================
-# Tests: Objective function & penalty
-# =============================================================================
+# -- Tests: Objective function & penalty --
 class TestObjectiveFunction:
     """Test that f() behaves correctly with and without penalty."""
 
@@ -173,57 +153,183 @@ class TestObjectiveFunction:
         val = bl_cu_mg.f([0, 0], check_lupis_elliott=False)
         assert np.isfinite(val)
 
+    def test_f_is_inf_when_the_liquidus_is_discontinuous(self):
+        # L0_b above 2R makes the liquid entropy convex mid-axis, so no liquid joins the hull there
+        params = [0.0, 25.0, 0.0, 0.0]
+        bl = _load_bl("Cu-Mg", pformat="linear", params=params)
+        bl.update_phase_points()
+        assert not bl.h0_below_ch()
+        assert not bl.liquidus_is_continuous()
+        bl.guess_symbols = list(bl.xs_mix.format.symbols())
+        assert bl.f(params) == float("inf")
 
-# =============================================================================
-# Tests: Fitting behavior
-# =============================================================================
+    @staticmethod
+    def _stub_objective(bl, mae):
+        """Reduce f() to its penalty stage: every constraint passes and the MAE is fixed."""
+        bl.guess_symbols = []
+        bl.solve_params_from_constraints = lambda guessed_vals: None
+        bl.h0_below_ch = lambda: False
+        bl.update_phase_points = lambda: None
+        bl.liquidus_is_continuous = lambda: True
+        bl.calculate_deviation_metrics = lambda **kwargs: (mae, mae, 0.0, 0.0)
+        return bl
+
+    def test_f_multiplies_by_the_lupis_elliott_penalty_it_is_given_the_cfg_for(self):
+        bl = self._stub_objective(_load_bl("Cu-Mg", pformat="linear"), 10.0)
+        received = []
+        bl.lupis_elliott_penalty = lambda cfg=None: received.append(cfg) or 2.0
+        cfg = {"strength": 0.5, "hs_ratio": 1.0}
+        val = bl.f([], lupis_elliott_cfg=cfg, suppress_unexpected_migs=False)
+        assert received == [cfg]
+        assert val == pytest.approx(20.0)
+
+    def test_f_skips_the_lupis_elliott_penalty_when_disabled(self):
+        bl = self._stub_objective(_load_bl("Cu-Mg", pformat="linear"), 10.0)
+        received = []
+        bl.lupis_elliott_penalty = lambda cfg=None: received.append(cfg) or 2.0
+        val = bl.f([], check_lupis_elliott=False, suppress_unexpected_migs=False)
+        assert received == []
+        assert val == pytest.approx(10.0)
+
+
+def _with_lupis_terms(bl, h0, s0, h1=0.0, s1=0.0):
+    """Replace the L0/L1 enthalpy and entropy evaluators with constants."""
+    bl.eqs["h_l0_lambdified"] = lambda *args: h0
+    bl.eqs["s_l0_lambdified"] = lambda *args: s0
+    bl.eqs["h_l1_lambdified"] = lambda *args: h1
+    bl.eqs["s_l1_lambdified"] = lambda *args: s1
+    return bl
+
+
+# One order's term at h = 2, s = -1, hs_ratio = 1 and unit strength:
+# 2 * sqrt(x^2 + y^2) * |x*y| / (|x| + |y|) with x = 2, y = -1.
+UNIT_TERM = 4.0 * np.sqrt(5.0) / 3.0
+
+
+class TestLupisElliottPenalty:
+    """BinaryLiquid.lupis_elliott_penalty against its documented form."""
+
+    def test_matching_signs_are_not_penalized(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, 1.0, -1.0, -3.0)
+        cfg = {"strength": 1.0, "hs_ratio": 1.0, "l1": {"strength": 1.0}}
+        assert bl.lupis_elliott_penalty(cfg) == 1.0
+
+    def test_zero_parameters_are_not_penalized(self):
+        bl = _load_bl("Cu-Mg", pformat="linear")
+        assert bl.lupis_elliott_penalty({"strength": 1.0, "l1": {"strength": 1.0}}) == 1.0
+
+    def test_opposite_signs_scale_with_strength(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, -1.0)
+        penalty = bl.lupis_elliott_penalty({"strength": 0.5, "hs_ratio": 1.0})
+        assert penalty == pytest.approx(1.0 + 0.5 * UNIT_TERM)
+
+    def test_default_strength(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, -1.0)
+        penalty = bl.lupis_elliott_penalty({"hs_ratio": 1.0})
+        assert penalty == pytest.approx(1.0 + 7.5e-3 * UNIT_TERM)
+
+    @pytest.mark.parametrize("cfg", [{"scale": 0.5}, {"l0": {"scale": 0.5}}])
+    def test_the_removed_scale_key_raises(self, cfg):
+        bl = _load_bl("Cu-Mg", pformat="linear")
+        with pytest.raises(TypeError, match="'strength'"):
+            bl.lupis_elliott_penalty(cfg)
+
+    def test_hs_ratio_divides_the_enthalpy(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 4.0, -1.0)
+        penalty = bl.lupis_elliott_penalty({"strength": 1.0, "hs_ratio": 2.0})
+        assert penalty == pytest.approx(1.0 + UNIT_TERM)
+
+    def test_a_per_term_strength_overrides_the_global_one(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, -1.0)
+        cfg = {"strength": 1.0, "hs_ratio": 1.0, "l0": {"strength": 0.25}}
+        assert bl.lupis_elliott_penalty(cfg) == pytest.approx(1.0 + 0.25 * UNIT_TERM)
+
+    def test_l1_is_penalized_only_when_configured(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 1.0, 1.0, 2.0, -1.0)
+        assert bl.lupis_elliott_penalty({"strength": 1.0, "hs_ratio": 1.0}) == 1.0
+        cfg = {"strength": 1.0, "hs_ratio": 1.0, "l1": {"strength": 0.5}}
+        assert bl.lupis_elliott_penalty(cfg) == pytest.approx(1.0 + 0.5 * UNIT_TERM)
+
+    def test_the_orders_add_inside_one_factor(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, -1.0, 2.0, -1.0)
+        cfg = {"strength": 1.0, "hs_ratio": 1.0, "l1": {"strength": 0.5}}
+        assert bl.lupis_elliott_penalty(cfg) == pytest.approx(1.0 + 1.5 * UNIT_TERM)
+
+    def test_comb_exp_inspects_l0_only(self):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="comb-exp"), 1.0, 1.0, 2.0, -1.0)
+        cfg = {"strength": 1.0, "hs_ratio": 1.0, "l1": {"strength": 1.0}}
+        assert bl.lupis_elliott_penalty(cfg) == 1.0
+
+    @pytest.mark.parametrize("strength", [0.0, -1.0])
+    def test_a_non_positive_strength_disables_the_term(self, strength):
+        bl = _with_lupis_terms(_load_bl("Cu-Mg", pformat="linear"), 2.0, -1.0)
+        assert bl.lupis_elliott_penalty({"strength": strength, "hs_ratio": 1.0}) == 1.0
+
+
+# -- Tests: Fitting behavior --
+# (n_opts, max_iter) per system. C-Nb returns no fit at (3, 32): do not lower its budget.
+FIT_BUDGETS = {"Cu-Mg": (3, 32), "Ag-V": (3, 32), "C-Nb": (5, 64)}
+
+
+def _load_with_liquidus(sys_name: str) -> BinaryLiquid:
+    """``_load_bl(sys_name)``; skips on an init error or an empty digitized liquidus."""
+    bl = _load_bl(sys_name)
+    if bl.init_error or not bl.digitized_liq:
+        pytest.skip(f"{sys_name}: init error or no liquidus data")
+    return bl
+
+
+def _zero_param_mae(sys_name: str) -> float:
+    """MAE of a freshly loaded ``sys_name`` at zero parameters."""
+    bl = _load_with_liquidus(sys_name)
+    bl.update_params([0, 0, 0, 0])
+    bl.update_phase_points()
+    mae, *_ = bl.calculate_deviation_metrics()
+    return mae
+
+
+@pytest.fixture(scope="module")
+def fit_once():
+    """``fit_once(sys_name) -> list[dict]``: one fit per system per module at its
+    ``FIT_BUDGETS`` entry. Cu-Mg runs with ``enable_multi_threading=True``."""
+    fits = {}
+
+    def fit(sys_name):
+        if sys_name not in fits:
+            n_opts, max_iter = FIT_BUDGETS[sys_name]
+            fits[sys_name] = _fit_bl(
+                _load_with_liquidus(sys_name),
+                n_opts=n_opts,
+                max_iter=max_iter,
+                enable_multi_threading=sys_name == "Cu-Mg",
+            )
+        return fits[sys_name]
+
+    return fit
+
+
 class TestFittingBehavior:
-    """End-to-end fitting tests on select benchmark systems."""
+    """End-to-end fitting tests on select benchmark systems, one fit per system."""
 
-    @pytest.mark.slow
-    @pytest.mark.parametrize("sys_name", ["Cu-Mg", "Ag-V", "C-Nb"])
-    def test_fit_produces_results(self, sys_name):
-        """Fitting should produce at least one result for well-behaved systems."""
-        bl = _load_bl(sys_name)
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip(f"{sys_name}: init error or no liquidus data")
-        fit_data = _fit_bl(bl, n_opts=5, max_iter=64)
+    @pytest.mark.parametrize("sys_name", list(FIT_BUDGETS))
+    def test_fit_produces_results(self, fit_once, sys_name):
+        """Fitting returns a non-empty list, and every fit has a finite MAE."""
+        fit_data = fit_once(sys_name)
+        assert isinstance(fit_data, list)
         assert len(fit_data) > 0, f"No fits produced for {sys_name}"
-
-    @pytest.mark.slow
-    @pytest.mark.parametrize("sys_name", ["Cu-Mg", "Ag-V", "C-Nb"])
-    def test_fit_mae_is_finite(self, sys_name):
-        """All returned fits should have finite MAE."""
-        bl = _load_bl(sys_name)
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip(f"{sys_name}: init error or no liquidus data")
-        fit_data = _fit_bl(bl, n_opts=3, max_iter=32)
         for fit in fit_data:
             assert np.isfinite(fit["mae"]), f"Infinite MAE in fit for {sys_name}"
 
-    @pytest.mark.parametrize("sys_name", ["Cu-Mg", "Ag-V", "C-Nb"])
+    @pytest.mark.parametrize("sys_name", list(FIT_BUDGETS))
     def test_zero_params_produce_finite_mae(self, sys_name):
         """Zero-valued parameters should still produce a finite MAE."""
-        bl = _load_bl(sys_name)
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip(f"{sys_name}: init error or no liquidus data")
-        bl.update_params([0, 0, 0, 0])
-        bl.update_phase_points()
-        mae, *_ = bl.calculate_deviation_metrics()
+        mae = _zero_param_mae(sys_name)
         assert np.isfinite(mae), f"Zero-parameter MAE was non-finite for {sys_name}"
 
-    @pytest.mark.slow
-    def test_fitted_params_improve_over_zero_params(self):
+    def test_fitted_params_improve_over_zero_params(self, fit_once):
         """For Cu-Mg, best fitted MAE should be lower than zero-parameter MAE."""
-        bl = _load_bl("Cu-Mg")
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip("Cu-Mg: init error or no liquidus data")
-
-        bl.update_params([0, 0, 0, 0])
-        bl.update_phase_points()
-        zero_mae, *_ = bl.calculate_deviation_metrics()
-
-        fit_data = _fit_bl(bl, n_opts=3, max_iter=32)
+        zero_mae = _zero_param_mae("Cu-Mg")
+        fit_data = fit_once("Cu-Mg")
         if not fit_data:
             pytest.skip("Cu-Mg: no fit results returned")
 
@@ -232,19 +338,7 @@ class TestFittingBehavior:
             f"Expected fitted MAE < zero-parameter MAE, got {best_fit['mae']} vs {zero_mae}"
         )
 
-    @pytest.mark.slow
-    def test_fit_accepts_enable_multi_threading_kwarg(self):
-        """enable_multi_threading should be accepted as the replacement API."""
-        bl = _load_bl("Cu-Mg")
-        if bl.init_error or not bl.digitized_liq:
-            pytest.skip("Cu-Mg: init error or no liquidus data")
 
-        fit_data = _fit_bl(bl, n_opts=2, max_iter=16, enable_multi_threading=True)
-        assert isinstance(fit_data, list)
-
-
-# =============================================================================
-# Standalone runner
-# =============================================================================
+# -- Standalone runner --
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

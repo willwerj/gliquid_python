@@ -1,81 +1,66 @@
-"""
-Interactive Convex Hull Editor for binary phase diagrams.
+"""Interactive convex hull editor for binary phase diagrams.
 
-Provides a Jupyter widget (ipywidgets + Plotly) for modifying a pymatgen-style
-PhaseDiagram without writing code:
+A Jupyter widget (ipywidgets + Plotly) that edits a pymatgen ``PhaseDiagram``, or a
+``BinaryLiquid``'s ``bl.dft_ch``: modify formation energies and entropies, add entries by
+reduced formula and formation energy, remove entries, slide a temperature to view the
+Gibbs-energy hull ``G(T)/atom = H_f - T*S``, undo or reset, and write the result back.
 
-  - Modify formation energies and entropies of entries
-  - Add new entries by reduced formula + desired formation energy (+ entropy)
-  - Remove entries
-  - Slide a temperature to view the Gibbs-energy hull  G(T)/atom = H_f - T*S
-  - Undo / reset changes
-  - Write the result back to the source object
-
-Energies and entropies default to the eV basis (eV/atom and eV/atom/K), but the
-programmatic ``add_entry`` / ``modify_entry`` methods accept ``units='J/mol'`` to
-supply J/mol and J/mol-atom/K instead, and the interactive widget has a units
-toggle that switches every display and input field between the two bases at once.
-
-The editor can be initialized from either a pymatgen ``PhaseDiagram`` or a
-``BinaryLiquid`` (it then operates on ``bl.dft_ch``).  Calling ``apply()`` with
-no arguments writes the edits back to whichever object was supplied:
-
-  - PhaseDiagram source : returns the modified (enthalpy) PhaseDiagram.
-  - BinaryLiquid source : updates ``bl.dft_ch`` and rebuilds ``bl.phases`` with
-    enthalpy (J/mol) and entropy (converted from the editor's eV/atom/K to the
-    J/mol-atom/K the model expects), then returns ``bl``.
-
-The key challenge this tool solves is the **back-calculation** of DFT total
-energies.  PhaseDiagram computes formation energies via an internal referencing
-scheme:
-
-    E_f / atom = E_total / N - Σ(frac_i · E_ref_i)
-
-When the user specifies a *desired* formation energy, the editor solves for the
-total energy that reproduces it:
+An added or edited entry becomes a user-defined entry (``gliquid.api.user_entry``) with no
+structure, recording the ids it stands in for under ``data['replaces']``; every other entry
+keeps its original object. The total energy of an entry with a desired formation energy is
 
     E_total = N · (E_f_desired / atom + Σ(frac_i · E_ref_i))
 
-Solid-phase entropy is carried alongside each entry (it cannot live inside a
-pymatgen PDEntry).  The temperature slider rebuilds the displayed hull from the
-per-atom Gibbs energy ``E_f - T*S`` so entropy-bearing phases descend or ascend
-with temperature and can join or leave the hull.
+Energies and entropies are in eV/atom and eV/atom/K; ``add_entry`` and ``modify_entry`` take
+``units='J/mol'`` for J/mol and J/mol-atom/K, and the widget has a units toggle.
 
-Usage
------
+``apply()`` writes back to the source: a ``PhaseDiagram`` source returns the modified
+PhaseDiagram; a ``BinaryLiquid`` source gets ``bl.dft_ch`` updated and ``bl.phases`` rebuilt
+(enthalpy in J/mol, entropy in J/mol-atom/K) and is returned.
+
+Usage::
+
     from gliquid.hull_editor import ConvexHullEditor
 
     editor = ConvexHullEditor(phase_diagram)   # or ConvexHullEditor(binary_liquid)
-    editor.display()          # show the interactive widget
-    # ... make changes via the GUI ...
-    result = editor.apply()   # write back to the source object
+    editor.display()
+    result = editor.apply()
 
-ipywidgets and IPython are an OPTIONAL extra (``pip install gliquid[editor]``), so this
-module imports and ``gliquid.ConvexHullEditor`` resolves without them; constructing an
-editor is what raises, with a message naming the extra.
-
-Author: Joshua Willwerth (generated with assistance from Claude Opus 4.6)
+Requires ipywidgets and IPython (``pip install gliquid[notebook]``); constructing an editor
+without them raises, naming the install.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
-from dataclasses import replace
+import sys
 from typing import TYPE_CHECKING
 
 import plotly.graph_objects as go
 from pymatgen.analysis.phase_diagram import CompoundPhaseDiagram, PDEntry, PhaseDiagram
 from pymatgen.core import Composition
 
-from gliquid.phase import Phase
+import gliquid.api as api
+from gliquid.binary import _endpoint_polymorphs, build_phases_from_chull, hull_phase_fields
+from gliquid.cache import (
+    USER_ID_PREFIX,
+    canonical_entry_id,
+    non_dft_entry_kind,
+    non_dft_entry_label,
+)
+from gliquid.imputation.core import REPLACES_KEY
 
-# ipywidgets/IPython are the optional `editor` extra, not base dependencies. Unguarded
-# imports would break a bare `pip install gliquid`, since __init__.py exposes
-# ConvexHullEditor through a lazy __getattr__. Both names fall back to a placeholder that
-# raises a message naming the extra at first USE.
+# Per-atom electronvolts <-> per-mole-of-atoms joules. Energies are stored in eV/atom and
+# entropies in eV/atom/K; J/mol is an optional input and display unit.
+from gliquid.phase import EV_ATOM_TO_J_MOL as J_PER_MOL_PER_EV
+from gliquid.phase import SS_SPACEGROUPS, Phase
+
+# ipywidgets/IPython come from the optional ``notebook`` extra; without it both names are
+# placeholders that raise, naming the install, at first use.
 _EDITOR_EXTRA_HINT = (
     "ConvexHullEditor needs the notebook widget stack (ipywidgets and IPython), which "
-    "gliquid ships as an optional extra. Install it with `pip install gliquid[editor]` "
+    "gliquid ships as an optional extra. Install it with `pip install gliquid[notebook]` "
     "or `pip install ipywidgets ipython`."
 )
 
@@ -105,48 +90,27 @@ except ImportError:
 
 
 def _require_editor_deps():
-    """Raise an ImportError naming the `editor` extra when the widget stack is absent."""
+    """Raise an ImportError naming the widget install when the widget stack is absent."""
     if isinstance(widgets, _MissingEditorDep) or isinstance(display, _MissingEditorDep):
         raise ImportError(_EDITOR_EXTRA_HINT)
 
 
-# The widget change-log pane (``_log``) is UI, not diagnostics: it is the only place a
-# failed edit currently surfaces, and it dies with the notebook cell. This logger carries
-# the same failures into the ordinary logging stream so they are recoverable afterwards.
+# Carries the change-log pane's failures into the logging stream.
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
 
 
-# Per-atom electronvolts <-> per-mole-of-atoms joules (1 eV/atom = 96485 J/mol). The editor
-# stores energies in eV/atom and entropies in eV/atom/K; BinaryLiquid.phases uses the J/mol
-# basis, offered here as an optional input / display unit.
-J_PER_MOL_PER_EV = 96485
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _copy_entry(entry: PDEntry) -> PDEntry:
-    """Create a fresh PDEntry copy (avoids shared mutable state)."""
-    return PDEntry(
-        entry.composition,
-        entry.energy,
-        name=getattr(entry, "name", None),
-        attribute=getattr(entry, "attribute", None),
-    )
+# -- Helpers --
 
 
 def _copy_entries(entries) -> list[PDEntry]:
-    return [_copy_entry(e) for e in entries]
+    """Deep copies of ``entries``, each keeping its type, id, data and structure."""
+    return [copy.deepcopy(e) for e in entries]
 
 
-# ---------------------------------------------------------------------------
-# ConvexHullEditor
-# ---------------------------------------------------------------------------
+# -- ConvexHullEditor --
 
 
 class ConvexHullEditor:
@@ -159,17 +123,16 @@ class ConvexHullEditor:
             original object is never mutated until :meth:`apply` is called.
 
     Raises:
-        ImportError: If ipywidgets/IPython (the optional ``editor`` extra) are not
+        ImportError: If ipywidgets/IPython (the optional ``notebook`` extra) are not
             installed.
         ValueError: If the supplied phase diagram is not binary.
         TypeError: If ``source`` is neither a PhaseDiagram nor a BinaryLiquid-like object.
+        NotImplementedError: If the phase diagram is a ``CompoundPhaseDiagram``.
     """
 
     # ------------------------------------------------------------------ init
     def __init__(self, source):
-        # Before anything else: __init__ ends in _build_ui(), so the editor is unusable
-        # without the widget stack. Checking here (ahead of source validation) means a
-        # missing extra reports itself rather than surfacing later as an AttributeError.
+        # Raises first when the widget extra is missing.
         _require_editor_deps()
 
         # Resolve the source into a PhaseDiagram + optional BinaryLiquid handle.
@@ -203,41 +166,53 @@ class ConvexHullEditor:
                 f"{[str(e) for e in phase_diagram.elements]}"
             )
 
-        # Order the two elements alphabetically by symbol so the diagram is laid
-        # out consistently: element A (alphabetically first) sits on the left at
-        # x = 0, element B on the right at x = 1.
+        # Element A (alphabetically first) sits at x = 0, element B at x = 1.
         self._elements = sorted(phase_diagram.elements, key=lambda el: el.symbol)
         self._el_a, self._el_b = self._elements
 
         # Working state: entries + a parallel entropy list (eV/atom/K).
         self._entries: list[PDEntry] = _copy_entries(phase_diagram.all_entries)
         self._entropies: list[float] = [0.0] * len(self._entries)
-        # Seed entropies from an existing BinaryLiquid phase list, matched by composition.
-        # The model stores entropy in J/mol-atom/K, so convert to eV/atom/K. Both sides key
-        # on each composition's fraction of the ALPHABETICAL second element (_el_b).
+
+        # Enthalpy (T=0) hull used for back-calculation and enthalpy readout.
+        self._pd: PhaseDiagram = self._rebuild_pd()
+
+        # Each compound phase of a BinaryLiquid seeds its entropy, converted from J/mol-atom/K to
+        # eV/atom/K, onto one entry at its composition: the same-named one if any, then the one
+        # closest in formation enthalpy. Every other entry and elemental reference keeps S = 0.
         if self._bl is not None:
-            comp_to_s = {
-                round(p.composition.get_atomic_fraction(self._el_b), 4): float(p.entropy or 0)
-                for p in self._bl.phases
-                if p.composition is not None
-            }
-            for i, e in enumerate(self._entries):
-                xb = round(e.composition.get_atomic_fraction(self._el_b), 4)
-                self._entropies[i] = comp_to_s.get(xb, 0.0) / J_PER_MOL_PER_EV
+            for phase in self._bl.phases:
+                if phase.composition is None or phase.composition.is_element:
+                    continue
+                fraction = phase.composition.fractional_composition
+                candidates = [
+                    i
+                    for i, e in enumerate(self._entries)
+                    if e.composition.fractional_composition == fraction
+                ]
+                if candidates:
+                    i = min(
+                        candidates,
+                        key=lambda k: (
+                            hull_phase_fields(self._entries[k])["name"] != phase.name,
+                            abs(
+                                J_PER_MOL_PER_EV
+                                * self._pd.get_form_energy_per_atom(self._entries[k])
+                                - (phase.enthalpy or 0.0)
+                            ),
+                        ),
+                    )
+                    self._entropies[i] = float(phase.entropy or 0) / J_PER_MOL_PER_EV
 
         # Temperature (K) at which the displayed Gibbs hull is evaluated.
         self._temperature: float = 0.0
 
-        # Units used for the interactive display and input fields ('eV' or
-        # 'J/mol').  Internal storage is always eV; this only affects rendering.
+        # Display and input unit, 'eV' or 'J/mol'; storage is always eV.
         self._display_units: str = "eV"
 
         # Immutable snapshots for *Reset*
         self._original_entries = _copy_entries(self._entries)
         self._original_entropies = list(self._entropies)
-
-        # Enthalpy (T=0) hull used for back-calculation and enthalpy readout.
-        self._pd: PhaseDiagram = self._rebuild_pd()
 
         # Undo stack: list of (description, entries_snapshot, entropies_snapshot)
         self._history: list[tuple[str, list[PDEntry], list[float]]] = []
@@ -246,6 +221,7 @@ class ConvexHullEditor:
         self._display_pd: PhaseDiagram = self._pd
         self._display_entries: list[PDEntry] = self._entries
         self._stable_idx: set[int] = set()
+        self._stable_at_0k: set[int] = set()
 
         # Build and wire the UI
         self._build_ui()
@@ -279,9 +255,11 @@ class ConvexHullEditor:
         return PhaseDiagram(entries, self._elements), entries
 
     def _build_display(self):
-        """Recompute the Gibbs hull and stable-entry set at the current T."""
+        """Recompute the Gibbs hull at the current T and the stable-entry sets at T and at 0 K."""
         self._display_pd, self._display_entries = self._make_gibbs(self._temperature)
         self._stable_idx = {e.attribute for e in self._display_pd.stable_entries}
+        stable_at_0k = {id(e) for e in self._pd.stable_entries}
+        self._stable_at_0k = {i for i, e in enumerate(self._entries) if id(e) in stable_at_0k}
 
     def _save_state(self, description: str):
         """Push the current entries + entropies onto the undo stack."""
@@ -314,6 +292,44 @@ class ConvexHullEditor:
             for el in composition.elements
         )
         return composition.num_atoms * (target_ef_per_atom + ref_e_per_atom)
+
+    def _free_user_id(self, label: str, keep: int | None = None) -> str:
+        """``'user:<label>'``, suffixed ``#2``, ``#3``, ... until no other working entry holds it.
+
+        Args:
+            label: the phase name.
+            keep: index of a working entry whose id does not count as taken.
+        """
+        taken = {
+            str(getattr(e, "entry_id", None)) for i, e in enumerate(self._entries) if i != keep
+        }
+        entry_id, n = f"{USER_ID_PREFIX}{label}", 2
+        while entry_id in taken:
+            entry_id, n = f"{USER_ID_PREFIX}{label}#{n}", n + 1
+        return entry_id
+
+    def _edited_entry(self, index: int, energy: float):
+        """The user-defined entry that replaces working entry ``index`` at total ``energy``.
+
+        It keeps the entry's phase name, and its id when that is already a user id. An edited
+        DFT entry lists its own id under ``data['replaces']``; an edited imputed or user entry
+        keeps the ``replaces`` it carried.
+        """
+        old = self._entries[index]
+        kind = non_dft_entry_kind(old)
+        label = non_dft_entry_label(old) if kind else old.name
+        old_id = getattr(old, "entry_id", None)
+        carried = (getattr(old, "data", None) or {}).get(REPLACES_KEY)
+        extra = {}
+        if kind is None and old_id is not None:
+            extra[REPLACES_KEY] = [str(old_id)]
+        elif kind is not None and carried:
+            extra[REPLACES_KEY] = list(carried)
+        if kind == "user" and str(old_id).startswith(USER_ID_PREFIX):
+            entry_id = str(old_id)
+        else:
+            entry_id = self._free_user_id(label, keep=index)
+        return api.user_entry(old.composition, energy, label, entry_id=entry_id, **extra)
 
     # ------------------------------------------------- unit conversion / format
     @staticmethod
@@ -422,14 +438,13 @@ class ConvexHullEditor:
             )
         self._save_state(f"Modify {old.name}: " + ", ".join(changes or ["(no change)"]))
 
-        if new_ef_per_atom is not None:
-            new_energy = self._calc_required_energy(old.composition, new_ef_per_atom)
-            self._entries[entry_index] = PDEntry(
-                old.composition,
-                new_energy,
-                name=old.name,
-                attribute=old.attribute,
+        if new_ef_per_atom is not None or new_entropy is not None:
+            new_energy = (
+                old.energy
+                if new_ef_per_atom is None
+                else self._calc_required_energy(old.composition, new_ef_per_atom)
             )
+            self._entries[entry_index] = self._edited_entry(entry_index, new_energy)
             self._rebuild_pd()
         if new_entropy is not None:
             self._entropies[entry_index] = float(new_entropy)
@@ -453,6 +468,11 @@ class ConvexHullEditor:
             units ({'eV', 'J/mol'}): Units of *ef_per_atom* and *entropy*, default
                 ``'eV'``.  ``'eV'`` is eV/atom and eV/atom/K; ``'J/mol'`` is J/mol and
                 J/mol-atom/K.  Both are converted to the editor's internal eV basis.
+
+        Raises:
+            ValueError: an element of ``formula`` is not in the system, or the name is
+                ``'L'``, a solid-solution or endpoint polymorph phase of the source, or the
+                name of an entry at another composition.
         """
         ef_per_atom = self._ev_from(ef_per_atom, units)
         entropy = self._ev_from(entropy, units)
@@ -464,6 +484,9 @@ class ConvexHullEditor:
                     f"Element {el} in '{formula}' is not part of the "
                     f"{self._el_a}-{self._el_b} phase diagram."
                 )
+        label = name or comp.reduced_formula
+        if label in self._taken_names(comp):
+            raise ValueError(f"Phase name {label!r} is already used in this system.")
 
         self._save_state(
             f"Add {formula} with Ef={self._fmt_energy(ef_per_atom)} {self._energy_unit}, "
@@ -471,7 +494,9 @@ class ConvexHullEditor:
         )
 
         total_energy = self._calc_required_energy(comp, ef_per_atom)
-        self._entries.append(PDEntry(comp, total_energy, name=name or comp.reduced_formula))
+        self._entries.append(
+            api.user_entry(comp, total_energy, label, entry_id=self._free_user_id(label))
+        )
         self._entropies.append(float(entropy))
         self._rebuild_pd()
         self._refresh_if_ready()
@@ -484,7 +509,7 @@ class ConvexHullEditor:
         """
         entry = self._entries[entry_index]
 
-        # Guard: don't orphan an element
+        # Guard: each element keeps an entry
         if entry.composition.is_element:
             el = entry.composition.elements[0]
             n_remaining = sum(
@@ -503,7 +528,8 @@ class ConvexHullEditor:
         self._refresh_if_ready()
 
     def set_temperature(self, temperature: float):
-        """Set the temperature (K) at which the Gibbs hull is displayed/applied."""
+        """Set the temperature (K) of the displayed Gibbs hull; :meth:`apply` keeps the entries
+        stable there as well as those stable at 0 K."""
         self._temperature = float(temperature)
         if getattr(self, "_temp_slider", None) is not None:
             self._temp_slider.value = self._temperature
@@ -511,7 +537,9 @@ class ConvexHullEditor:
 
     @property
     def entries(self) -> list[dict]:
-        """Read-only summary of the working entries (index, name, x_B, Ef, S)."""
+        """Read-only summary of the working entries (index, name, x_B, Ef, S, ``stable`` at the
+        current temperature, ``stable_at_0k``, and ``non_dft``: ``'user'``, ``'imputed'`` or
+        None)."""
         self._build_display()
         return [
             {
@@ -521,6 +549,8 @@ class ConvexHullEditor:
                 "ef_per_atom": self._pd.get_form_energy_per_atom(e),
                 "entropy": self._entropies[i],
                 "stable": i in self._stable_idx,
+                "stable_at_0k": i in self._stable_at_0k,
+                "non_dft": non_dft_entry_kind(e),
             }
             for i, e in enumerate(self._entries)
         ]
@@ -570,6 +600,30 @@ class ConvexHullEditor:
         """Return the current (enthalpy, T=0) PhaseDiagram. Kept for back-compat."""
         return self._enthalpy_pd()
 
+    def _taken_names(self, composition: Composition) -> set[str]:
+        """Names an entry added at ``composition`` may not take: ``'L'``, the source's
+        solid-solution and endpoint polymorph phases, and every entry at another composition."""
+        taken = {"L"}
+        if self._bl is not None:
+            taken.update(getattr(self._bl, "ss_models", None) or {})
+            component_data = getattr(self._bl, "component_data", None)
+            if component_data:
+                taken.update(
+                    p.name for p in _endpoint_polymorphs(self._bl.components, component_data)
+                )
+        fraction = composition.fractional_composition
+        taken.update(
+            hull_phase_fields(e)["name"]
+            for e in self._entries
+            if e.composition.fractional_composition != fraction
+        )
+        return taken
+
+    def _ss_spacegroups(self) -> set[int] | None:
+        """Spacegroups the source's solid-solution models cover, or None without any."""
+        ss_models = getattr(self._bl, "ss_models", None) or {}
+        return {SS_SPACEGROUPS[name] for name in ss_models} or None
+
     def _enthalpy_pd(self) -> PhaseDiagram:
         """A clean PhaseDiagram built from the edited enthalpy entries."""
         return PhaseDiagram(_copy_entries(self._entries), self._elements)
@@ -577,35 +631,40 @@ class ConvexHullEditor:
     def _build_phases(self):
         """Build a ``BinaryLiquid``-style phase list from the current edits.
 
-        Solid phases are those stable on the Gibbs hull at the current
-        temperature (so entropy-stabilized additions are retained while
-        metastable DFT entries are dropped).  Each carries enthalpy (J/mol) from
-        the T=0 hull and entropy converted from the editor's eV/atom/K to the
-        J/mol-atom/K the model uses.  The trailing liquid placeholder mirrors
-        :func:`gliquid.binary.build_phases_from_chull`.
+        Solid phases are the endpoint polymorphs, less those a solid-solution model of the
+        source covers, plus the entries stable at 0 K or on the Gibbs hull at the current
+        temperature (so entropy-stabilized additions are retained while metastable DFT entries
+        are dropped); two such entries at one composition are both kept unless they share a
+        name, when the one stable at 0 K is kept.  Each entry carries enthalpy (J/mol) from the T=0 hull and entropy
+        converted from the editor's eV/atom/K to the J/mol-atom/K the model uses.  The order
+        and the trailing liquid placeholder match :func:`gliquid.binary.build_phases_from_chull`.
         """
         components = self._bl.components
-        component_data = self._bl.component_data
         self._build_display()
 
-        phases = []
-        # Elemental polymorphs (mirrors build_phases_from_chull)
-        for comp in components:
-            for polymorph in component_data[comp].polymorphs:
-                phases.append(replace(polymorph, points=[]))
-
-        for i in sorted(self._stable_idx):
+        phases = _endpoint_polymorphs(components, self._bl.component_data, self._ss_spacegroups())
+        for i in sorted(self._stable_at_0k) + sorted(self._stable_idx - self._stable_at_0k):
             entry = self._entries[i]
             composition = entry.composition.get_atomic_fraction(components[1])
-            if composition in [p.fraction_in(components)[0] for p in phases]:
+            fields = hull_phase_fields(entry)
+            if composition in (0, 1) and composition in [
+                p.fraction_in(components)[0] for p in phases
+            ]:
                 continue  # element ground state already covered by a polymorph
+            if fields["name"] in {p.name for p in phases}:
+                self._log(
+                    f"⚠ {fields['name']} stable at {self._temperature:.0f} K shares its name with "
+                    "the phase stable at 0 K, which is kept. Add it as an entry with its own name "
+                    "to keep both."
+                )
+                continue
             phases.append(
                 Phase(
                     phase_type="solid",
-                    name=entry.name,
                     composition=entry.composition,
                     enthalpy=J_PER_MOL_PER_EV * self._pd.get_form_energy_per_atom(entry),
                     entropy=J_PER_MOL_PER_EV * self._entropies[i],  # eV/atom/K -> J/mol-atom/K
+                    **fields,
                 )
             )
 
@@ -621,7 +680,11 @@ class ConvexHullEditor:
         PhaseDiagram | BinaryLiquid
             For a PhaseDiagram source, the modified enthalpy PhaseDiagram.
             For a BinaryLiquid source, the same BinaryLiquid with ``dft_ch`` and
-            ``phases`` updated in place.
+            ``phases`` updated in place (its solid-solution phases kept), and the ids of the
+            DFT entries the edits removed added to ``removed_entry_ids`` (a ternary built with
+            ``TernaryLiquidInterpolation.from_binaries`` leaves those out of its hull).
+            ``eqs['h_hull_interp']`` is rebuilt from the edited hull at 0 K, and an already
+            computed ``hsx`` and the phase points from the new phases.
         """
         if self._bl is None:
             if any(s != 0 for s in self._entropies):
@@ -633,13 +696,40 @@ class ConvexHullEditor:
             return self._enthalpy_pd()
 
         bl = self._bl
-        bl.dft_ch = self._enthalpy_pd()
-        bl.phases = self._build_phases()
+        dft_ch = self._enthalpy_pd()
+        phases = self._build_phases()
+        removed = set(getattr(bl, "removed_entry_ids", None) or ()) | self._removed_dft_ids()
+        bl.dft_ch, bl.phases, bl.removed_entry_ids = dft_ch, phases, sorted(removed)
+        if hasattr(bl, "rebuild_hull_interp"):
+            bl._ensure_solid_solution_phases()
+            bl.rebuild_hull_interp(
+                build_phases_from_chull(
+                    dft_ch, bl.components, bl.component_data, self._ss_spacegroups()
+                )
+            )
+        if getattr(bl, "hsx", None) is not None and hasattr(bl, "update_phase_points"):
+            bl.hsx = None
+            bl.update_phase_points()
         return bl
 
-    # ------------------------------------------------------------------
-    # UI construction
-    # ------------------------------------------------------------------
+    def _removed_dft_ids(self) -> set[str]:
+        """Canonical ids of the original DFT entries that no working entry keeps or replaces."""
+
+        def dft_ids(entries):
+            return {
+                canonical_entry_id(e.entry_id)
+                for e in entries
+                if non_dft_entry_kind(e) is None and getattr(e, "entry_id", None) is not None
+            }
+
+        replaced = {
+            canonical_entry_id(entry_id)
+            for e in self._entries
+            for entry_id in (getattr(e, "data", None) or {}).get(REPLACES_KEY, ())
+        }
+        return dft_ids(self._original_entries) - dft_ids(self._entries) - replaced
+
+    # -- UI construction --
     def _build_ui(self):
         """Assemble all ipywidget components."""
 
@@ -837,9 +927,7 @@ class ConvexHullEditor:
             layout=widgets.Layout(width="780px"),
         )
 
-    # ------------------------------------------------------------------
-    # UI refresh helpers
-    # ------------------------------------------------------------------
+    # -- UI refresh helpers --
     def _refresh(self):
         """Redraw everything after a state change."""
         self._sync_unit_labels()
@@ -915,7 +1003,7 @@ class ConvexHullEditor:
                 0.0 if is_stable else self._display_pd.get_e_above_hull(self._display_entries[idx])
             )
 
-            dot = "🟢" if is_stable else "⚪"
+            dot = "🟢" if is_stable else "🟡" if idx in self._stable_at_0k else "⚪"
             rows.append(
                 f"<tr>"
                 f"<td>{dot}</td>"
@@ -943,12 +1031,14 @@ class ConvexHullEditor:
             "</tr></thead><tbody>" + "\n".join(rows) + "</tbody></table></div>"
         )
         n_stable = len(self._stable_idx)
+        n_kept_at_0k = len(self._stable_at_0k - self._stable_idx)
         n_total = len(self._entries)
         n_changes = len(self._history)
         summary = (
             f"<span style='font-size:12px; color:#555;'>"
             f"{n_stable} stable / {n_total} total entries  ·  "
-            f"hull shown at T = {self._temperature:.0f} K  ·  "
+            + (f"🟡 {n_kept_at_0k} stable at 0 K, kept by apply()  ·  " if n_kept_at_0k else "")
+            + f"hull shown at T = {self._temperature:.0f} K  ·  "
             f"{n_changes} change{'s' if n_changes != 1 else ''} made</span>"
         )
         self._table_html.value = summary + table
@@ -1058,15 +1148,14 @@ class ConvexHullEditor:
         self._fig.add_traces(traces)
 
     def _log(self, msg: str):
-        """Append a message to the change-log pane."""
+        """Append a message to the change-log pane; characters stdout cannot encode print
+        as ``?``."""
         with self._log_output:
-            # print() by design: writes into the ipywidgets Output pane (widget UI
-            # rendering, not diagnostics) — documented logging exemption.
-            print(msg)
+            encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+            # Writes into the ipywidgets Output pane (registered logging exemption).
+            print(msg.encode(encoding, "replace").decode(encoding))
 
-    # ------------------------------------------------------------------
-    # Callbacks
-    # ------------------------------------------------------------------
+    # -- Callbacks --
     def _on_temperature(self, change):
         """When the temperature slider moves, rebuild the displayed Gibbs hull."""
         self._temperature = float(change.get("new", 0.0))
@@ -1144,8 +1233,7 @@ class ConvexHullEditor:
         old_units = change.get("old") or "eV"
         new_units = change.get("new") or "eV"
         self._display_units = new_units
-        # Carry any partly-entered Add-box values across the unit switch so the
-        # number the user typed keeps the same physical meaning.
+        # Partly entered Add-box values are converted to the new unit.
         self._add_ef.value = self._convert(self._add_ef.value, old_units, new_units)
         self._add_s.value = self._convert(self._add_s.value, old_units, new_units)
         self._refresh()
@@ -1157,9 +1245,7 @@ class ConvexHullEditor:
     def _do_reset(self):
         self.reset()  # refreshes the display
 
-    # ------------------------------------------------------------------
-    # Display
-    # ------------------------------------------------------------------
+    # -- Display --
     def display(self):
         """Render the full editor widget inside a Jupyter notebook."""
         display(self._widget)
