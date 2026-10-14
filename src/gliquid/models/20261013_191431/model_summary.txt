@@ -1,0 +1,53 @@
+Joint Bayesian Optimization Results
+==================================================
+
+Timestamp: 20261013_191427
+Best optimization objective (mean_skill_huber): 0.0000
+
+Model Configuration:
+  L0_a: XGBOOST, target_transform=standard, loss=none
+  L0_b: XGBOOST, target_transform=standard, loss=none
+  L1_a: XGBOOST, target_transform=standard, loss=none
+
+XGBoost device: cpu
+Inner CV stratification: GMM on training-set groups only
+Sample weights: fit_weight_source=weighted [weighted_fit_weight], use_pd_weight=True
+Parsimony: mode=off, strength=0.0
+
+Pruning Parameters:
+  Redundancy %: 0
+  Error %: 0
+  Error recursions: 0
+  Samples removed: 0
+  Samples kept: 3459
+
+L0_a Hyperparameters (XGBOOST):
+  n_estimators: 353
+  learning_rate: 0.08593352403966907
+  max_depth: 5
+  min_child_weight: 10
+  colsample_bytree: 0.8409762491970826
+  subsample: 0.6131215724266281
+  reg_alpha: 4.570519385409738e-07
+  reg_lambda: 2.8283894986165263
+
+L0_b Hyperparameters (XGBOOST):
+  n_estimators: 315
+  learning_rate: 0.012585705705476314
+  max_depth: 8
+  min_child_weight: 7
+  colsample_bytree: 0.7899752091786167
+  subsample: 0.6208131853940166
+  reg_alpha: 9.841096615908965e-08
+  reg_lambda: 7.535238673959664e-07
+
+L1_a Hyperparameters (XGBOOST):
+  n_estimators: 211
+  learning_rate: 0.06418916831693935
+  max_depth: 9
+  min_child_weight: 4
+  colsample_bytree: 0.7824935442944038
+  subsample: 0.7807886365971736
+  reg_alpha: 3.2750794646673485e-05
+  reg_lambda: 1.7569452511396043e-07
+

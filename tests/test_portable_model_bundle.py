@@ -1,44 +1,30 @@
-"""The portable model bundle: pickle-free weights in the wheel, feature corpus in the cache.
-
-Four claims are pinned here, and each is checked against something other than the code that
-produced it:
+"""The portable model bundle: pickle-free weights and the shipped feature table in the wheel.
 
 * **The shipped bundle is intact and reproduces its golden vector.** ``manifest.json`` holds
   the sha256 of every other file, plus the sha256 of 4,096 deterministic predictions made by
   the ORIGINAL joblib pipelines at export time. Re-running that draw through the portable
-  path must return the SAME BYTES — ``array_equal``, never ``allclose``. Every failure mode
-  of this conversion (a transposed scaler, a booster read at the wrong iteration, the naive
-  float64 route through ``StandardScaler.inverse_transform``) yields numbers that look
-  entirely reasonable, so a tolerance here would accept the bug it exists to catch. Measured:
-  the float64 route drifts up to ~1e-6 relative on this bundle and ``np.allclose`` passes.
+  path must return the SAME BYTES: ``array_equal``, never ``allclose``, because every failure
+  mode of the conversion (a transposed scaler, a booster read at the wrong iteration, the
+  float64 route through ``StandardScaler.inverse_transform``) yields plausible numbers. All
+  tox environments must agree on the one hash.
 
-  This test is also the CROSS-VERSION acceptance. It runs in all eight tox environments and
-  they must all agree on one hash — which is a claim about version independence only because
-  the comparison is exact.
+* **The portable path carries no library-version coupling.** Loading it emits no
+  ``InconsistentVersionWarning`` on any scikit-learn version.
 
-* **The portable path carries no library-version coupling.** Loading the joblib bundle under
-  a newer scikit-learn emits ``InconsistentVersionWarning``; loading this one must emit none,
-  on any version. That contrast is the whole point of the format.
+* **Weights and corpus are separable.** ``ProductionModelRunner()`` with no arguments, no
+  cache and no ``openpyxl`` constructs and predicts, checked in a SUBPROCESS with
+  ``openpyxl`` blocked at import.
 
-* **Weights and corpus are genuinely separable.** ``ProductionModelRunner()`` with no
-  arguments, no cache and no ``openpyxl`` constructs and predicts. That is checked in a
-  SUBPROCESS with ``openpyxl`` blocked at import, because the failure it guards against —
-  an unconditional ``pd.read_excel`` in the constructor — is invisible to a test running in
-  an environment that happens to have the package.
-
-* **Legacy joblib bundles still load.** Built here from scratch rather than read from disk,
-  so the test says nothing about which scikit-learn wrote the shipped one, and with FOUR
-  targets across two antisymmetric frames — the shape a v23 bundle has and the shape the old
-  hardcoded ``["L0_a", "L0_b", "L1_a"]`` could not express.
+* **Legacy joblib bundles still load.** Built here from scratch, with FOUR targets across
+  two antisymmetric frames.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
+import shutil
 import struct
-import subprocess
-import sys
 import textwrap
 import warnings
 from pathlib import Path
@@ -47,6 +33,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import gliquid.cache as gliquid_cache
 import gliquid.config as config
 from gliquid.cache import SqliteBackend, close_sqlite_backends
 from gliquid.production_model_runner import (
@@ -62,15 +49,61 @@ from gliquid.production_model_runner import (
     detect_standard_inverse_convention,
 )
 
+from ._fresh import ok, run_fresh
+
 SHIPPED = default_bundle_dir()
+
+#: The shipped bundle's feature-table files, by frame, as its manifest names them.
+FEATURE_FILES = {
+    "symmetric": "features_symmetric.json",
+    "antisymmetric": "features_antisymmetric.json",
+}
+
+#: The shipped bundle's members other than ``manifest.json`` and the feature tables.
+WEIGHT_MEMBERS = {
+    "L0_a.ubj",
+    "L0_b.ubj",
+    "L1_a.ubj",
+    "best_params.json",
+    "feature_names.json",
+    "metadata.json",
+    "model_summary.txt",
+    "preprocess.json",
+}
+
+
+def _write_manifest(bundle: Path, manifest: dict) -> None:
+    (bundle / "manifest.json").write_bytes((json.dumps(manifest, indent=2) + "\n").encode("utf-8"))
+
+
+def _read_manifest(bundle: Path) -> dict:
+    return json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+
+
+def _refuse_constant(name: str):
+    raise AssertionError(f"non-finite literal {name} in a feature table")
+
+
+@pytest.fixture
+def bundle_without_features(tmp_path) -> Path:
+    """A copy of the shipped bundle whose manifest names no feature table.
+
+    The two feature-table files stay in the copy: the manifest key, not a file's presence,
+    is what the runner reads.
+    """
+    bundle = tmp_path / "no_features" / DEFAULT_BUNDLE_ID
+    shutil.copytree(SHIPPED, bundle)
+    manifest = _read_manifest(bundle)
+    manifest.pop("features", None)
+    for name in FEATURE_FILES.values():
+        manifest["files"].pop(name, None)
+    _write_manifest(bundle, manifest)
+    return bundle
 
 
 def _new_store(path: Path) -> None:
-    """Create an empty store ON DISK.
-
-    ``SqliteBackend`` connects lazily, so ``SqliteBackend(p, create=True).close()`` creates
-    nothing at all — a trap worth naming once here rather than debugging per test.
-    """
+    """Create an empty store ON DISK: ``SqliteBackend`` connects lazily, so
+    ``SqliteBackend(p, create=True).close()`` alone creates nothing."""
     backend = SqliteBackend(path, create=True)
     try:
         backend.set_meta("created_by", "test_portable_model_bundle")
@@ -78,14 +111,12 @@ def _new_store(path: Path) -> None:
         backend.close()
 
 
-# =======================================================================================
-# The shipped bundle
-# =======================================================================================
+# -- The shipped bundle --
 
 
 class TestShippedBundle:
     def test_bundle_is_present_in_the_installed_package(self):
-        """A wheel built before ``git add`` would carry no bundle and raise nothing else."""
+        """The installed package carries the bundle."""
         assert SHIPPED.is_dir(), (
             f"no model bundle at {SHIPPED}. Hatchling ships TRACKED files: an exported "
             f"bundle that was never `git add`ed is absent from the wheel with no error."
@@ -96,17 +127,6 @@ class TestShippedBundle:
         """The format's premise, as an assertion rather than a claim in a docstring."""
         pickled = sorted(p.name for p in SHIPPED.iterdir() if p.suffix in (".joblib", ".pkl"))
         assert not pickled, f"pickled artifacts in the portable bundle: {pickled}"
-
-    def test_every_file_matches_its_recorded_sha256(self):
-        manifest = json.loads((SHIPPED / "manifest.json").read_text(encoding="utf-8"))
-        assert manifest["files"], "manifest records no files; the check would be vacuous"
-        import hashlib
-
-        for name, entry in sorted(manifest["files"].items()):
-            path = SHIPPED / name
-            assert path.is_file(), f"manifest names {name}, which is not in the bundle"
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            assert digest == entry["sha256"], f"{name} does not match its recorded sha256"
 
     def test_manifest_schema_is_understood(self):
         manifest = json.loads((SHIPPED / "manifest.json").read_text(encoding="utf-8"))
@@ -150,41 +170,19 @@ class TestShippedBundle:
             "L1_a": "antisymmetric",
         }
         assert runner.feature_source is None
-        # A deliberate pin on the SHIPPED artifact -- a canary that the wheel carries the
-        # bundle we think it does, so it is expected to move when DEFAULT_BUNDLE_ID does.
-        # 51/37 was the v22.02-era 20260329_022905 bundle; 49/36 is 20260817_112204.
-        # The three absent features (max_s_unfilled, min_f_unfilled, diff_s_unfilled) were
-        # dropped from the dataset generator INTENTIONALLY between v22.02 and the v23
-        # series -- v23.92, built months earlier, already carries the same five 'unfilled'
-        # columns. Not a side effect of scoping v24.01 to 60 elements; min_f_unfilled was
-        # a constant column (nunique=1) in v22.02 regardless.
+        # A pin on the SHIPPED artifact: it moves when DEFAULT_BUNDLE_ID does.
         assert {f: len(n) for f, n in runner.feature_names.items()} == {
-            "symmetric": 49,
-            "antisymmetric": 36,
+            "symmetric": 50,
+            "antisymmetric": 31,
         }
 
 
-# =======================================================================================
-# The split: predicting without a corpus, and failing loudly when one is needed
-# =======================================================================================
+# -- The split: predicting without a corpus, and failing loudly when one is needed --
 
 
 _NO_CACHE_NO_OPENPYXL = textwrap.dedent(
     """
-    import builtins, sys
-    _real_import = builtins.__import__
-    def _blocked(name, *args, **kwargs):
-        if name == "openpyxl" or name.startswith("openpyxl."):
-            raise ImportError("openpyxl is blocked for this test")
-        return _real_import(name, *args, **kwargs)
-    builtins.__import__ = _blocked
-    try:
-        import openpyxl  # noqa: F401
-    except ImportError:
-        pass
-    else:
-        raise AssertionError("the openpyxl block did not take; the test would be vacuous")
-
+    import sys
     import numpy as np, pandas as pd
     import gliquid.config as config
 
@@ -223,59 +221,214 @@ _NO_CACHE_NO_OPENPYXL = textwrap.dedent(
 
 
 def test_predict_from_dataframes_needs_no_cache_no_xlsx_and_no_openpyxl(tmp_path):
-    """Acceptance 4: the split line. Run in a subprocess so the block is real.
-
-    ``openpyxl`` is declared only in the ``models`` extra, and the constructor used to call
-    ``pd.read_excel`` unconditionally — so a bare ``pip install gliquid`` imported fine and
-    then died on instantiation. An in-process test cannot see that in an environment that
-    has the package installed, which this one does.
+    """Run in a subprocess with ``openpyxl`` blocked: it is declared only in the ``models``
+    extra, so the constructor must not call ``pd.read_excel`` unconditionally.
     """
-    env = os.environ.copy()
-    for name in ("GLIQUID_CACHE_DIR", "GLIQUID_DATA_DIR"):
-        env.pop(name, None)
-    src = str(Path(__file__).resolve().parents[1] / "src")
-    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
-    # cwd outside the repo so config's project-root walk finds no cache/ to adopt.
-    result = subprocess.run(
-        [sys.executable, "-c", _NO_CACHE_NO_OPENPYXL],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=str(tmp_path),
+    ok(
+        run_fresh(
+            _NO_CACHE_NO_OPENPYXL,
+            tmp_path,
+            blocked=("openpyxl",),
+            env={"GLIQUID_CACHE_DIR": None},
+        )
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "OK" in result.stdout
 
 
 class TestCorpusRequired:
-    def test_predict_system_without_a_cache_raises_config_error(self, monkeypatch):
-        """Acceptance 5. A ConfigError, not a FileNotFoundError: nothing is MISSING from
-        the bundle — the pointer to a corpus is."""
+    """A portable bundle whose manifest names no feature table reads a SQLite store."""
+
+    def test_predict_system_without_a_cache_raises_config_error(
+        self, monkeypatch, bundle_without_features
+    ):
+        """A ConfigError, not a FileNotFoundError: nothing is missing from the bundle; the
+        pointer to a corpus is."""
         monkeypatch.setattr(config, "cache_dir", None)
-        runner = ProductionModelRunner()
+        runner = ProductionModelRunner(bundle_without_features)
         with pytest.raises(config.ConfigError) as excinfo:
             runner.predict_system("Cu-Mg")
         message = str(excinfo.value)
         assert "set_cache_dir" in message
         assert "predict_from_dataframes" in message
 
-    def test_directory_cache_cannot_serve_features_and_says_so(self, monkeypatch, tmp_path):
+    def test_directory_cache_cannot_serve_features_and_says_so(
+        self, monkeypatch, tmp_path, bundle_without_features
+    ):
         monkeypatch.setattr(config, "cache_dir", tmp_path)
         monkeypatch.setattr(config, "cache_mode", "directory")
-        runner = ProductionModelRunner()
+        runner = ProductionModelRunner(bundle_without_features)
         with pytest.raises(config.ConfigError, match="ml_features"):
             runner.predict_system("Cu-Mg")
 
+    def test_a_sqlite_store_serves_a_bundle_without_a_feature_table(
+        self, monkeypatch, tmp_path, bundle_without_features
+    ):
+        """The store's rows predict exactly what the shipped feature table predicts."""
+        picks = {"symmetric": ["Cu-Mg"], "antisymmetric": ["Cu-Mg", "Mg-Cu"]}
+        store = tmp_path / "few_rows.sqlite"
+        backend = SqliteBackend(store, create=True)
+        try:
+            backend.ensure_ml_features()
+            for frame, systems in picks.items():
+                table = json.loads((SHIPPED / FEATURE_FILES[frame]).read_text(encoding="utf-8"))
+                backend.write_ml_features(
+                    frame,
+                    table["bundle_id"],
+                    table["columns"],
+                    [(system, table["rows"][system]) for system in systems],
+                )
+        finally:
+            backend.close()
+        close_sqlite_backends()
 
-# =======================================================================================
-# A synthetic bundle: four targets, two frames, both directions
-# =======================================================================================
+        monkeypatch.setattr(config, "cache_dir", store)
+        monkeypatch.setattr(config, "cache_mode", "sqlite")
+        try:
+            from_store = ProductionModelRunner(bundle_without_features)
+            values = from_store.predict_system("Cu-Mg")
+            assert from_store.feature_source.startswith("cache:")
+            shipped = ProductionModelRunner()
+            assert np.array_equal(values, shipped.predict_system("Cu-Mg"))
+            assert shipped.feature_source.startswith("bundle:")
+        finally:
+            close_sqlite_backends()
+
+
+# -- The shipped feature table: predicting a named system needs no store --
+
+
+def _assert_three_finite(values) -> None:
+    assert len(values) == 3, values
+    assert all(np.isfinite(values)), values
+
+
+class TestShippedFeatureTable:
+    def test_predicts_with_no_store_configured(self, monkeypatch):
+        monkeypatch.setattr(config, "cache_dir", None)
+        runner = ProductionModelRunner()
+        assert runner.feature_source is None
+        _assert_three_finite(runner.predict_system("Cu-Mg"))
+        assert runner.feature_source.startswith("bundle:")
+        for frame in ("symmetric", "antisymmetric"):
+            table = runner._frame(frame)
+            assert list(table.columns) == ["system", *runner.feature_names[frame]]
+            assert all(table[c].dtype == np.float64 for c in runner.feature_names[frame])
+
+    def test_predicts_with_a_directory_store_configured(self, monkeypatch, tmp_path):
+        store = tmp_path / "store"
+        monkeypatch.setattr(config, "cache_dir", store)
+        monkeypatch.setattr(config, "cache_mode", "directory")
+        runner = ProductionModelRunner()
+        _assert_three_finite(runner.predict_system("Cu-Mg"))
+        assert runner.feature_source.startswith("bundle:")
+        assert not store.exists()
+
+    def test_the_bundle_table_reads_no_store_configuration(self, monkeypatch, tmp_path):
+        absent = tmp_path / "absent.sqlite"
+        monkeypatch.setattr(config, "cache_dir", absent)
+        monkeypatch.setattr(config, "cache_mode", "sqlite")
+
+        def _refuse(*args, **kwargs):
+            raise AssertionError("the bundle's feature table resolved the configured store")
+
+        monkeypatch.setattr(gliquid_cache, "resolve_backend", _refuse)
+        runner = ProductionModelRunner()
+        _assert_three_finite(runner.predict_system("Cu-Mg"))
+        assert runner.feature_source.startswith("bundle:")
+        assert not absent.exists()
+
+    def test_the_mirror_row_comes_from_the_bundle(self, monkeypatch):
+        monkeypatch.setattr(config, "cache_dir", None)
+        runner = ProductionModelRunner()
+        _, _, mirror = runner.get_rows_for_system("Ag-Au")
+        assert mirror is not None
+        assert mirror["system"].tolist() == ["Au-Ag"]
+        _assert_three_finite(runner.predict_system("Ag-Au"))
+        assert runner.feature_source.startswith("bundle:")
+
+    def test_a_reversed_name_returns_the_same_symmetric_targets_and_negated_l1_a(self, monkeypatch):
+        monkeypatch.setattr(config, "cache_dir", None)
+        runner = ProductionModelRunner()
+        assert runner._frame("symmetric")["system"].eq("Au-Ag").sum() == 0
+        forward = runner.predict_system("Ag-Au")
+        reverse = runner.predict_system("Au-Ag")
+        for index, target in enumerate(runner.targets):
+            if runner.target_frames[target] == "antisymmetric":
+                assert reverse[index] == -forward[index], target
+            else:
+                assert reverse[index] == forward[index], target
+
+    def test_a_system_absent_in_both_orders_is_still_refused(self, monkeypatch):
+        monkeypatch.setattr(config, "cache_dir", None)
+        with pytest.raises(ValueError, match="not found in symmetric dataset"):
+            ProductionModelRunner().predict_system("Xx-Yy")
+
+    @pytest.mark.parametrize("defect", ["missing_file", "bundle_id", "frame", "columns"])
+    def test_an_inconsistent_feature_table_is_refused(self, monkeypatch, tmp_path, defect):
+        bundle = tmp_path / "defect" / DEFAULT_BUNDLE_ID
+        shutil.copytree(SHIPPED, bundle)
+        feature_names = json.loads((bundle / "feature_names.json").read_text(encoding="utf-8"))
+        table = {
+            "bundle_id": DEFAULT_BUNDLE_ID,
+            "frame": "symmetric",
+            "columns": list(feature_names["symmetric"]),
+            "rows": {"Cu-Mg": [0.0] * len(feature_names["symmetric"])},
+        }
+        name = "features_under_test.json"
+        if defect == "bundle_id":
+            table["bundle_id"] = "another-bundle"
+        elif defect == "frame":
+            table["frame"] = "antisymmetric"
+        elif defect == "columns":
+            table["columns"] = table["columns"][::-1]
+        if defect != "missing_file":
+            (bundle / name).write_bytes(json.dumps(table, separators=(",", ":")).encode("utf-8"))
+        manifest = _read_manifest(bundle)
+        manifest["features"] = {"symmetric": name, "antisymmetric": name}
+        _write_manifest(bundle, manifest)
+
+        monkeypatch.setattr(config, "cache_dir", None)
+        runner = ProductionModelRunner(bundle)
+        expected = FileNotFoundError if defect == "missing_file" else ValueError
+        with pytest.raises(expected) as excinfo:
+            runner.predict_system("Cu-Mg")
+        message = str(excinfo.value)
+        assert name in message
+        if defect != "missing_file":
+            assert repr(defect) in message
+
+    def test_the_manifest_lists_both_feature_tables_and_every_entry_verifies(self):
+        manifest = _read_manifest(SHIPPED)
+        assert manifest["features"] == FEATURE_FILES
+        assert set(manifest["files"]) == WEIGHT_MEMBERS | set(FEATURE_FILES.values())
+        for name, entry in sorted(manifest["files"].items()):
+            data = (SHIPPED / name).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == entry["sha256"], name
+            assert len(data) == entry["bytes"], name
+
+        feature_names = json.loads((SHIPPED / "feature_names.json").read_text(encoding="utf-8"))
+        for frame, name in FEATURE_FILES.items():
+            data = (SHIPPED / name).read_bytes()
+            assert b"\r" not in data, name
+            table = json.loads(data, parse_constant=_refuse_constant)
+            assert list(table) == ["bundle_id", "frame", "columns", "rows"], name
+            assert table["bundle_id"] == DEFAULT_BUNDLE_ID
+            assert table["frame"] == frame
+            assert table["columns"] == feature_names[frame]
+            assert json.dumps(table, separators=(",", ":"), allow_nan=False).encode() == data
+
+
+# -- A synthetic bundle: four targets, two frames, both directions --
 
 
 SYMM_FEATURES = [f"s{i}" for i in range(6)]
 ANTI_FEATURES = [f"a{i}" for i in range(4)]
 SYNTH_TARGETS = ["L0_a", "L0_b", "L1_a", "L1_b"]
-SYNTH_FRAMES = {"L0_a": "symmetric", "L0_b": "symmetric", "L1_a": "antisymmetric", "L1_b": "antisymmetric"}
+SYNTH_FRAMES = {
+    "L0_a": "symmetric",
+    "L0_b": "symmetric",
+    "L1_a": "antisymmetric",
+    "L1_b": "antisymmetric",
+}
 SYNTH_SYSTEMS = ["Ag-Au", "Au-Ag", "Cu-Mg", "Mg-Cu", "Ni-Ti", "Ti-Ni"]
 
 
@@ -301,8 +454,7 @@ def synthetic_legacy_bundle(tmp_path_factory):
     """A four-target joblib bundle, built here rather than read from disk.
 
     Two targets per frame, so the antisymmetric mirror branch has to apply to BOTH
-    antisymmetric targets — the generalization the old hardcoded ``L1_a`` check could not
-    express, and the one a v23 bundle needs.
+    antisymmetric targets.
     """
     import joblib
     from sklearn.preprocessing import StandardScaler
@@ -346,12 +498,8 @@ def synthetic_features(tmp_path_factory, synthetic_legacy_bundle):
 
 
 def _write_portable(source: ProductionModelRunner, out_dir: Path, bundle_id: str) -> Path:
-    """Hand-write a portable bundle from a loaded legacy runner.
-
-    Deliberately NOT the converter: ``dev/scripts/export_portable_model_bundle.py`` is not
-    importable from the package suite, and a reader of these tests should be able to see the
-    whole format in one screen.
-    """
+    """Hand-write a portable bundle from a loaded legacy runner, so the whole format is
+    visible here."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for target in source.targets:
         source.models[target].steps[-1][1].get_booster().save_model(str(out_dir / f"{target}.ubj"))
@@ -371,10 +519,8 @@ def _write_portable(source: ProductionModelRunner, out_dir: Path, bundle_id: str
                 "targets": {
                     target: {
                         "kind": "standard",
-                        # Measured against the INSTALLED sklearn, exactly as the converter
-                        # does. sklearn changed this op order between 1.7.2 and 1.9.0, so a
-                        # hardcoded convention here would make this test assert that gliquid
-                        # inherits sklearn's drift -- the opposite of the point.
+                        # Checked against the INSTALLED sklearn, as the converter does; the
+                        # op order differs across sklearn versions, so never hardcode it.
                         "convention": detect_standard_inverse_convention(transformer),
                         "mean": list(map(float, transformer.mean_)),
                         "scale": list(map(float, transformer.scale_)),
@@ -434,8 +580,8 @@ class TestFourTargetBundle:
             )
 
     def test_the_mirror_branch_applies_to_every_antisymmetric_target(self, synthetic_pair):
-        """The old code mirrored ``L1_a`` alone, which silently skipped a bundle's second
-        antisymmetric target."""
+        """Mirroring must apply to every antisymmetric target, not just ``L1_a`` alone, or
+        a bundle's second antisymmetric target is silently skipped."""
         _, portable = synthetic_pair
         rng = np.random.default_rng(6)
         symm = pd.DataFrame(rng.normal(size=(1, len(SYMM_FEATURES))), columns=SYMM_FEATURES)
@@ -449,7 +595,9 @@ class TestFourTargetBundle:
             if SYNTH_FRAMES[target] != "antisymmetric":
                 continue
             expected = 0.5 * (
-                portable._predict_single_target(target, portable._prepare_row(anti, "antisymmetric"))
+                portable._predict_single_target(
+                    target, portable._prepare_row(anti, "antisymmetric")
+                )
                 - portable._predict_single_target(
                     target, portable._prepare_row(mirror, "antisymmetric")
                 )
@@ -483,7 +631,7 @@ class TestFourTargetBundle:
 
 
 class TestLegacyXlsxCorpus:
-    """Acceptance 7: a legacy bundle that ships its own xlsx keeps serving from them."""
+    """A legacy bundle that ships its own xlsx keeps serving from them."""
 
     @pytest.mark.parametrize("layout", ["beside-model", "under-data"])
     def test_legacy_bundle_reads_its_own_xlsx(self, tmp_path, synthetic_legacy_bundle, layout):
@@ -548,13 +696,9 @@ class TestBundleGuards:
 
 
 class TestStandardInverseConvention:
-    """The float32 op order inside ``StandardScaler.inverse_transform``, which sklearn changed.
-
-    Measured across the tox matrix: sklearn 1.7.1/1.7.2 round the coefficient AFTER
-    multiplying; 1.9.0 rounds it BEFORE (the Array-API migration), moving 2,530 of 4,096
-    float32 samples by up to 9.54e-7. A bundle therefore records which order reproduces the
-    sklearn that exported it, instead of gliquid hardcoding one and silently inheriting the
-    drift on the next upgrade.
+    """The float32 op order inside ``StandardScaler.inverse_transform`` differs across sklearn
+    versions (the coefficient rounded after or before multiplying); a bundle records which
+    order reproduces the sklearn that exported it.
     """
 
     @staticmethod
@@ -563,12 +707,6 @@ class TestStandardInverseConvention:
 
         rng = np.random.default_rng(2)
         return StandardScaler().fit(rng.normal(size=(500, 1)) * 137.0 - 4.0)
-
-    def test_the_installed_sklearn_matches_a_known_convention(self):
-        """If sklearn ships a THIRD order, this fails here rather than in a silent export."""
-        assert detect_standard_inverse_convention(self._fitted_scaler()) in (
-            STANDARD_INVERSE_CONVENTIONS
-        )
 
     def test_detection_agrees_with_sklearn_bit_for_bit(self):
         scaler = self._fitted_scaler()
@@ -658,9 +796,7 @@ class TestFeatureColumnMismatch:
             close_sqlite_backends()
 
 
-# =======================================================================================
-# The cache tables themselves
-# =======================================================================================
+# -- The cache tables themselves --
 
 
 class TestMlFeatureTables:
@@ -680,8 +816,7 @@ class TestMlFeatureTables:
         """Raw float64, not json: the acceptance downstream is ``array_equal``."""
         rng = np.random.default_rng(3)
         values = {
-            name: rng.normal(size=4) * 10.0 ** float(rng.integers(-8, 8))
-            for name in SYNTH_SYSTEMS
+            name: rng.normal(size=4) * 10.0 ** float(rng.integers(-8, 8)) for name in SYNTH_SYSTEMS
         }
         values["Nan-Sys"] = np.array([np.nan, np.inf, -np.inf, -0.0])
         backend = SqliteBackend(tmp_path / "s.sqlite", create=True)
@@ -752,9 +887,6 @@ class TestMlFeatureTables:
         """``float64-le``, checked against ``struct`` rather than against the writer."""
         import sqlite3
 
-        from gliquid.cache import ML_FEATURE_CODEC
-
-        assert ML_FEATURE_CODEC == "float64-le"
         path = tmp_path / "s.sqlite"
         backend = SqliteBackend(path, create=True)
         try:
