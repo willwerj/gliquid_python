@@ -32,11 +32,11 @@ dependencies = [
     "tqdm>=4.65",
     # NO ML STACK HERE, and that is measured rather than tidy-minded. scikit-learn, shap,
     # joblib and xgboost were base dependencies until they were found to cost ~935 MB of
-    # site-packages on the whsun-viz image -- which serves the ternary app, uses only the
+    # site-packages on a deployment image that serves the ternary app, uses only the
     # hull/phase-diagram path, and never constructs a ProductionModelRunner. The image went
-    # 5.08 GB -> 6.45 GB while its own /app payload SHRANK 1.3 G -> 1.1 G. gliquid.production_model_runner
-    # is the ONLY module in the package that imports any of them, so they are extras now:
-    # `ml`, `shap` and `models` below. Re-adding one here re-adds it for every consumer of
+    # 5.08 GB -> 6.45 GB while its own /app payload SHRANK 1.3 G -> 1.1 G. Only
+    # gliquid.production_model_runner and gliquid.shap_compat import any of them, lazily:
+    # xgboost is the `ml` extra, and shap or a legacy bundle's stack is installed by hand. Re-adding one here re-adds it for every consumer of
     # the library; test_optional_ml_extras.py fails if one reappears.
 ]
 requires-python = ">=3.10,<3.14"
@@ -83,13 +83,6 @@ classifiers = [
 mpds = [
     "mpds-client"
 ]
-editor = [
-    # Needed only to CONSTRUCT a ConvexHullEditor. hull_editor.py guards both imports, so
-    # on a bare install the module still imports and `from gliquid import ConvexHullEditor`
-    # still resolves; instantiating raises an ImportError naming this extra.
-    "ipywidgets>=8.0",
-    "ipython>=8.0",
-]
 ml = [
     # Everything the SHIPPED portable bundle needs, and nothing else. Its scalers are
     # _AffineScaler/_StandardInverse -- plain NumPy replaying recorded coefficients -- so
@@ -112,67 +105,32 @@ ml = [
     "xgboost-cpu>=2.1.1,<4; sys_platform != 'darwin'",
     "xgboost>=2.0,<4; sys_platform == 'darwin'",
 ]
-ml-gpu = [
-    # The CUDA-capable build, for a caller who wants XGBoost on a GPU for something OTHER
-    # than gliquid. Use INSTEAD OF `ml`, never alongside it: both distributions install a
-    # package directory named `xgboost`, so having both resolved into one environment leaves
-    # whichever pip wrote last, and uninstalling either breaks the other.
-    "xgboost>=2.0,<4",
-]
-shap = [
-    "gliquid[ml]",
-    # Separate from `ml` because no PREDICTION path touches it -- only get_shap_explanation
-    # and the two figure methods do -- and it is not cheap: shap pulls numba, which pulls
-    # llvmlite, which alone unpacks to 179.5 MB (measured, linux-x86_64 py312).
-    "shap>=0.48.0",
-]
-models = [
-    # ONLY for LEGACY joblib bundles (dev/model_bundles/, cache/<timestamp>/model/). The
-    # bundle shipped inside the wheel at gliquid/models/ is pickle-free -- XGBoost UBJSON
-    # plus JSON scaler coefficients -- and needs none of this: it loads on `ml` alone at any
-    # version, which is the entire point of spec 07.
-    #
-    # A pickled estimator unpickles against the versions that wrote it, hence the exact
-    # pins; keeping them here rather than in [project.dependencies] keeps the constraint
-    # off every consumer of the library.
-    "scikit-learn==1.7.1",
-    # joblib was a base dependency until the ML stack moved out; it is reached from exactly
-    # one place, _load_legacy_artifacts, and only ever to unpickle these bundles.
-    "joblib>=1.3.0",
-    # Pinned to the same 3.1.3 as before, on whichever distribution `ml` uses, so
-    # `gliquid[ml,models]` resolves to ONE xgboost rather than to two that clobber each
-    # other. Same version of the same code either way, so the unpickle guarantee is intact.
-    "xgboost-cpu==3.1.3; sys_platform != 'darwin'",
-    "xgboost==3.1.3; sys_platform == 'darwin'",
-    # Needed only to read a legacy bundle's prediction_dataset_*.xlsx feature sheets.
-    # It used to be required by an UNCONDITIONAL pd.read_excel in ProductionModelRunner's
-    # constructor, so a bare `pip install gliquid` imported fine and then died on
-    # instantiation; the feature corpus now comes from the cache and the xlsx read is
-    # reached only by a legacy bundle that actually ships them.
-    "openpyxl>=3.1.5",
-]
 test = [
     "pytest>=7.0",
-    "ruff>=0.6",
+    "pytest-xdist[psutil]>=3.5",
+    "ruff>=0.16,<0.17",
     # The compat matrix installs `extras = test`, so the ML stack has to arrive through
     # here or tests/test_portable_model_bundle.py would collect against no xgboost in all
-    # eight environments. Deliberately the UNPINNED forms, not `gliquid[models]`: that
-    # extra's scikit-learn==1.7.1 would freeze every env at one version and throw away the
+    # eight environments. Deliberately the UNPINNED forms, not a legacy bundle's
+    # scikit-learn==1.7.1, which would freeze every env at one version and throw away the
     # coverage that caught StandardScaler.inverse_transform changing its float32 op order
     # between 1.7.2 and 1.9.0 -- the reason _StandardInverse records a convention at all.
     #
     # `shap` is NOT here. No test exercises a SHAP path, so installing it would add numba +
     # llvmlite (~200 MB) to eight environments for zero coverage; the absence is itself
     # covered, by the subprocess tests that assert the guarded imports raise a message
-    # naming the extra.
+    # naming the install command.
     "gliquid[ml]",
     "scikit-learn>=1.4,<2",
     "joblib>=1.3.0",
     "openpyxl>=3.1.5",
 ]
 notebook = [
+    # Local Jupyter, plus the widget stack ConvexHullEditor needs to construct.
     "jupyter>=1.1.1",
     "ipykernel>=6.0",
+    "ipywidgets>=8.0",
+    "ipython>=8.0",
 ]
 
 [project.urls]
@@ -219,9 +177,8 @@ exclude = [
     # NOT optional, and PATH-ANCHORED -- it must be renamed whenever the directory is.
     # Hatchling's sdist default is "everything not VCS-ignored", which is BROADER than
     # the setuptools default this replaced: setuptools omitted the corpus by accident,
-    # hatchling would ship all ~10 MB of it. That directory (named data/ until it became
-    # cache/) is the external corpus -- per-system DFT caches, MPDS diagrams, the model
-    # bundle -- reached through config.set_cache_dir()/GLIQUID_CACHE_DIR. A distribution
+    # hatchling would ship it. That directory (named data/ until it became cache/) is the
+    # external corpus -- per-system DFT caches and MPDS diagrams -- reached through config.set_cache_dir()/GLIQUID_CACHE_DIR. A distribution
     # does not carry it.
     "/cache",
 ]
@@ -240,26 +197,23 @@ ignore = [
     "E501",  # line length is the formatter's job, not the linter's
 
     # B905, zip() without an explicit strict=. Off because the correct value is a per-site
-    # judgement, not a global one, and there are 55 sites across the hull walk and the plotting
+    # judgement, not a global one, and there are dozens of sites across the hull walk and the plotting
     # code. strict=True is only right where the two sequences are GUARANTEED equal-length;
     # where they legitimately differ it converts working code into a ValueError at runtime.
-    # strict=False silences the rule while asserting nothing, so 55 mechanical `strict=False`
+    # strict=False silences the rule while asserting nothing, so mechanical `strict=False`
     # insertions would buy zero safety and would then look, to the next reader, like a decision
     # someone had already made. This is a deferred AUDIT, not a dismissal: the useful pass is to
     # walk each zip, decide whether equal length is a real invariant of that call, and write
     # strict=True where it is. Re-enable this rule when someone can spend that pass.
     "B905",
 
-    # E402, module-level import not at the top of the file. All 13 sites are positional on
-    # purpose and hoisting any of them changes behaviour:
-    #   * src/gliquid/binary.py (2) -- the back-compat re-export block for the plot stack that
-    #     was split out into gliquid.plotting. It sits mid-file, directly under the comment that
-    #     explains why it exists and directly above BLPlotter, the consumer of those names.
-    #   * tests/ (11) -- imports that must follow either a sys.path.insert(... "src") bootstrap
-    #     or a pytest.importorskip() gate. Hoisted, they import the wrong tree or they hard-fail
-    #     a suite that is supposed to skip on a missing optional dependency.
-    # ~18 further sites already carry a per-line `# noqa: E402`; those markers are kept as local
-    # documentation of the same intent even though this entry now covers them.
+    # E402, module-level import not at the top of the file. Positional on purpose:
+    #   * src/gliquid/binary.py -- the re-export of the public plot-stack names, placed
+    #     directly above BLPlotter.
+    #   * tests/ -- imports that must follow a sys.path insert or a pytest.importorskip() gate.
+    #     Hoisted, they import the wrong tree or hard-fail a suite that should skip on a
+    #     missing optional dependency.
+    # Per-line `# noqa: E402` markers in tests/ state the same intent.
     "E402",
 ]
 
@@ -267,17 +221,17 @@ ignore = [
 # A bare `pytest` means the PUBLIC suite. The maintainer suite is explicit:
 #   pytest                        -> tests/
 #   pytest tests_internal         -> the pins, figure goldens and gated families
-#   pytest tests tests_internal   -> everything; what CI runs
-#   pytest -m "not slow"          -> the public suite without the Nelder-Mead fits
+#   pytest tests tests_internal   -> everything
+#   pytest tests tests_internal -n auto --dist worksteal   -> everything in parallel; the gate CI runs
 # tests/fixtures/, tests/pin_utils.py and tests/conftest.py stay in tests/ even though
 # tests_internal/ reads them: every file there anchors back out through parents[1]/'tests'.
 testpaths = ["tests"]
 markers = [
     "pins: frozen-value characterization pin. Re-freeze deliberately with the freezer script named in the file's docstring -- never edit a pin to make it pass.",
-    "needs_cache: needs the workspace matrix_data/ store. Skips (does not fail) without it.",
+    "needs_cache: needs the maintainer's per-system corpus store. Skips (does not fail) without it.",
     "needs_network: needs NEW_MP_API_KEY and a live Materials Project connection.",
-    "slow: a multi-second Nelder-Mead fit or hull build. Deselect with -m 'not slow'.",
     "directory_only: needs a DIRECTORY cache store (on-disk filenames, dir_structure, the atomic-write or cold-fetch write path). Skipped when GLIQUID_TEST_SQLITE_STORE swaps in a single-file store; see conftest.py.",
 ]
 # Fail on an undeclared marker rather than silently treating the typo as no marker.
+# Never add -n here: single-test and serial attribution runs must stay in one process.
 addopts = "--strict-markers"
