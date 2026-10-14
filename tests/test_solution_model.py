@@ -3,23 +3,16 @@
 A SolutionModel bundles per-component reference G(T) expressions, per-pair
 RKPolyExp excess models, and the interpolation geometry, and is the single
 implementation behind: the binary liquid eqs dict (fitting), the ternary liquid
-surface, and every solid-solution phase (binary AND ternary) — replacing the
-former numeric/symbolic duplication.
-
-Run with: python -m pytest tests/test_solution_model.py -v
+surface, and every solid-solution phase (binary AND ternary).
 """
 
 import pickle
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 import sympy as sp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from gliquid.solution import (  # noqa: E402
+from gliquid.solution import (
     R,
     RKPolyExp,
     SolutionModel,
@@ -33,7 +26,7 @@ X1, X2 = comp_symbols(3)
 
 
 class TestCoreBuilderRKOrders:
-    """build_solution_expressions now takes per-pair SEQUENCES of L_k expressions."""
+    """build_solution_expressions takes per-pair SEQUENCES of L_k expressions."""
 
     def test_two_order_sequence_matches_the_legacy_pair_tuple_shape(self):
         l0, l1 = sp.Symbol("p"), sp.Symbol("q")
@@ -164,8 +157,7 @@ class TestSolidSolutionFactory:
     def test_h_s_grid_endpoints_carry_no_ideal_term(self):
         """The 'safe' Piecewise zeroes x*ln(x) at the endpoints — no NaN, no -inf.
 
-        Values agree with the pure-element offsets to float-Add-reordering noise
-        (the symbolic path's term order differs from hand-numpy at ~1e-16 rel).
+        Values agree with the pure-element offsets to float-Add-reordering noise.
         """
         m = SolutionModel.from_ss_model(["Hf", "Zr"], self.SS_MODEL)
         h, s = m.h_s_grid((np.array([0.0, 1.0]),), 500.0)

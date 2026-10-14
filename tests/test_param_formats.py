@@ -3,22 +3,15 @@
 A ParamFormat declares, per Redlich-Kister order L0..L3: the subterm roles
 (a, b, ...), the functional form L_k(T), which parameters are pinned to zero
 during fitting, and the fitting topology (guess symbols, invariant-constraint
-count, penalty policy). The registry is the SINGLE home for what used to be
-~16 scattered param_format string branches across binary.py/ternary.py.
-
-Run with: python -m pytest tests/test_param_formats.py -v
+count, penalty policy). The registry is the SINGLE home for param_format logic.
 """
 
 import dataclasses
-import sys
-from pathlib import Path
 
 import pytest
 import sympy as sp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from gliquid.solution import (  # noqa: E402
+from gliquid.solution import (
     DEFAULT_TAU,
     PARAM_FORMATS,
     ParamFormat,

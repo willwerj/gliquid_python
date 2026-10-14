@@ -5,20 +5,14 @@ A Phase is valid for any number of components: fixed-stoichiometry phases
 energetics; solution phases (liquid, gas, solid solutions) have composition=None
 and evaluate through an attached solution model. The chemistry lives in the
 Composition; evaluation axes (e.g. x_B) are DERIVED via fraction_in().
-
-Run with: python -m pytest tests/test_phase.py -v
 """
 
 import pickle
-import sys
-from pathlib import Path
 
 import pytest
 from pymatgen.core import Composition
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from gliquid.phase import UNARY, ComponentRef, Phase  # noqa: E402
+from gliquid.phase import UNARY, ComponentRef, Phase
 
 
 class TestFixedCompositionPhases:

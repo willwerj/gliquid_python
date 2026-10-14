@@ -1,9 +1,12 @@
 """Characterization pins for the binary HSX/hull pipeline and the liquid-expression builder.
 
-Frozen pre-refactor by dev/scripts/_scratch/freeze_refactor_pins.py into
-fixtures/hull_numerics_pins.json. These are the behavior-preservation gates of the
-nd-reductionist-refactor: hull simplex SETS exact, all numerics at rtol <= 1e-9.
+Frozen by freeze_refactor_pins.py into fixtures/hull_numerics_pins.json; the CuMg block
+alone is re-frozen by refreeze_cumg_hull_pin.py. Hull simplex SETS exact, all numerics at
+rtol <= 1e-9.
 Everything runs offline against the shipped Hf-Zr / Cu-Mg data fixtures.
+
+Hf-Zr carries no interior compound and Cu-Mg carries two, so the two pipeline blocks split a
+change that moves a fixed-composition phase from one that moves the hull itself.
 """
 
 import json
@@ -13,7 +16,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import gliquid.ternary as tmod
 from gliquid.binary import BinaryLiquid
+from gliquid.hsx import lower_convex_hull
+from gliquid.solution import t_sym, x_vals
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pin_utils as pu  # noqa: E402
@@ -34,7 +40,7 @@ class TestLowerHullGoldens:
     @pytest.mark.parametrize("name", ["coarse_noisy", "ternary_simplex", "degenerate"])
     def test_simplices_exact(self, name):
         blk = PINS["gliq_lowerhull3_goldens"][name]
-        hull_fn = pu.get_lower_hull_fn()
+        hull_fn = lower_convex_hull
         pts = np.array(blk["points"], dtype=float)
         got_nv = hull_fn(pts.copy(), vertical_simplices=False)
         assert pu.canonical_simplices(got_nv) == pu.canonical_simplices(
@@ -48,7 +54,7 @@ class TestLowerHullGoldens:
 
 @pytest.fixture(scope="module")
 def bl_hfzr():
-    return BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
+    return BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, param_format="linear")
 
 
 @pytest.fixture(scope="module")
@@ -61,7 +67,11 @@ def bl_cumg():
 @pytest.fixture(scope="module")
 def bl_ss():
     return BinaryLiquid.from_cache(
-        "Hf-Zr", pd_ind=0, solid_solutions=True, ss_kwargs={"ref_mode": "from_unary_db"}
+        "Hf-Zr",
+        pd_ind=0,
+        solid_solutions=True,
+        ss_kwargs={"ref_mode": "from_unary_db"},
+        param_format="linear",
     )
 
 
@@ -78,11 +88,11 @@ def _check_hsx_pipeline(bl, pin, include_to_hsx):
     pu.assert_deep_approx(pin["invariant_counts"], counts)
     pu.assert_deep_approx(pin["phase_points"], hsx.get_phase_points())
     if include_to_hsx:
-        pu.assert_deep_approx(pin["to_hsx"], bl.to_HSX())
+        pu.assert_deep_approx(pin["to_hsx"], bl.to_hsx())
 
 
 def _check_liquid_builder(eqs, pin_block):
-    x_inner = pu.get_x_vals()[1:-1]
+    x_inner = np.asarray(x_vals, dtype=float)[1:-1]
     for T in LIQ_TEMPS:
         for i, params in enumerate(LIQ_PARAM_SETS):
             key = f"T{int(T)}_p{i}"
@@ -104,7 +114,6 @@ class TestHfZrPipeline:
         _check_liquid_builder(bl_hfzr.eqs, PINS["HfZr"]["liquid_builder"])
 
     def test_liquid_builder_combexp_default_tau(self, bl_hfzr):
-        _, t_sym, _ = pu.get_builder_and_symbols()
         eqs = pu.build_combexp_eqs(
             bl_hfzr.component_data["Hf"].gibbs_ref_expr(t_sym),
             bl_hfzr.component_data["Zr"].gibbs_ref_expr(t_sym),
@@ -113,9 +122,7 @@ class TestHfZrPipeline:
         _check_liquid_builder(eqs, PINS["HfZr_combexp_tau8000"]["liquid_builder"])
 
     def test_liquid_builder_combexp_tau3000(self, bl_hfzr):
-        """The tau certificate: kwarg (post-refactor) must reproduce what the retired
-        module-global monkeypatch produced (frozen pre-refactor)."""
-        _, t_sym, _ = pu.get_builder_and_symbols()
+        """The ``tau`` kwarg reproduces the frozen tau=3000 values."""
         eqs = pu.build_combexp_eqs(
             bl_hfzr.component_data["Hf"].gibbs_ref_expr(t_sym),
             bl_hfzr.component_data["Zr"].gibbs_ref_expr(t_sym),
@@ -135,11 +142,11 @@ class TestTernaryHSXSmoke:
     def test_four_vertex_compute_tx(self):
         from gliquid.hsx import HSX
 
-        tmod = pu.get_ternary_mod()
         ti = tmod.TernaryLiquidInterpolation(
             ["Hf", "Ti", "Zr"],
             xs_mix={"Hf-Ti": [0.0] * 4, "Ti-Zr": [0.0] * 4, "Zr-Hf": [0.0] * 4},
             delta=0.25,
+            param_format="linear",
         )
         ti.interpolate_liquid_surface()
         table = ti.hsx_df[["x0", "x1", "S", "H", "Phase Name"]]
@@ -184,7 +191,7 @@ class TestSolidSolutionPins:
             pu.assert_deep_approx(blk["s"], s)
 
     def test_gibbs_grid(self, bl_ss):
-        x = pu.get_x_vals()
+        x = np.asarray(x_vals, dtype=float)
         for phase, pinned in PINS["HfZr_ss"]["gibbs_1500K"].items():
             pu.assert_deep_approx(pinned, bl_ss.solid_solution_gibbs(phase, x, 1500.0))
 
