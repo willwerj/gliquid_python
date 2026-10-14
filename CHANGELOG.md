@@ -9,6 +9,450 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
+### Added
+
+- **Phase-energy imputation, in the new `gliquid.imputation` package.** When the DFT hull lacks a
+  solid phase the assessed diagram draws, imputation gives it a formation enthalpy from the fitted
+  liquid and places it on the hull as a tagged entry (`entry_id` prefix `IMPUTED_ID_PREFIX`), drawn
+  dashed. `impute_phases`, `drop_imputed_phases`, `imputed_entry_staleness` and
+  `stale_imputed_entries` take a `BinaryLiquid` or a `TernaryLiquidInterpolation`. The submodules
+  load on first use.
+
+- **Binary imputation.** `impute_phases(bl, fitting_data=...)` imputes each low-temperature solid
+  bordering the liquid that the hull lacks (`list_binary_imputation_targets(bl)` lists them), at the
+  enthalpy that reproduces the invariant it controls. `protect_dft_hull=True` (the default) keeps
+  drawn DFT phases on the hull. The model changes in memory only: `write_cache=True` stores the
+  entries, and a fit reads stored ones only with `include_imputed=True`.
+
+- **Ternary imputation.** `TernaryLiquidInterpolation.impute_phase(composition, temperature, ...)`,
+  `TLIPlotter.impute_phase` and `impute_phases(tli, targets)` place a solid that leaves the hull at
+  that temperature; `liquid_composition=` reads the enthalpy off the liquid's tangent instead, and a
+  phase that would displace a stable one warns and is placed only with `force=True`.
+  `adjust_phase_temperature(phase, temperature)` moves an existing phase. Each call returns a
+  `TernaryImputationResult`.
+
+- **New ternary model methods:** `liquid_gibbs`, `liquid_model`, `hull_table` and `solid_hull`
+  (both take `exclude=`), `all_imputed_entries`, `imputation_params`, `reset_derived_state` and
+  `imputed_phase_names`. `adjust_ternary_phase_temperature(tli, phase, temperature)` is the
+  function form of `adjust_phase_temperature`.
+
+- **Ternary imputed phases are stored only on request.** They are written with `write_cache=True`,
+  or by default after `config.set_persist_ternary_imputed(True)` /
+  `GLIQUID_PERSIST_TERNARY_IMPUTED=1`. `cache.OverlayBackend(base)` keeps writes in memory for one
+  session. `TernaryLiquidInterpolation(..., include_imputed=True)` places the stored imputed entries
+  of the system and its three edges.
+
+- **Imputed entries in either store.** `cache.KIND_IMPUTED_ENTRIES` names a system's imputed
+  entries in a directory or SQLite store; `api.get_dft_convexhull(..., include_imputed=True)` reads
+  them from either, and `api.read_imputed_entries`, `api.cache_imputed_entries` and
+  `api.drop_imputed_entries` read, write and clear them.
+
+- **Imputed entries on any hull.** `reanchor_imputed_entries(hull, entry_dicts)` rebuilds tagged
+  entries on another hull from their stored formation enthalpy, and `imputed_hull(components,
+  entry_dicts, ...)` returns the cached DFT hull with them. `TernaryLiquidInterpolation(
+  imputed_entries=...)` and `from_binaries(..., include_imputed=True)` place them on a ternary hull.
+
+- **`gliquid.imputation.core`** holds what binary and ternary imputation share, including
+  `provenance_header` and `hull_with_reanchored_entries`.
+
+- **Phase ablation, in `gliquid.imputation.ablation`.** `ablate_phases` removes interior DFT phases
+  from a system's hull for a re-fit, `restore_phases` puts them back, and `list_ablatable_phases`
+  lists the candidates.
+
+- **`gliquid.solid_coverage`.** `assess_solid_coverage` measures how much of a system's digitized
+  liquidus has a solid free-energy reference and returns a `SolidCoverageReport` of `PhaseCoverage`
+  records (moved from `gliquid.mpds`; see Removed). `assign_dft_phases` matches DFT hull phases to
+  MPDS phases one-to-one.
+
+- **Public helpers in `gliquid.mpds`:** `compound_key`, `formula_comp`, `FORMULA_TOL`,
+  `is_ordered_field_label`, `require_full_record`, `liquidus_crossings`, `find_local_maxima`,
+  `find_local_minima`, `SEGMENT_TOL`, `mig_feet`, `mig_feet_on_liquidus`, `validated_mig_feet`,
+  `bounding_invariant_comps`, `subtract_ranges` and `flank_bound`.
+- **Public helpers elsewhere:** `config.coverage_default` and `config.DEFAULT_CACHE_DIR_NAME`;
+  `cache.is_imputed_entry_dict` and `cache.imputed_entry_label`; `api.hull_entry_name` and
+  `api.DEFAULT_DFT_TYPE`; `phase.polymorph_ladder`; `plotting.style.abbreviate_phase_name`;
+  `BinaryLiquid.rebuild_hull_interp()` and `BinaryLiquid.reset_fit_state()`.
+
+- **Fit results name their constraint temperatures and dropped candidates.** Fit result dicts carry
+  `constr_temps`, and `BinaryLiquid.dropped_candidates` names the candidates that never ran.
+- **Hopeless candidates are not optimised.** `fit_parameters` skips a candidate whose initial
+  objective exceeds `init_objective_cutoff` times the best candidate's (default
+  `DEFAULT_INIT_OBJECTIVE_CUTOFF`, 100 000) and lists it on `BinaryLiquid.pruned_candidates`.
+  `init_objective_cutoff=None` runs every candidate.
+- **The fit objective penalises a liquid miscibility gap the assessed diagram does not draw.** A
+  generated two-liquid tie outside `BinaryLiquid.expected_gap_ranges`, widened by
+  `config.gap_match_tol` (`set_gap_match_tol`), scales the objective by
+  `(1 + width / GAP_WIDTH_SCALE) ** GAP_EXPONENT`. `suppress_unexpected_migs=False` turns it off.
+- **`mig` invariant records carry `apex`, `partial` and `source`.** A dome with no usable apex is
+  `partial` with `apex` None; `mpds.mig_apex` reads old and new records. Every printed two-liquid
+  label is processed (`mpds.is_two_liquid_label`).
+- `HSX.two_liquid_spans` and `hsx.two_liquid_spans_from_facets`.
+- **`min_comp_span` sets the composition span a liquidus comparison must cover**, on
+  `BinaryLiquid.calculate_deviation_metrics` and `fit_parameters`. A narrower comparison reports
+  `inf`; `None` keeps 0.7. `min_comp_span=0` with `allow_sparse_data=True` scores a few points.
+- **User-defined phases.** A phase added or edited in `ConvexHullEditor`, or an entry with no
+  `entry_id`, is user-defined: tagged by `USER_ID_PREFIX` (`"user:"`) or
+  `data[NON_DFT_KEY] == "user"`, built by `api.user_entry(...)`, and reported by
+  `cache.non_dft_entry_kind`, `cache.non_dft_entry_label`, `Phase.non_dft` and `phase.non_dft_kind`.
+  Figures draw it dashed under `plotting.style.USER_DEFINED_LEGEND_LABEL` (see
+  `non_dft_legend_label`); `plot_tx(non_dft_label=)` sets that legend text.
+- **Ternaries carry the edges' user-defined phases and removals.**
+  `TernaryLiquidInterpolation(user_entries=..., excluded_entries=...)` places user-defined entries
+  in place of the DFT entries each lists under `data['replaces']`, with any entropy in
+  `data[cache.ENTROPY_KEY]`, and leaves excluded ids off; `from_binaries` collects both from its
+  edges (`ConvexHullEditor.apply()` sets `removed_entry_ids`). `user_phase_names()` names them.
+- **`TernaryLiquidInterpolation.edge_hull(edge)`** is the hull the ternary places on one binary
+  edge, and the edge figures draw from it. `BinaryLiquid.from_cache(hull=...)` builds from a given
+  hull. `cache.canonical_entry_id` spells classic and new-API Materials Project ids alike.
+
+- **One solid phase's liquidus field, highlighted on the ternary figure.**
+  `TLIPlotter.get_plot('tx', highlight_phase=<phase>)` draws that phase's primary field in colour
+  over a desaturated surface. The fields come from per-phase liquidus sheets
+  (`liquidus_sheets.LiquidusSheets`, `plotting.liquidus_fields.partition_fields`); a liquid
+  miscibility gap is its own `L1 + L2` field. Where the sheets do not describe the hull's liquidus,
+  the surface is drawn without fields and a warning names the system.
+- **Clicking a legend entry of the ternary figure highlights that phase's field.**
+  `get_plot('tx')` embeds every legend phase's highlighted view (`interactive_legend=False` leaves
+  them out, for a figure about 2.5x smaller); `ternary_surface.dash_clientside_function()` attaches
+  the handler in Dash.
+- **The ternary liquidus figure runs its browser script wherever it is drawn.** `get_plot('tx')`
+  returns a `ternary_surface.LiquidusFigure`, whose `show()`, `write_html`/`to_html`, and display
+  as a notebook cell's result carry `ternary_surface.post_script()` (in a notebook kernel, `show()`
+  draws it with `side_by_side_html`, so it is interactive in JupyterLab, VS Code and Colab). New
+  `TLIPlotter.write_html(plot_type, file, **kwargs)`.
+
+- **Composition ticks and flat labels on the ternary liquidus figure.** `get_plot('tx')` ticks each
+  edge every 10 at.%, titles each edge and names each corner, with labels lying flat on the floor.
+  In a browser they turn with the scene to stay readable; `ternary_labels.orient_labels(fig)` fits
+  them to a camera set in Python. The scene's x and y axes share one scale.
+- **Ternary mixing models accept each binary pair in either order.** `xs_mix` and `fit_or_pred` on
+  `TernaryLiquidInterpolation` (and `TLIPlotter.from_components`) may name a pair against the edge
+  convention, e.g. `'Al-Si'` for the `'Si-Al'` edge; it is re-keyed with the odd Redlich-Kister
+  orders flipped (`ternary.orient_to_edges`). An `'A-B-C'` triplet entry may name its elements
+  in any order. Naming one pair or triplet in two orders raises `ValueError`.
+- **`get_convex_hull` and `get_plot('ch', T_celsius=...)` work in `hull_mode='hsx'`**, from the
+  interpolated surface at the nearest grid temperature.
+- **`scripts/run_colab_notebook.py` runs a notebook as Google Colab does**, in a Linux container
+  with Colab's package versions, against a wheel built from a local commit, and reports each cell's
+  warnings and errors and every Colab package the notebook's `pip install` replaces.
+- **`gliquid.plotting.export.side_by_side_html(figures, configs=, post_scripts=, height=)`** lays
+  Plotly figures out in equal columns as one HTML fragment for `IPython.display.HTML`, each column
+  an iframe of the figure's standalone page (a `LiquidusFigure` brings its own script), drawing in
+  Colab, JupyterLab, VS Code, classic Jupyter and exported notebooks.
+- **Flat ternary liquidus projections, in `gliquid.plotting.ternary_projection`.**
+  `draw_liquidus_panel(ax, record, sorted_components, order, levels)` draws the composition
+  triangle and `draw_closeup_panel(..., window)` a window of it: filled and labelled isotherms,
+  monovariant lines, one label per primary field, and outer composition ticks (`ticks=False` leaves
+  them off). `levels_for` and `window_levels` build the colour scales.
+- **A liquidus-MAPE chip on fitted ternary edge figures.** `TLIPlotter(..., edge_mape=True)` (and
+  `build_binary_edge_figures(ti, edge_mape=True)`) puts `MAPE x.x%` above the top-left corner of
+  each fitted edge's plot frame, scored against the edge's digitized MPDS liquidus on the hull the
+  edge is drawn with. The chip is colored by `gliquid.plotting.style.mape_color` (reversed
+  `RdYlGn` over 0-40 %, piecewise linear through `MAPE_COLOR_KNOTS` so it changes fastest between
+  5 and 20 %) with black or white text from `contrast_text`; predicted edges get none.
+  `gliquid.plotting.binary_tx.add_corner_note(fig, text, fill)` places such a chip on any figure,
+  as an annotation named `CORNER_NOTE_NAME`.
+- **Predicted ternary edges can draw their digitized MPDS liquidus.** `TLIPlotter(...,
+  pred_liquidus=True)` (and `build_binary_edge_figures(ti, pred_liquidus=True)`) draws the assessed
+  liquidus on every predicted edge that has one, beside the predicted liquidus; with `edge_mape`
+  such an edge also gets the MAPE chip.
+- **Progress reporting for ternary plots.** `TLIPlotter.process_data(progress=fn)` calls
+  `fn("model", 1, 1)`, then `fn("edges", k, n)` after each binary edge figure, then
+  `fn("hull", 1, 1)`; `build_binary_edge_figures(ti, progress=fn)` reports the edges alone.
+
+### Changed
+
+- **The default model is v29.03** (`gliquid/models/20261013_191431/`), replacing v24.01. It keeps
+  the v24.01 architecture (per-target pseudo-Huber XGBoost; `L1_a = 0.5 * (f(A-B) - f(B-A))`) and
+  is retrained on the 0.3.0 fits (DFT hull only, no imputation), with 50 order-invariant and 31
+  order-dependent features that add DFT hull and hull-area descriptors to the element features.
+
+- **`ProductionModelRunner.predict_system` accepts either element order.** `predict_system("Mg-Cu")`
+  returns the `Cu-Mg` prediction with `L1_a` negated; `L0_a` and `L0_b` are identical.
+
+- **Imputed and user-defined phases are drawn with a finer dash in the `tx` plots,** and the
+  unsupported stretches of the assessed liquidus are dash-dotted instead of dotted. The imputed
+  phase lines and their legend key use `plotting.style.IMPUTED_LINE_DASH` (`"4px,2px"`, was
+  plotly's `"dash"`); the ternary edge figures, which share the `tx` renderer, change with them.
+  The 3D ternary surface keeps `"dash"`.
+
+- **`fit+liq` and `pred+liq` mark the unsupported stretches of the assessed liquidus only for
+  `unsupported_range_mode='ignore'` and `'cap'` fits.** A `'score'` fit (the default) scores those
+  ranges like any other composition, so its assessed liquidus is drawn in one style.
+  `fit_parameters` stores the mode it ran under as `BinaryLiquid.fit_unsupported_range_mode`
+  (`None` before any fit, which marks `unsupported_comp_ranges` as before); `reset_fit_state`
+  clears it and `with_component_order` carries it.
+
+- **Ternary hover text gives the composition in at. % of all three elements,** as
+  `<element>: <x> at. %` lines in the order of the plotter's `sys_name`, on the `tx` liquidus
+  surface and its phase-field meshes and on the `ch` hull slice. They replaced the mole fractions
+  of the two non-base components (`x_<element>`); the trace `customdata` columns are now the three
+  at. % values, to one decimal place, followed by the trace's other hover fields.
+
+- **Lean MPDS records keep only what a fit+liquidus plot reads:** the pre-fill stitched liquidus,
+  its covered regions, `chemical_elements`, `temp`, `comp_range` and `reference`. `labels` and the
+  top-level `entry`, `jcode` and `year` are dropped; `cache.verify` compares those four header
+  fields on a lean store. Full records and full stores are unchanged.
+
+- **A compound melting as a distinct high-temperature polymorph is fitted, not masked.** Its
+  thermal forms are one phase: the low-temperature form's hull enthalpy stands in for the melting
+  form, the liquidus beside it is fitted, and the invariants it controls become constraint
+  candidates. 0.2.0 fits of such systems cannot be reproduced.
+- **`dft_type='GGA'` fetches carry composition-guessed MP2020 corrections.**
+  `api.apply_mp2020_corrections(entry_dicts)` recomputes `correction` and `energy_adjustments` with
+  oxidation states guessed from each composition, as the shipped binary corpus does, and the GGA
+  fetch applies it before caching. `MIXED` and `R2SCAN` fetches are unchanged; caches written
+  before this change keep the served corrections.
+- **A ternary hull warns when it disagrees with its binary edges.** The first load of the hull of a
+  ternary built `from_binaries` logs a warning when an entry shared with an edge hull carries a
+  different energy (`cache.entry_energies_by_id`, `cache.entry_energy_drift`).
+
+- **The ternary liquidus surface is drawn at the liquidus of the sheets.** `get_plot('tx')` draws
+  the surface through the hull's liquidus nodes and the field-boundary points, each at the hottest
+  sheet's temperature, so its valleys lie on the field boundaries; it lies above the hull's node
+  temperatures by the hull's grid error. Without sheets the surface is the hull's.
+- **Ternary isotherms are continuous.** Contour segments are joined through the mesh edges they
+  cross, so contours no longer break into pieces on fine or uneven meshes.
+- **A ternary liquidus node's "Coexistent Phases" are those of every hull facet meeting it at its
+  liquidus**, so the hover names every phase whose field meets that point.
+- **The ternary liquidus legend lists solid phases only.** The `L` entry is gone; `color_map`
+  still carries it. `get_plot('tx')` raises `TypeError` on a keyword it does not take, and
+  `highlight_phase` / `interactive_legend` raise `ValueError` with `get_plot('ch')`.
+
+- **With nothing configured, per-system data is stored in `./gliquid_cache`**
+  (`config.DEFAULT_CACHE_DIR_NAME`, fixed when G<sub>Liquid</sub> is imported, created by the first write)
+  instead of raising `ConfigError`. The store is flat: `<A-B>_ENTRIES_MP_GGA.json` and `<A-B>.json`.
+  `set_cache_dir()`, `GLIQUID_CACHE_DIR` and a source checkout's `cache/` still come first; the
+  default store never supplies the reference tables.
+- **A directory store is created on its first write, and `~` expands** in `set_cache_dir("~/data")`
+  and `GLIQUID_CACHE_DIR=~/data`.
+- **The ML feature table ships in the wheel.** The shipped model bundle carries its feature table
+  (`features_symmetric.json`, `features_antisymmetric.json`), which `ProductionModelRunner` reads
+  first, so with `pip install gliquid[ml]` `ProductionModelRunner().predict_system("Cu-Mg")` works
+  with no store configured.
+- **The notebooks run on the model that ships in the wheel.** The runner notebooks construct
+  `ProductionModelRunner()` with no arguments, needing no joblib bundle.
+- **A failed MPDS request is no longer cached as "no diagram".** Only the service's "no results"
+  answer (code 204) writes the `{"reference": None}` placeholder; any other client error is logged
+  and raised, and nothing is written. A placeholder an earlier version wrote after a failed request
+  still reads as no diagram: delete that system's MPDS file (e.g. `Cu-Mg.json`) to fetch it again.
+- **A read-only store fails before fetching.** On a system missing from a store G<sub>Liquid</sub> cannot
+  write to, `api.get_dft_convexhull`, `api.get_dft_structure_entries`, `api.cache_imputed_entries`
+  and `mpds.load_mpds_data` raise `CacheModeError` without contacting the Materials Project or
+  MPDS. In offline mode they still raise `OfflineError`.
+- **A ternary refuses to read its binary edges from the default store when it has its own.** A
+  `TernaryLiquidInterpolation(data_dir=...)` on the implicit `./gliquid_cache` raises
+  `ConfigError` naming both locations; call `config.set_cache_dir()` with the ternary's store first.
+- **`hull_editor.J_PER_MOL_PER_EV` is now `96485.0`**, a float: it is the same object as
+  `phase.EV_ATOM_TO_J_MOL`.
+- **The solid-coverage gate decides on how much constraining liquidus is left.** A system is
+  skipped when its supported liquidus plus any confirmed two-liquid dome covers less than
+  `min_supported_total` of the composition axis (default 0.30; `config.set_coverage_thresholds`,
+  or per fit `coverage_thresholds={'min_supported_total': ...}`). `skip_frac`, `min_missing` and
+  `missing_frac` are gone (see Removed); the report's `reason` and `thresholds` record each rule.
+  The floor rises with the axis that carries no digitized liquidus: it is `min_supported_total +
+  ignored_floor_slope * ignored_total`, with the new coverage knob `ignored_floor_slope` defaulting
+  to 0.5 (0 restores a constant floor).
+- **`binary.MASK_FRACTION_CAP` is 0.55** (was 0.60): `fit_parameters` skips a system with
+  `mask_fraction_exceeded` when the invariant-derived unsupported ranges mask more than 55% of the
+  digitized liquidus span.
+- **An unsupported component solid-solution field masks the liquidus it controls**: its drawn
+  range plus the primary field its flanking invariants give it, extended at most
+  `ss_extension_cap` of the axis per side (default 0.05) unless the masked component fields cover
+  at least `ss_width_guard` (default 0.67). Both are coverage thresholds, and `math.inf` switches
+  either off; the report's `thresholds` record `ss_drawn_width` and `ss_guard_fired`.
+- **DFT phases are matched to the assessed phases one-to-one** by
+  `solid_coverage.assign_dft_phases`, read by the coverage gate, `matched_dft_comps` and the
+  imputation target check: at the phase's stoichiometry or drawn range within `dft_edge_tol`
+  (default 0.01), or within `dft_structure_tol` (default 0.05) when the space groups match.
+  `dft_cover_tol` now applies only to `fit_parameters`' invariant-derived masking.
+- **A printed two-liquid region is not masked as a missing solid's field.** Inside a region the
+  diagram prints as `L1 + L2`, located by its `mig` record where there is one and by the label
+  otherwise, an unsupported solid's field is not masked.
+- **The dome constraints are gated on what the record knows.** The top-of-dome equation is emitted
+  only when the apex is known, and the bottom-of-dome equation only when both feet share one
+  isotherm and rest on the digitized liquidus within `coverage_mig_foot_tol`.
+- **`ConvexHullEditor` keeps every entry it does not change**, with its object, `entry_id`, `data`
+  and structure. An added or edited entry becomes a user-defined `ComputedEntry` with the id
+  `user:<name>` (suffixed `#2`, `#3`, ... on a clash), and an edited DFT entry lists the id it
+  replaces under `data['replaces']`. `editor.entries` rows gain `non_dft`. Removing an entry
+  changes only the editor's hull.
+- **`TernaryLiquidInterpolation.from_binaries` sets `fit_or_pred`**, so `TLIPlotter` draws the
+  binary-edge figures of a ternary built from binaries: `'fit'` for an edge with a digitized
+  liquidus, `'pred'` otherwise; an explicit `fit_or_pred=` still wins. Edge figures take their
+  phases from the ternary's own hull on that edge.
+
+- **`hull_mode='hsx'` is the default for ternary interpolation** in `TernaryLiquidInterpolation`
+  and `TLIPlotter.from_components`. Pass `hull_mode='gtx'` for the per-temperature Gibbs slices
+  on the `T_incr` grid.
+- **The notebooks install G<sub>Liquid</sub> by version on Colab.** Each Colab setup block pins one
+  `gliquid==` version with no extras and clones the repository only for its `cache/` data; the
+  notebooks configure the store with `set_cache_dir` and display figures through `BLPlotter.show`.
+- **`colab_demo.ipynb` runs the whole pipeline on Ga–Ru–Si**: the assessed Ru–Si diagram, a hull
+  edit, Ru–Si and Ga–Si fits, an ML prediction of Ga–Ru, the interpolated ternary liquidus with the
+  Ru₂Si₃ field highlighted, and the DSC-based revision from `GaRu_adjustment.ipynb`. Its data ships
+  in `cache/`, so it runs without API keys.
+- **Importing `gliquid.api` no longer imports `pymatgen.entries.compatibility`.** It loads on first
+  use, so importing `gliquid.api`, `gliquid.binary` or `gliquid.ternary` is faster.
+- **`TernaryLiquidInterpolation(solid_solutions=)` defaults to `config.solid_solutions`**, as
+  `BinaryLiquid.from_cache` does (was `False`), and its solid-solution models load with
+  `config.ss_ref_mode` unless `ss_kwargs` names a `ref_mode`.
+- **`param_format` defaults to `'comb-exp'`** (was `'linear'`) in `BinaryLiquid`,
+  `BinaryLiquid.from_cache`, `RKPolyExp` and `TernaryLiquidInterpolation`. All three formats
+  take the same four parameters, so a parameter list given without a format is now read as
+  comb-exp, and a fit without one pins `L1_b`; pass `param_format='linear'` for the old reading.
+
+### Removed
+
+- **The `editor`, `shap`, `models` and `ml-gpu` extras.** The extras are now `mpds`, `ml` and
+  `notebook`. `gliquid[notebook]` installs the widget stack `ConvexHullEditor` needs, alongside
+  Jupyter. SHAP explanations need `pip install shap`, and a legacy joblib bundle needs
+  `pip install joblib openpyxl scikit-learn==1.7.1`; each error message names its install.
+  For a CUDA build of XGBoost, install `xgboost` yourself and leave out `[ml]`.
+
+- **The `data_*` spellings of the cache configuration**, with no alias: `config.set_data_dir()`,
+  `config.require_data_dir()`, `config.data_dir`, `config.DATA_DIR_ENV_VAR`, `gliquid.set_data_dir`
+  and `GLIQUID_DATA_DIR`. Use `set_cache_dir()`, `require_cache_dir()`, `config.cache_dir`,
+  `CACHE_DIR_ENV_VAR` and `GLIQUID_CACHE_DIR`. `api._resolve_sys_dir()` is gone;
+  `api.resolve_cache_path(CacheKey(...))` names a record's path. The per-call `data_dir=` keyword
+  of `TernaryLiquidInterpolation`, `TLIPlotter.from_components` and `get_dft_convexhull` is unchanged.
+- **The 0.2.0 parameter `input` is renamed with no alias:** `system` on
+  `api.get_dft_convexhull`, `api.get_dft_structure_entries`, `api.cache_imputed_entries`,
+  `BinaryLiquid.from_cache`, `mpds.load_mpds_data` and `phase.validate_and_format_system`, and
+  `params` on `BinaryLiquid.update_params`. Passing `input=` raises `TypeError` naming the new
+  keyword.
+- **`assess_solid_coverage`, `SolidCoverageReport` and `PhaseCoverage` live only in
+  `gliquid.solid_coverage`.** `gliquid.mpds` no longer resolves them.
+- `ProductionModelRunner.create_beeswarm_figures` and
+  `ProductionModelRunner.apply_feature_updates`, and the `gliquid.cache` constants
+  `ML_FEATURE_CODEC` and `POOL_META_KEYS`.
+- BLPlotter plot type `'vch'` (it drew the `'ch+g'` figure); use `'ch'` or `'ch+g'`.
+- `gliquid.ternary.build_polymorph_transitions`. Import it from `gliquid.plotting.binary_tx`.
+- **0.2.0 spellings renamed since**, each raising `TypeError` naming the new one:
+  `fit_parameters(ignored_ranges=)` and `calculate_deviation_metrics(ignored_ranges=)` are
+  `unsupported_range_mode='ignore'` or `'score'`; `BinaryLiquid(ignored_comp_ranges=)` and its
+  attribute are `unsupported_comp_ranges`; `from_cache(comp_range_fit_lim=)` is
+  `assessed_crange_floor`. Assigning `bl.comp_range_fit_lim` has no effect.
+- **`BinaryLiquid.to_HSX` is renamed `to_hsx`,** with the same parameters and no alias: calling
+  `to_HSX` raises `AttributeError`.
+- **`fit_parameters(check_phase_mismatch=)`**, which has gated nothing since 0.1.0, and
+  **`fit_parameters(num_points=)`** raise `TypeError`; `RETIRED_FIT_KWARGS` is gone.
+- **`BinaryLiquid(...)` takes its options as keyword-only parameters.** An unknown keyword
+  raises `TypeError` instead of being ignored, and `init_triangle=` is no longer accepted.
+- **Per-knob coverage keywords.** Every coverage knob is overridden for one call through one
+  dict, `fit_parameters(coverage_thresholds={...})` or `assess_solid_coverage(thresholds={...})`,
+  validated by `config.coverage_settings`; `low_temp_axis_fraction` is config-only. The 0.2.0
+  keywords `fit_parameters(coverage_ss_narrow_tol=, coverage_dft_cover_tol=,
+  coverage_ss_rescue_max_width=)` and `assess_solid_coverage(ss_narrow_tol=, dft_cover_tol=,
+  ss_rescue_max_width=)` raise `TypeError` naming the dict entry that replaces them.
+- **`set_coverage_thresholds(skip_frac=, min_missing=, missing_frac=)`.** Passing one raises
+  `TypeError` naming `min_supported_total`, and the keys leave `report.thresholds`.
+- The `'distinct_melting_polymorph'` and `'polymorph_transition_temp'` keys of the phase
+  dicts `mpds.collapse_polymorphs` and `mpds.identify_invariant_points` return.
+- The `'scale'` key of `lupis_elliott_cfg`, an alias of `'strength'`. Passing it raises
+  `TypeError` naming `'strength'`.
+- `gliquid.mpds.SS_SPACEGROUPS` and `gliquid.plotting.binary_tx.subscript_formula`. Import them
+  from `gliquid.phase` and `gliquid.plotting.style`.
+- `gliquid.api.atomic_write_json` and its alias `gliquid.api._atomic_write_json`. Import
+  `atomic_write_json` from `gliquid.cache`.
+- **`TLIPlotter(temp_slider=, T_incr=, hull_mode=)`.** The plotter uses the hull settings of the
+  interpolation it wraps: set them on `TernaryLiquidInterpolation`, or pass them to
+  `TLIPlotter.from_components`, which forwards them. Passing one to `TLIPlotter` raises
+  `TypeError` naming `TernaryLiquidInterpolation`.
+- **`TernaryLiquidInterpolation(ternary_l0=)`.** Give the ternary term as an `'A-B-C'` entry of
+  `xs_mix`; on a ternary built with `from_binaries`, assign
+  `ti.xs_mix['A-B-C'] = RKPolyExp('regular', [L0])` before interpolating. Passing `ternary_l0=`
+  raises `TypeError` naming the `xs_mix` entry.
+- **`TernaryLiquidInterpolation.from_binaries(components=)`.** `order=[...]` builds in the same
+  order. Passing `components=` raises `TypeError` naming `order=`.
+
+### Fixed
+
+- **An entropy-stabilized compound is drawn from its formation temperature up.** On a `fit+liq`
+  T-x diagram, a compound above the 0 K enthalpy hull (stable only where its entropy lowers its
+  free energy, as after a positive solid entropy adjustment) starts at the solid-state reaction
+  that forms it; it used to be drawn down to the plot floor.
+- **A per-fit `dft_cover_tol` reaches the invariant-derived masking.**
+  `fit_parameters(coverage_thresholds={'dft_cover_tol': ...})` sets the tolerance within which
+  a DFT phase covers a missing terminal phase; the per-fit value used to be recorded on the
+  report and ignored.
+- **`fit_parameters` with one attempt logs a failing attempt and returns `[]`,** as it does
+  with several; an exception other than `RuntimeError` from the only attempt used to
+  propagate.
+- **`BinaryLiquid` docstrings state the contract the code keeps.** `f` returns the liquidus
+  RMSE times its penalty factors, not the MAE; `check_full_ss` stops invariant identification
+  early; `get_plot` lists every plot type; the class docstring lists every attribute.
+- **`lower_convex_hull` drops vertical simplices on every edge of a ternary.** Zero-area
+  simplices on the `x0 + x1 = 1` edge stayed on the gtx hull and tied solids to liquids across
+  that edge. Liquidus temperatures are unchanged; the `get_plot('ch')` slice loses its vertical
+  curtain on that edge.
+
+- **Coverage and fitting run on a hull edited in `ConvexHullEditor`.** `fit_parameters`,
+  `dft_assignment` and `assess_solid_coverage` raised `AttributeError` on an edited or
+  hand-built hull. An entry with no id, and any imputed or user-defined entry, has no space
+  group; DFT entries the editor leaves alone keep theirs.
+- **`ConvexHullEditor.apply()` keeps the model consistent with the edited hull.** It keeps
+  the model's solid-solution phases (it dropped them, even with no edit), orders endpoint
+  polymorphs as `from_cache` does, rebuilds `eqs['h_hull_interp']` from the edited 0 K hull, and
+  recomputes the phase points and an already computed `hsx`, so later fits and `BLPlotter`
+  figures see the edited hull.
+- **`ConvexHullEditor`'s temperature no longer drops compounds.** `apply()` keeps every phase
+  stable at 0 K plus those stable at the editor temperature, including a differently named
+  phase at a 0 K compound's composition, and elemental reference entries keep S = 0 (they were
+  seeded with a high-temperature polymorph's entropy). The editor's table marks a phase kept
+  because it is stable at 0 K, and `entries` reports `stable_at_0k`.
+- **`ConvexHullEditor` loads each phase's entropy onto one entry**: the closest in formation
+  enthalpy among the same-named entries at its composition, else among all entries there, not
+  every entry at that composition. Re-running the editor no longer hands a phase's entropy to
+  its metastable twins.
+- **`TernaryLiquidInterpolation.from_binaries` gives each user-defined entry its own phase's
+  entropy.** Two user entries at one edge composition each took the entropy of whichever
+  phase there was listed last.
+- **`ConvexHullEditor.add_entry` rejects a name already in use**: `'L'`, a solid-solution or
+  endpoint polymorph phase, or an entry at another composition. Its change log no longer
+  raises `UnicodeEncodeError` on a console that cannot encode the log's symbols.
+- **`BLPlotter`'s `'hsx'` and `'scatter'` figures follow the plotted model**: a reused plotter
+  colours them by the model's current phases, and a model whose `hsx` was dropped (by a copy
+  or a pickle) has it recomputed.
+- **Offline mode proceeds without an MPDS diagram when no MPDS key is set.** On an MPDS cache
+  miss with no `MPDS_API_KEY`, `mpds.load_mpds_data` logs a warning and returns
+  `{"reference": None}` in either mode instead of raising `OfflineError` offline. With a key set,
+  offline mode still raises `OfflineError` before the fetch.
+- **An invariant-constraint candidate whose equations do not determine the fit's solve
+  parameters is dropped** before scoring and named on `dropped_candidates`. It was admitted, ran
+  free of the equation it was named for, and could be reported as the winning constraint.
+- **The Nelder-Mead simplex update follows the textbook rules.** A reflection better than the
+  second-worst vertex is accepted, a shrink moves every vertex but the best halfway to it, and
+  infinite vertices of the initial simplex are moved onto the feasible side. Vertex objectives are
+  cached between iterations. Fits change; a campaign is not comparable across this change.
+- **Initial `L*_b` guesses of the `exp(-T/tau)` formats start on the S_xs(0 K) = 0 line**,
+  at `L*_a / tau`, rather than on the linear formats' tau line, and a zero `L*_b` reference no
+  longer collapses the H-S partition simplex.
+- **The eutectic `0th` equation used the liquid free energy where its slope belongs.** The
+  tangent condition is `g_L + g_L' (x_s − x_e) = g_s`. A fit whose winner was an `eut 0th`
+  candidate is affected.
+- **`comb-exp` fits no longer discard their hottest invariant equation.** Every equation is now its
+  own candidate for the one-equation format, so a system whose only equation is a dome's feet
+  equation has an invariant-constrained candidate.
+- **Reversed-frame diagrams can match their dome polygon.** Label positions and shape
+  coordinates were read in the record's own component frame while the liquidus was in the
+  evaluation frame.
+
+- **`BLPlotter.show` displays Matplotlib figures in Jupyter and Colab.** Under the inline
+  backend the `'pc'` and `'nmp'` figures are displayed where `show` is called, once, instead of
+  warning `FigureCanvasAgg is non-interactive`.
+- **The `'pc'` phase-comparison figure no longer warns about tick labels.** Its composition
+  axis sets the tick positions together with the at.% labels.
+- **The adjustment notebooks fit again.** `GaRu_adjustment.ipynb` and `PbTb_adjustment.ipynb`
+  passed `check_phase_mismatch=False`, which had no effect, so the coverage gate skipped both
+  fits; they pass `check_solid_coverage=False`.
+- **Decimal stoichiometries are subscripted whole.** `subscript_formula` and
+  `abbreviate_phase_name` render `Fe1.7Ge` as `Fe<sub>1.7</sub>Ge` (it was
+  `Fe<sub>1</sub>.7Ge`), in the ternary legend and hover text and in binary field labels
+  written as atomic fractions (`Y<sub>0.177</sub>Zn<sub>0.823</sub>`).
+
 ## [0.2.0] - 2026-08-20
 
 ### Added
@@ -181,6 +625,7 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/willwerj/gliquid_python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/willwerj/gliquid_python/releases/tag/v0.1.0
