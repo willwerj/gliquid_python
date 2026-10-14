@@ -1,27 +1,21 @@
-"""The print/logging boundary, as an enforced contract rather than a convention.
+"""The print/logging boundary, as an enforced contract.
 
 The library reports through ``logging`` (one ``logging.getLogger(__name__)`` per module,
 all under the ``gliquid`` parent), and configures no handlers of its own -- handlers belong
-to the application. ``dev/scripts/Fit_Binary_Systems.py::_attach_gliquid_log_handler`` is
-the driver-side half, deliberately attached AFTER its stdout tee/queue swap so library
-records land in fit logs exactly where the prints used to.
+to the application.
 
-Three ``print()`` sites survive that conversion on purpose, each carrying an in-code
-"documented logging exemption" comment:
+Three ``print()`` sites are exempt, each carrying an in-code "documented logging exemption"
+comment:
 
-  * ``mpds.print_phase_mismatch_chart`` -- the function *is* a console chart renderer; the
-    aligned monospace rows are the product, not diagnostics.
-  * ``hull_editor._log`` -- writes into an ``ipywidgets`` Output pane. Widget UI.
-  * ``cache._emit`` -- the single output site of ``python -m gliquid.cache``. A CLI's
-    stdout is its product, and the alternative is worse: a library may not call
-    ``basicConfig``/``addHandler`` (see ``TestLibraryConfiguresNoLogging`` below), so a
-    ``logger`` call there would print nothing at all under the default configuration.
-    Library code in that module still reports through ``logger``; only the CLI section
-    below the marked divider uses ``_emit``.
+  * ``mpds.print_phase_mismatch_chart`` -- the function *is* a console chart renderer.
+  * ``hull_editor._log`` -- writes into an ``ipywidgets`` Output pane.
+  * ``cache._emit`` -- the single output site of ``python -m gliquid.cache``, whose stdout is
+    its product; a ``logger`` call there would print nothing under the default
+    configuration. Library code in that module still reports through ``logger``.
 
-``EXEMPT`` below is deliberately a short, explicit list: adding a fourth exemption requires
-editing this file, which is the point. These tests scan the SOURCE TREE, not the import
-graph, so a print added inside a branch no test happens to execute is still caught.
+``EXEMPT`` below is a short, explicit list: adding an exemption requires editing this file.
+These tests scan the SOURCE TREE, not the import graph, so a print added inside a branch no
+test executes is still caught.
 """
 
 import ast
@@ -148,11 +142,7 @@ class TestPrintBoundary:
 
 
 class TestLibraryConfiguresNoLogging:
-    """A library attaches no handlers and sets no levels; the application does.
-
-    ``Fit_Binary_Systems`` attaches a StreamHandler to the ``gliquid`` logger itself, and
-    a basicConfig here would race that (and any other consumer's) configuration.
-    """
+    """A library attaches no handlers and sets no levels; the application does."""
 
     def test_no_handler_or_level_configuration_in_the_library(self):
         offenders = []
