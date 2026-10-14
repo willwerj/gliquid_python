@@ -8,8 +8,7 @@ spacegroup) of the entry's structure.
 
 Its sibling ``compounds`` block carries non-elemental artifacts, which the
 elemental path structurally cannot express (it refuses arity != 1). Those rules
-apply at ANY arity and replaced the two element-specific Mg149 literals that
-used to sit inline in ``api.py``.
+apply at ANY arity, covering the Mg149 cases the elemental path cannot reach.
 """
 
 import json
@@ -23,9 +22,16 @@ from pymatgen.entries.computed_entries import ComputedStructureEntry
 import gliquid.api as api
 import gliquid.config as config
 
+FCC_SITES = [[0, 0, 0], [0.5, 0.5, 0], [0.5, 0, 0.5], [0, 0.5, 0.5]]
+
+
+def _fcc(element, a):
+    """The 4-site conventional Fm-3m cell, sites in ``Structure.from_spacegroup`` order."""
+    return Structure(Lattice.cubic(a), [element] * 4, FCC_SITES)
+
 
 def _fcc_ag(energy_per_atom):
-    s = Structure.from_spacegroup("Fm-3m", Lattice.cubic(4.09), ["Ag"], [[0, 0, 0]])
+    s = _fcc("Ag", 4.09)
     return ComputedStructureEntry(s, energy_per_atom * len(s), entry_id="mp-124-GGA")
 
 
@@ -40,7 +46,7 @@ def _hcp_ag(energy_per_atom, entry_id):
 
 
 def _fcc_au(energy_per_atom):
-    s = Structure.from_spacegroup("Fm-3m", Lattice.cubic(4.08), ["Au"], [[0, 0, 0]])
+    s = _fcc("Au", 4.08)
     return ComputedStructureEntry(s, energy_per_atom * len(s), entry_id="mp-81-GGA")
 
 
@@ -105,8 +111,8 @@ class TestSpuriousMatcher:
         )
 
     def test_elements_only_file_ignores_compound_composition_artifacts(self, blacklist_file):
-        # Acceptance 4: a file carrying ONLY elemental rules behaves exactly as
-        # before the compounds block existed — no compound rule, nothing filtered.
+        # A file carrying ONLY elemental rules behaves as if there were no
+        # compound rule at all — nothing filtered.
         assert api._spurious_structure_index()[3] == ()
         assert not api._is_spurious_entry_dict({"composition": {"Mg": 149.0, "Cu": 1.0}})
 
@@ -194,9 +200,7 @@ class TestAnchorConsistencyGuard:
 def _agau_b2(energy_per_atom, entry_id="mp-2647-GGA"):
     # One Ag + one Au in a CsCl-type cell: a real arity-2 entry the elemental
     # blacklist path can never reach.
-    s = Structure(
-        Lattice.cubic(3.2), ["Ag", "Au"], [[0, 0, 0], [0.5, 0.5, 0.5]]
-    )
+    s = Structure(Lattice.cubic(3.2), ["Ag", "Au"], [[0, 0, 0], [0.5, 0.5, 0.5]])
     return ComputedStructureEntry(s, energy_per_atom * len(s), entry_id=entry_id)
 
 
@@ -212,8 +216,8 @@ class TestCompoundRules:
     """The ``compounds`` block: three predicate forms, applied at any arity."""
 
     def test_compounds_only_file_still_filters(self, tmp_path, monkeypatch):
-        # Acceptance 3 — guards the ``if not ids and not pairs: return False``
-        # fast-out, which would make a compounds-only file a silent no-op.
+        # Guards the ``if not ids and not pairs: return False`` fast-out,
+        # which would make a compounds-only file a silent no-op.
         _compound_blacklist(
             tmp_path,
             monkeypatch,
@@ -239,8 +243,7 @@ class TestCompoundRules:
             assert not api._is_spurious_entry_dict({"composition": {"Mg": count, "Cu": 1.0}})
 
     def test_element_count_matches_int_and_float_counts(self, tmp_path, monkeypatch):
-        # Cached counts are floats; the literal this replaced compared them to an
-        # int, so both spellings must match.
+        # Cached counts are floats, so both int and float spellings must match.
         _compound_blacklist(
             tmp_path, monkeypatch, {"compounds": [{"match": {"element_count": {"Mg": 149}}}]}
         )
@@ -316,7 +319,7 @@ class TestCompoundRules:
         assert not api._is_spurious_entry_dict({"composition": {"Ag": 4.0}})
 
     def test_compound_rule_also_applies_to_elemental_entries(self, tmp_path, monkeypatch):
-        # The literal this replaced tested every entry regardless of arity.
+        # This rule tests every entry regardless of arity.
         _compound_blacklist(
             tmp_path, monkeypatch, {"compounds": [{"match": {"element_count": {"Mg": 149}}}]}
         )
@@ -336,9 +339,9 @@ class TestCompoundRules:
         assert not api._is_spurious_entry_dict({"composition": {"Mg": 2.0, "Cu": 1.0}})
 
     def test_index_cache_reindexes_when_the_file_changes(self, tmp_path, monkeypatch):
-        # The memo tuple grew to 6 entries when compounds landed; a mis-shifted
-        # unpack site yields a cache that never invalidates. Positive control
-        # first: the rule must be live before we assert it goes away.
+        # The memo tuple has 6 entries; a mis-shifted unpack site yields a
+        # cache that never invalidates. Positive control first: the rule
+        # must be live before we assert it goes away.
         path = _compound_blacklist(
             tmp_path, monkeypatch, {"compounds": [{"match": {"element_count": {"Mg": 149}}}]}
         )
@@ -375,7 +378,9 @@ class TestShippedBlacklistCarriesMg149:
         return config.spurious_structures_file
 
     def test_shipped_file_declares_the_compound_rule(self, shipped):
-        raw = json.loads(shipped.read_text() if hasattr(shipped, "read_text") else open(shipped).read())
+        raw = json.loads(
+            shipped.read_text() if hasattr(shipped, "read_text") else open(shipped).read()
+        )
         assert "compounds" in raw, "the compounds block must be a SIBLING of elements"
         assert "compounds" not in raw.get("elements", {})
         assert any(
@@ -390,3 +395,66 @@ class TestShippedBlacklistCarriesMg149:
         near_miss = {"composition": {"Mg": 148.0, "Cu": 1.0}, "entry_id": "mp-near-GGA"}
         got = api._filter_spurious_entries([artifact, keeper, near_miss])
         assert got == [keeper, near_miss]
+
+
+def _read(path):
+    return path.read_text(encoding="utf-8") if hasattr(path, "read_text") else open(path).read()
+
+
+class TestShippedBlacklistCarriesTheDisplacingHullVertices:
+    """Hull vertices at compositions the assessed diagram never draws.
+
+    Each one sits near -- not at -- a compound MPDS does draw. Hull vertices are assigned to
+    drawn compounds EXCLUSIVELY, so an undrawn vertex consumes the match its neighbour needed
+    and leaves that neighbour with no solid free energy at any matching tolerance.
+    """
+
+    # (cell composition, the drawn compound it was displacing)
+    RULES = [
+        ({"Nb": 6, "Ga": 4}, "Nb5Ga3"),
+        ({"Sc": 12, "Ga": 20}, "ScGa2"),
+        ({"Sc": 24, "Ga": 16}, "Sc5Ga3"),
+        ({"Na": 26, "Cd": 141}, "Na2Cd11"),
+        ({"Ho": 1, "Mg": 3}, "Mg24Ho5"),
+        ({"Ho": 2, "Mg": 6}, "Mg24Ho5"),
+        ({"Er": 1, "Mg": 3}, "Mg24Er5"),
+        ({"Er": 2, "Mg": 6}, "Mg24Er5"),
+    ]
+
+    @pytest.fixture()
+    def shipped(self, monkeypatch):
+        monkeypatch.setattr(api, "_spurious_cache", None)
+        return config.spurious_structures_file
+
+    @pytest.mark.parametrize("cell,displaced", RULES)
+    def test_the_rule_is_declared_on_the_cell_composition(self, cell, displaced, shipped):
+        """Cell counts, not the reduced formula: a reduced-formula rule matches nothing."""
+        raw = json.loads(_read(shipped))
+        assert any(rec.get("match", {}).get("composition") == cell for rec in raw["compounds"])
+
+    @pytest.mark.parametrize("cell,displaced", RULES)
+    def test_the_entry_is_filtered_and_its_neighbours_are_not(self, cell, displaced, shipped):
+        blacklisted = {
+            "composition": {k: float(v) for k, v in cell.items()},
+            "entry_id": "mp-blacklisted-GGA",
+        }
+        # one atom off in either direction must survive -- the rule is exact, not a window
+        el = sorted(cell)[0]
+        neighbours = [
+            {
+                "composition": {**{k: float(v) for k, v in cell.items()}, el: float(cell[el] + 1)},
+                "entry_id": "mp-plus-GGA",
+            },
+            {
+                "composition": {**{k: float(v) for k, v in cell.items()}, el: float(cell[el] - 1)},
+                "entry_id": "mp-minus-GGA",
+            },
+        ]
+        got = api._filter_spurious_entries([blacklisted, *neighbours])
+        assert got == neighbours
+
+    def test_every_compound_rule_carries_its_provenance(self, shipped):
+        raw = json.loads(_read(shipped))
+        for rec in raw["compounds"]:
+            assert rec.get("common_name") and rec.get("reason")
+            assert rec.get("source") and rec.get("date")

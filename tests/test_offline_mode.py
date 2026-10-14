@@ -1,20 +1,13 @@
 """Offline mode: every remote path RAISES rather than reaching out.
 
-This is what actually removes the API key from a deployment. "Has no key installed" is not
-a property anything enforces -- ``api.get_api_key`` falls through to a gitignored ``.env``,
-an operator's shell may export the variable, and a cache miss then reaches the network
-anyway, slowly and without credentials. ``config.set_offline(True)`` makes that a
-configuration decision enforced in code.
+``config.set_offline(True)`` refuses every fetch, whatever key ``api.get_api_key`` finds.
 
 Every raise here is paired with a POSITIVE CONTROL showing the same call succeeds with
-offline mode off. Without one, a test asserting "this raises" would keep passing if the
-function started raising for an unrelated reason -- a missing key, a renamed argument, an
-import error -- and the guard being tested could be deleted entirely.
+offline mode off.
 
-The MPDS half carries the more dangerous case. On a cache miss with no ``MPDS_API_KEY``
-that path logs a warning and returns ``{"reference": None}``, which is shaped exactly like
-the real answer "MPDS holds no digitized diagram for this system". A silent skip under
-offline mode would be indistinguishable from that fact.
+The MPDS path fetches only with an ``MPDS_API_KEY``. A cache miss with no key fetches
+nothing in either mode and returns ``{"reference": None}``; with a key, offline mode refuses
+the fetch.
 """
 
 import json
@@ -25,6 +18,8 @@ import gliquid.api as api
 import gliquid.config as config
 import gliquid.mpds as mpds
 
+from ._mpds_builders import FakeMPRester, Tripwire
+
 
 @pytest.fixture(autouse=True)
 def _restore_offline():
@@ -32,22 +27,6 @@ def _restore_offline():
     previous = config.offline
     yield
     config.set_offline(previous)
-
-
-class Tripwire:
-    """A stand-in for a network client that fails loudly if anything calls it.
-
-    The point of offline mode is that nothing is ATTEMPTED, not merely that an attempt
-    fails. Asserting only on the exception type would pass just as well for a guard placed
-    after the fetch.
-    """
-
-    def __init__(self):
-        self.calls = 0
-
-    def __call__(self, *args, **kwargs):
-        self.calls += 1
-        raise AssertionError("a network client was constructed while offline mode was ON")
 
 
 class TestDefaults:
@@ -89,12 +68,8 @@ class TestEnvironmentVariable:
         assert config._initial_offline() is False
 
     def test_an_unrecognized_value_FAILS_CLOSED(self, monkeypatch, caplog):
-        """A typo must not silently permit the network.
-
-        Someone who sets GLIQUID_OFFLINE at all is trying to switch offline mode on.
-        Reading 'yse' as "stay online" would let the one deployment that cannot reach the
-        network do exactly that.
-        """
+        """An unrecognized GLIQUID_OFFLINE value (a typo such as 'yse') switches offline
+        mode ON, with a warning."""
         monkeypatch.setenv(config.OFFLINE_ENV_VAR, "yse")
         with caplog.at_level("WARNING"):
             assert config._initial_offline() is True
@@ -115,11 +90,7 @@ class TestDftFetch:
         assert tripwire.calls == 0
 
     def test_positive_control_the_same_call_proceeds_when_online(self, monkeypatch):
-        """Offline OFF: the call reaches the fetch. Stubbed, so no network is needed here.
-
-        This is what makes the test above meaningful — it shows the raise comes from the
-        offline guard and not from the call being broken for some other reason.
-        """
+        """Offline OFF: the call reaches the fetch. Stubbed, so no network is needed here."""
         entries = [
             {
                 "@module": "pymatgen.entries.computed_entries",
@@ -133,18 +104,11 @@ class TestDftFetch:
         ]
         reached = []
 
-        class _StubRester:
-            def __enter__(self):
-                return self
+        def fetch(elements, additional_criteria):
+            reached.append(sorted(elements))
+            return list(entries)
 
-            def __exit__(self, *exc):
-                return False
-
-            def get_entries_in_chemsys(self, elements, additional_criteria=None):
-                reached.append(sorted(elements))
-                return list(entries)
-
-        monkeypatch.setattr(api, "mp_rester", lambda *a, **k: _StubRester())
+        monkeypatch.setattr(api, "mp_rester", lambda *a, **k: FakeMPRester(fetch))
         monkeypatch.setattr(api, "get_api_key", lambda name: "x" * 32)
         config.set_offline(False)
         result = api._get_dft_entries_from_components(["Cu", "Mg"], "GGA")
@@ -160,11 +124,8 @@ class TestDftFetch:
         ],
     )
     def test_client_constructors_refuse_too(self, call):
-        """Defence in depth: the guard sits on the objects that can open a socket.
-
-        Any future caller reaching for a client directly is refused as well, so offline mode
-        does not depend on every call site remembering to ask first.
-        """
+        """The client constructors, the objects that can open a socket, refuse offline
+        too."""
         config.set_offline(True)
         with pytest.raises(config.OfflineError):
             call()
@@ -202,12 +163,14 @@ class TestDftFetch:
 
 
 class TestMpdsFetch:
-    """``mpds.load_mpds_data`` — the MPDS path, guarded ABOVE the key check."""
+    """``mpds.load_mpds_data`` — the MPDS path, guarded below the key check."""
 
-    def test_a_cache_miss_raises_rather_than_returning_a_shapeless_record(
+    def test_a_cache_miss_with_a_key_raises_without_constructing_a_client(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr(api, "get_mpds_client", Tripwire())
+        client = Tripwire()
+        monkeypatch.setattr(api, "get_mpds_client", client)
+        monkeypatch.setattr(api, "get_api_key", lambda name: "x" * 32)
         monkeypatch.setattr(config, "cache_dir", tmp_path)
         monkeypatch.setattr(config, "cache_mode", "directory")
         monkeypatch.setattr(config, "dir_structure", "flat")
@@ -215,16 +178,31 @@ class TestMpdsFetch:
         with pytest.raises(config.OfflineError) as excinfo:
             mpds.load_mpds_data(["Cu", "Mg"])
         assert "Cu-Mg" in str(excinfo.value)
+        assert client.calls == 0
+
+    def test_a_cache_miss_without_a_key_returns_the_placeholder_offline(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """Offline ON, no MPDS key: nothing to fetch, so the system proceeds without MPDS."""
+        client = Tripwire()
+        monkeypatch.setattr(api, "get_mpds_client", client)
+        monkeypatch.setattr(api, "get_api_key", lambda name: None)
+        monkeypatch.setattr(config, "cache_dir", tmp_path)
+        monkeypatch.setattr(config, "cache_mode", "directory")
+        monkeypatch.setattr(config, "dir_structure", "flat")
+        config.set_offline(True)
+        with caplog.at_level("WARNING"):
+            mpds_json, (liquidus, _) = mpds.load_mpds_data(["Cu", "Mg"])
+        assert mpds_json == {"reference": None}
+        assert liquidus is None
+        assert "MPDS_API_KEY not found" in caplog.text
+        assert client.calls == 0
+        assert list(tmp_path.iterdir()) == []
 
     def test_positive_control_the_same_call_returns_the_placeholder_when_online(
         self, tmp_path, monkeypatch
     ):
-        """Offline OFF, no MPDS key: the historical behaviour, unchanged.
-
-        ``{"reference": None}`` is precisely the record offline mode must NOT return, so
-        showing that it is what comes back otherwise is what makes the raise above load
-        bearing rather than incidental.
-        """
+        """Offline OFF, no MPDS key: the same placeholder as offline."""
         monkeypatch.setattr(api, "get_api_key", lambda name: None)
         monkeypatch.setattr(api, "get_mpds_client", Tripwire())
         monkeypatch.setattr(config, "cache_dir", tmp_path)
