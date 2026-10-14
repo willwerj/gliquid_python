@@ -1,81 +1,30 @@
 """Multi-shape liquid fields: the liquidus is the lower envelope of ALL 'L' shapes.
 
 MPDS draws the liquid of a monotectic / immiscible / terminally-truncated diagram as
-SEVERAL disjoint one-phase 'L' shapes. ``mpds.extract_digitized_liquidus`` used to read
-only the first of them (``next(... if b.get('label') == 'L')``) and so reported whichever
-sliver happened to come first in the shape list: Ag-Fe spanned 0.006 of the composition
-range instead of 1.0, Bi-Si 0.075, Er-Ta 0.169.
+SEVERAL disjoint one-phase 'L' shapes, and ``mpds.extract_digitized_liquidus`` must read
+every one of them, not just whichever sliver happens to come first in the shape list.
 
 Two properties are pinned here. The union must be complete -- both wedges reach the
 extraction, and nothing digitized is thrown away. And it must stay honest -- the hole
 between disjoint wedges is not digitized data, so no point is invented in it (not by the
 envelope and not by the fill step), ``is_partial`` says the curve does not cover the range
-continuously, and ``liquidus_coverage`` still measures the hole (that is what makes the
-Bi-Si class fail ``from_cache``'s interior-coverage gate now that it arrives span-complete).
+continuously, and ``liquidus_coverage`` still measures the hole, so the Bi-Si class fails
+``from_cache``'s interior-coverage gate.
 
 ``TestRegionConfinedFill`` pins the distinction the fill step has to make: densifying a
 sparse patch INSIDE one liquid region is interpolation between two points on the same
 curve and stays; bridging the hole BETWEEN two regions is fabrication and is gone.
 """
 
-import json
-from pathlib import Path
-
 import pytest
 
-import gliquid.api as api
 import gliquid.config as config
 import gliquid.mpds as mpds
-from gliquid.cache import CacheKey
 from gliquid.plotting.binary_tx import _ASSESSED_GAP_PCT, _assessed_liquidus_segments
 
-
-def _load_cached(system):
-    """A cached ``<sys>_MPDS_PD_0.json``, or skip when it is not on this machine.
-
-    Only Hf-Zr ships with the package; the rest of the corpus lives in the workspace's
-    nested ``matrix_data`` store next to the checkout, so those pins are opportunistic.
-    """
-    name = f"{system}_MPDS_PD_0.json"
-    candidates = [api.resolve_cache_path(CacheKey(system, "mpds", "0"))]
-    candidates += [
-        parent / "matrix_data" / system / name
-        for parent in Path(config.project_root).resolve().parents
-    ]
-    # resolve_cache_path answers None for a store with no filesystem paths — a real answer,
-    # so it is filtered rather than assumed away.
-    path = next((p for p in candidates if p is not None and p.exists()), None)
-    if path is None:
-        pytest.skip(f"{system} not in the local MPDS cache")
-    return json.loads(path.read_text())
-
-
-def _svgpath(points):
-    """[[x_pct, T_celsius], ...] -> MPDS-style svgpath string."""
-    return "M " + " L ".join(f"{x},{t}" for x, t in points)
-
-
-def _shape(points, label="L", kind="phase", **extra):
-    return {
-        "label": label,
-        "nphases": 1,
-        "is_solid": False,
-        "kind": kind,
-        "svgpath": _svgpath(points),
-        **extra,
-    }
-
-
-def _make_json(shapes, elements=("Hf", "Zr"), temp=(0, 2600)):
-    return {
-        "reference": {"entry": "synthetic-test-json"},
-        "chemical_elements": list(elements),
-        "comp_range": [0, 100],
-        "temp": list(temp),
-        "labels": [],
-        "shapes": list(shapes),
-    }
-
+from ._mpds_builders import liquid_shape as _shape
+from ._mpds_builders import liquidus_record as _make_json
+from ._mpds_builders import load_cached_mpds as _load_cached
 
 # Two terminal liquid wedges with an 84 at.% hole between them (Bi-Si / Ag-Fe class).
 LEFT_WEDGE = [[0, 2233], [2, 2150], [4, 2080], [6, 2020], [8, 1980]]
@@ -124,7 +73,7 @@ class TestDisjointWedges:
         assert [0.92, 1600 + 273.15] in liq
 
     def test_first_shape_alone_would_be_a_sliver(self):
-        """Guard on the defect itself: either wedge on its own spans <= 0.08."""
+        """Guard on the failure mode itself: either wedge on its own spans <= 0.08."""
         for wedge in (LEFT_WEDGE, RIGHT_WEDGE):
             liq, is_partial = mpds.extract_digitized_liquidus(_make_json([_shape(wedge)]))
             xs = [pt[0] for pt in liq]
@@ -160,15 +109,15 @@ class TestDisjointWedges:
         assert p1 == p2 is True
 
     def test_gappy_union_still_fails_the_interior_coverage_gate(self):
-        """The plumbing the fix must not break: a span-complete but half-fabricated
-        curve is exactly what ``liquidus_coverage`` exists to flag."""
+        """A span-complete union with an undigitized hole still fails the interior-coverage
+        gate."""
         cov = mpds.liquidus_coverage(_make_json([_shape(LEFT_WEDGE), _shape(RIGHT_WEDGE)]))
         assert cov["max_gap"] > config.liquidus_max_gap
         assert cov["covered_fraction"] < config.liquidus_min_coverage
 
     def test_a_shape_too_small_to_be_a_curve_is_skipped_not_fatal(self):
-        """Co-Pb class: the first 'L' shape has under three interior points, so the old
-        extractor returned nothing at all. The other shape must still be extracted."""
+        """Co-Pb class: the first 'L' shape has under three interior points and is skipped;
+        the other shape is still extracted."""
         liq, is_partial = mpds.extract_digitized_liquidus(
             _make_json([_shape([[0, 2233], [1, 2200]]), _shape(RIGHT_WEDGE)])
         )
@@ -190,8 +139,6 @@ class TestRegionConfinedFill:
     Every test here uses the same eight digitized points. Drawn as one 'L' shape they are
     one region and the 40 at.% gap is sparse sampling, so it is filled; drawn as two 'L'
     shapes they are two regions and the same gap is a hole no shape covers, so it is not.
-    Nothing but the region structure differs, which is why the fill step cannot decide
-    from the flat point list alone.
     """
 
     ONE_SHAPE = SPARSE_LEFT + SPARSE_RIGHT
@@ -214,8 +161,8 @@ class TestRegionConfinedFill:
         assert not any(0.30 < pt[0] < 0.70 for pt in liq)
 
     def test_the_two_wedges_are_each_still_densified(self):
-        """The fix confines the fill, it does not disable it: the 10 at.% sampling inside
-        each wedge is still interpolated up to the fill step."""
+        """The fill is confined, not disabled: the 10 at.% sampling inside each wedge is
+        still interpolated up to the fill step."""
         liq, _ = mpds.extract_digitized_liquidus(
             _make_json([_shape(SPARSE_LEFT), _shape(SPARSE_RIGHT)])
         )
@@ -231,7 +178,7 @@ class TestRegionConfinedFill:
         assert [0.70, 1600 + 273.15] in liq
 
     def test_span_is_unchanged_by_confining_the_fill(self):
-        """Only the interior moves: the endpoint span the ``comp_range_fit_lim`` gate reads
+        """Only the interior moves: the endpoint span the ``assessed_crange_floor`` gate reads
         is set by the outermost digitized points, which the fill never touched."""
         liq, _ = mpds.extract_digitized_liquidus(
             _make_json([_shape(SPARSE_LEFT), _shape(SPARSE_RIGHT)])
@@ -281,7 +228,7 @@ class TestPlotBreak:
         assert len(_assessed_liquidus_segments(pts)) == 1
 
     def test_same_points_one_region_stay_one_trace(self):
-        """The A/B of the fill fix, seen from the renderer."""
+        """The same points drawn as one region render as one trace."""
         pts = self._plot_points(_make_json([_shape(SPARSE_LEFT + SPARSE_RIGHT)]))
         assert len(_assessed_liquidus_segments(pts)) == 1
 
@@ -294,7 +241,7 @@ class TestPlotBreak:
         segments = _assessed_liquidus_segments(self._plot_points(_load_cached(system)))
         assert len(segments) >= 2
 
-    # Hf-Zr ships with the package; the other two only resolve from matrix_data.
+    # Hf-Zr ships with the package; the other two only resolve from the corpus store.
     @pytest.mark.parametrize(
         "system",
         [
@@ -309,7 +256,7 @@ class TestPlotBreak:
 
 
 class TestSingleShapeRegression:
-    """One 'L' shape must behave exactly as it did before multi-shape extraction."""
+    """A diagram with one 'L' shape extracts that shape's curve unchanged."""
 
     def test_single_shape_curve_is_complete_and_not_partial(self):
         liq, is_partial = mpds.extract_digitized_liquidus(_make_json([_shape(SINGLE_L)]))
@@ -335,8 +282,7 @@ class TestSingleShapeRegression:
         ],
     )
     def test_real_single_l_systems_are_byte_stable(self, system, span, n_points, is_partial):
-        """Pinned against the values the first-'L'-only extractor produced for cached
-        single-'L' diagrams."""
+        """Span, point count and ``is_partial`` pinned for cached single-'L' diagrams."""
         mpds_json = _load_cached(system)
         assert len(mpds.liquid_shape_paths(mpds_json)) == 1
         liq, partial = mpds.extract_digitized_liquidus(mpds_json)
@@ -424,7 +370,7 @@ class TestShapeSelection:
 
 
 class TestRealMultiShapeSystems:
-    """The systems the defect was found on, read from the local MPDS cache."""
+    """The systems this failure mode affects, read from the local MPDS cache."""
 
     @pytest.mark.needs_cache
     @pytest.mark.parametrize(

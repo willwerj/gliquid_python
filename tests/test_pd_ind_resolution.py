@@ -1,17 +1,13 @@
 """Which cached diagram ``load_mpds_data`` resolves, for every ``pd_ind`` / store shape.
 
-Two cache namings coexist in this project: indexed ``<sys>_MPDS_PD_<n>.json`` inside the
-research cache, and indexless ``<sys>.json`` everywhere a store holds one diagram per system
-(the shipped ``gliquid_python/cache``, ``Gliquid_oxides``, ``case_studies``). ``load_mpds_data``
-has to serve both, and each naming has a silent-wrong-answer trap the other does not:
+Two cache namings coexist: indexed ``<sys>_MPDS_PD_<n>.json``, and indexless ``<sys>.json``
+wherever a store holds one diagram per system (the shipped ``cache/``). ``load_mpds_data``
+serves both:
 
-* ``pd_ind=None`` prefers the indexless file, so an indexless sibling SHADOWS PD_0. That
-  repointed 17 systems in ``matrix_data`` when the debris was swept on 2026-08-10, with no
-  code change and no error. Guarded here by a warning on exactly the ambiguous case.
-* ``pd_ind=0`` names a file that does not exist in an indexless-only store, and the
-  "no matching json" guard cannot fire for index 0 (it tests PD_0's own path). The call used
-  to fall through to the API branch and hand back ``{"reference": None}`` — silently empty,
-  and triggered by the very pin recommended to avoid the first trap.
+* ``pd_ind=None`` prefers the indexless file, so an indexless sibling SHADOWS PD_0; a warning
+  fires on exactly that ambiguous case.
+* ``pd_ind=0`` on an indexless-only store resolves the sole indexless record rather than
+  falling through to the API branch and returning ``{"reference": None}``.
 
 Everything runs offline against copies of the shipped Ag-V fixture in ``tmp_path``; the MPDS
 client is monkeypatched to raise so any fall-through to the API branch fails loudly.
@@ -40,19 +36,19 @@ def _no_mpds_client(*args, **kwargs):
 def flat_store(tmp_path, monkeypatch):
     """A flat cache dir the test fills, with the live MPDS client disarmed."""
     monkeypatch.setattr(api, "get_mpds_client", _no_mpds_client)
-    original_dir, original_struct = config.data_dir, config.dir_structure
-    config.set_data_dir(tmp_path)
+    original_dir, original_struct = config.cache_dir, config.dir_structure
+    config.set_cache_dir(tmp_path)
     config.set_dir_structure("flat")
     try:
         yield tmp_path
     finally:
-        config.set_data_dir(original_dir)
+        config.set_cache_dir(original_dir)
         config.set_dir_structure(original_struct)
 
 
 def _shipped_fixture() -> Path:
-    """The shipped indexless Ag-V json, anchored by project root rather than by depth."""
-    return Path(config.project_root) / "cache" / f"{SYSTEM}.json"
+    """The shipped indexless Ag-V json in this checkout's ``cache/``."""
+    return Path(__file__).resolve().parents[1] / "cache" / f"{SYSTEM}.json"
 
 
 def _put_indexless(store: Path) -> None:
@@ -78,7 +74,7 @@ class TestIndexlessShadowingWarning:
         _put_indexed(flat_store)
         with caplog.at_level(logging.WARNING, logger=mpds.logger.name):
             mpds_json, _ = mpds.load_mpds_data(SYSTEM)
-        # behaviour is unchanged — the indexless file still wins; it is now audible
+        # behaviour is unchanged — the indexless file still wins, but audibly (a warning)
         assert _entry(mpds_json) != SENTINEL_ENTRY
         assert "shadows" in caplog.text
         assert f"{SYSTEM}_MPDS_PD_0.json" in caplog.text

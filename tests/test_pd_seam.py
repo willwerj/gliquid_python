@@ -1,9 +1,8 @@
-"""PD/CPD seam helpers (S6): one sanctioned way to read hulls, both flavors.
+"""PD/CPD seam helpers: one sanctioned way to read hulls, both flavors.
 
 ``pd_components`` / ``entry_original`` / ``entry_display_name`` / ``entry_frac_along``
-must be exact drop-ins for the historical elemental idioms (the hull goldens gate that)
-AND already give correct answers on a CompoundPhaseDiagram, so pseudo-binary consumers
-need no rewrites later.
+give the elemental answers on a PhaseDiagram (the hull goldens gate that) AND correct
+answers on a CompoundPhaseDiagram.
 """
 
 import pytest

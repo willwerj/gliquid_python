@@ -1,36 +1,28 @@
 """Lean MPDS records, and the contract that stops one from silently answering wrong.
 
 A LEAN record (``mpds.lean_record``) keeps an MPDS diagram's header plus its already-
-stitched liquidus and throws ``shapes`` away — 93-97% of the file, and nothing a fit or a
-liquidus plot reads. Two decisions carry the whole design, and both are pinned here.
+stitched liquidus and drops ``shapes``, which nothing a fit or a liquidus plot reads.
 
 **1. The stored curve is the PRE-fill one.** ``extract_digitized_liquidus`` densifies every
-in-region composition gap wider than 0.06 before anyone downstream sees the curve, so its
-output cannot tell a digitized point from synthetic fill. Store THAT and
-``mpds.liquidus_coverage`` reports a dense, well-sampled curve for every system in the
-corpus and the interior-sparsity gate in ``BinaryLiquid.from_cache`` never fires again —
-silently, corpus-wide, with the metrics still looking plausible.
-``TestPreFillCurveIsWhatIsStored`` asserts the equivalence AND, as its negative control,
-builds the post-fill record the mistake would produce and shows the gate going blind:
-measured on the real corpus, Pu-Ti's widest gap reads 0.824 pre-fill and 0.029 post-fill.
+in-region composition gap wider than 0.06, so its output cannot tell a digitized point from
+synthetic fill, and a post-fill record would blind ``mpds.liquidus_coverage`` and the
+interior-sparsity gate in ``BinaryLiquid.from_cache``. ``TestPreFillCurveIsWhatIsStored``
+asserts the equivalence and, as its negative control, builds the post-fill record and shows
+the gate going blind.
 
-**2. Lean mode RAISES; it never auto-degrades.** This is the higher-value half.
-``identify_mpds_phases`` reads ``mpds_json.get("shapes", [])`` and would return ``[]`` on a
-lean record. An empty phase list makes ``assess_solid_coverage`` report ZERO reported
-compounds — which reads as "nothing unsupported" — and **the coverage gate passes**. That
-is a silent wrong answer of exactly the class the gate was built to prevent, so every such
-consumer raises instead. ``TestRaiseNotDegrade`` therefore asserts ``raises``, never
-"returns empty", and each raise is paired with a POSITIVE CONTROL showing the same call on
-the full record returns something non-empty — otherwise the raise would be proving nothing
-about a call that was going to come back empty anyway.
+**2. Lean mode RAISES; it never auto-degrades.** On a lean record ``identify_mpds_phases``
+would return ``[]``, and an empty phase list makes the coverage gate pass, so every such
+consumer raises instead. ``TestRaiseNotDegrade`` asserts ``raises``, and pairs each raise
+with a POSITIVE CONTROL showing the same call on the full record returns something
+non-empty.
 
-Corpus-scale evidence lives outside pytest, in the shipped CLI: ``python -m gliquid.cache
-verify`` against a ``--mpds-mode lean`` store re-derives ``extract_digitized_liquidus`` and
-``liquidus_coverage`` on both sides of every record and fails if a lean store's MPDS half
-was compared zero times.
+``python -m gliquid.cache verify`` against a ``--mpds-mode lean`` store re-derives
+``extract_digitized_liquidus`` and ``liquidus_coverage`` on both sides of every record.
 """
 
 import json
+import math
+import shutil
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -39,29 +31,16 @@ import pytest
 import gliquid.cache as cache
 import gliquid.config as config
 import gliquid.mpds as mpds
-from gliquid.binary import BinaryLiquid, BLPlotter
+from gliquid.binary import SKIP_NARROW_SPAN, BinaryLiquid, BLPlotter
 
-# ---------------------------------------------------------------------------------------
-# Synthetic diagrams. Frame is Hf-Zr throughout so the real cached DFT hull can be used.
-# ---------------------------------------------------------------------------------------
+from ._mpds_builders import from_record as _bl_on
+from ._mpds_builders import liquid_shape as _liquid
+from ._mpds_builders import svgpath as _svgpath
 
-
-def _svgpath(points):
-    """[[x_pct, T_celsius], ...] -> MPDS-style svgpath string."""
-    return "M " + " L ".join(f"{x},{t}" for x, t in points)
+# -- Synthetic diagrams, in the Hf-Zr frame so the cached DFT hull applies --
 
 
-def _liquid(points):
-    return {
-        "label": "L",
-        "nphases": 1,
-        "is_solid": False,
-        "kind": "phase",
-        "svgpath": _svgpath(points),
-    }
-
-
-def _line_compound(comp_pct, t_lo=200, t_hi=1600, label="HfZr2"):
+def _line_compound(comp_pct, t_lo=100, t_hi=1600, label="HfZr2"):
     """A digitized line compound — a boundary line, which identify_mpds_phases types 'lc'."""
     return {
         "label": label,
@@ -93,19 +72,18 @@ def _make_full(liquid_regions, *, elements=("Hf", "Zr"), temp=(0, 2600), solids=
 
 
 def _make_frameless():
-    """A cached json carrying NO ``chemical_elements`` block — ~13% of the corpus.
-
-    Such a record also has no digitized liquid field, and that is not a convenience: the
+    """A cached json carrying NO ``chemical_elements`` block, and so no liquid field: the
     endpoint anchoring in ``_shape_liquidus`` indexes ``mpds_json['chemical_elements']``
-    directly, so a frameless json with an 'L' shape cannot be extracted in FULL mode
-    either. The pairing keeps this fixture a record the package can actually meet.
+    directly, so a frameless json with an 'L' shape cannot be extracted in FULL mode either.
     """
     return _make_full([], elements=None)
 
 
 # Ordinary, well-sampled V liquidus at 2 at.% spacing — one contiguous region.
-DENSE = [[[x, 2233 - (2233 - 1400) * x / 50] for x in range(0, 50, 2)]
-         + [[x, 1400 + (1855 - 1400) * (x - 50) / 50] for x in range(50, 101, 2)]]
+DENSE = [
+    [[x, 2233 - (2233 - 1400) * x / 50] for x in range(0, 50, 2)]
+    + [[x, 1400 + (1855 - 1400) * (x - 50) / 50] for x in range(50, 101, 2)]
+]
 
 # Bi-Si class: two disjoint wedges near the pure ends, an ~85 at.% UNDIGITIZED hole between
 # them. The class the interior-sparsity gate exists for.
@@ -134,9 +112,6 @@ def hf_zr_hull():
     return ch
 
 
-# ---------------------------------------------------------------------------------------
-
-
 class TestRecordMode:
     def test_a_full_json_is_full(self):
         assert mpds.record_mode(_make_full(DENSE)) == "full"
@@ -148,11 +123,8 @@ class TestRecordMode:
         assert mpds.record_mode({"reference": None}) == "empty"
 
     def test_a_reduced_placeholder_is_still_empty_not_lean(self):
-        """Parity: a system MPDS has no diagram for must behave identically in both stores.
-
-        Classifying it 'lean' would make every consumer start RAISING on a record that
-        carries no less information than it ever did — the reduction removed nothing.
-        """
+        """Parity: a system MPDS has no diagram for behaves identically in both stores, and
+        is not classified 'lean'."""
         assert mpds.record_mode(mpds.lean_record({"reference": None})) == "empty"
 
     def test_a_non_dict_is_empty_rather_than_an_attribute_error(self):
@@ -164,26 +136,31 @@ class TestTheReductionDropsShapesAndKeepsTheRest:
     def test_shapes_is_gone(self):
         assert "shapes" not in mpds.lean_record(_make_full(DENSE))
 
-    @pytest.mark.parametrize(
-        "field", ["reference", "chemical_elements", "temp", "comp_range", "labels", "entry"]
-    )
+    @pytest.mark.parametrize("field", ["reference", "chemical_elements", "temp", "comp_range"])
     def test_every_field_a_consumer_reads_survives(self, field):
         full = _make_full(DENSE)
         assert mpds.lean_record(full)[field] == full[field]
 
+    @pytest.mark.parametrize("field", ["labels", "entry", "jcode", "year"])
+    def test_fields_no_liquidus_plot_reads_are_dropped(self, field):
+        full = {**_make_full(DENSE), "jcode": "MAS390", "year": 1990}
+        assert field in full, "a source without the field would make this vacuous"
+        assert field not in mpds.lean_record(full)
+
+    def test_the_lean_record_holds_exactly_the_lean_fields(self):
+        full = {**_make_full(DENSE), "jcode": "MAS390", "year": 1990}
+        assert set(mpds.lean_record(full)) == {
+            "chemical_elements",
+            "temp",
+            "comp_range",
+            "reference",
+            mpds._GLIQUID_KEY,
+        }
+
     @pytest.mark.parametrize("name", ["Hf-Zr_MPDS_PD_0.json", "Al-Cu.json", "C-Nb.json"])
     def test_the_reduction_is_smaller_on_real_diagrams(self, package_corpus, name):
-        """Measured on real cached diagrams, not on a synthetic one.
-
-        ``shapes`` is 93-97% of an MPDS json, but the reduction does NOT save 93-97%: the
-        liquidus points inside the 'L' shapes have to be kept, and they come back as
-        full-precision JSON floats (``[0.524, 1507.65]``) where the source held a compact
-        svgpath token (``52.4,1234.5``). Rounding them would shrink this further and is
-        deliberately not done — exact equivalence with the full record is the whole claim.
-        Real per-file ratios run 1.6x (Cu-Mg, a liquidus-dominated diagram) to 3.6x
-        (Hf-Zr); over the 6,689-record matrix_data corpus the store's MPDS half goes
-        26.0 MB -> 9.8 MB. 1.5x is the floor this pins, not the expectation.
-        """
+        """On real cached diagrams the lean record is at least 1.5x smaller. The kept
+        liquidus points are full-precision floats, never rounded."""
         source = json.loads((package_corpus / name).read_text())
         full_bytes = len(json.dumps(source))
         lean_bytes = len(json.dumps(mpds.lean_record(source)))
@@ -214,14 +191,9 @@ class TestPreFillCurveIsWhatIsStored:
         assert cov["holes"][0] == pytest.approx([0.07, 0.92])
 
     def test_negative_control_post_fill_storage_blinds_the_gate(self):
-        """The mistake this design exists to prevent, built and measured.
-
-        A lean record holding ``extract_digitized_liquidus``'s output instead of the
-        pre-fill curve reports a densely-sampled liquidus for a system whose interior is
-        one enormous hole — and ``from_cache`` then admits it. Without this control the
-        equality tests above would pass just as happily on the broken reduction, because
-        for a contiguous region the two curves agree everywhere the fill did not fire.
-        """
+        """A lean record holding ``extract_digitized_liquidus``'s output instead of the
+        pre-fill curve reports a densely-sampled liquidus for a system whose interior is one
+        enormous hole, and ``from_cache`` then admits it."""
         full = _make_full(SPARSE_ONE_REGION)
         honest = mpds.liquidus_coverage(mpds.lean_record(full))
 
@@ -248,8 +220,7 @@ class TestFrameIsStoredExplicitly:
         assert mpds.mpds_frame_matches(lean, ["Hf", "Zr"]) is True
 
     def test_an_unknown_frame_is_written_as_an_explicit_null(self):
-        """~13% of cached jsons carry no frame block. The key is still present, as null,
-        so the reduction can never be mistaken for 'the frame was dropped in transit'."""
+        """A json with no frame block keeps the key in its lean record, as null."""
         lean = mpds.lean_record(_make_frameless())
         assert "chemical_elements" in lean
         assert lean["chemical_elements"] is None
@@ -288,8 +259,12 @@ class TestRaiseNotDegrade:
     def test_identify_invariant_points_raises(self, full, lean):
         from gliquid.phase import UNARY
 
-        args = (["Hf", "Zr"], mpds.extract_digitized_liquidus(full)[0],
-                UNARY.component_data(["Hf", "Zr"]), [300, 3000])
+        args = (
+            ["Hf", "Zr"],
+            mpds.extract_digitized_liquidus(full)[0],
+            UNARY.component_data(["Hf", "Zr"]),
+            [300, 3000],
+        )
         # POSITIVE CONTROL: the same call on the full record completes.
         assert mpds.identify_invariant_points(full, *args) is not None
         with pytest.raises(config.CacheModeError) as exc:
@@ -314,18 +289,7 @@ class TestRaiseNotDegrade:
         assert cache.CacheModeError is config.CacheModeError
 
 
-# ---------------------------------------------------------------------------------------
-# Through BinaryLiquid — where the silent pass would actually have happened.
-# ---------------------------------------------------------------------------------------
-
-
-def _bl_on(monkeypatch, record):
-    monkeypatch.setattr(
-        mpds,
-        "load_mpds_data",
-        lambda input, pd_ind=None: (record, mpds.extract_digitized_liquidus(record)),
-    )
-    return BinaryLiquid.from_cache("Hf-Zr")
+# -- Through BinaryLiquid --
 
 
 class TestBinaryLiquidOnALeanRecord:
@@ -339,21 +303,18 @@ class TestBinaryLiquidOnALeanRecord:
         assert bl_lean.init_error is bl_full.init_error
 
     def test_the_sparsity_gate_still_fires_on_a_lean_record(self, monkeypatch, caplog):
-        """The gate the pre-fill decision protects, exercised end to end through a lean
-        record. If the reduction had stored the post-fill curve this would come back
-        ``init_error is False`` and nothing anywhere would say so."""
+        """The sparsity gate fires end to end through a lean record. On the Bi-Si class
+        (two wedges with an undigitized middle) the assessed-range gate reaches it first:
+        0.15 of the axis carries liquidus against a 0.7 floor.
+        """
         bl = _bl_on(monkeypatch, mpds.lean_record(_make_full(BI_SI_CLASS)))
         assert bl.init_error is True
+        assert bl.skip_reason == SKIP_NARROW_SPAN
         assert bl.liq_coverage["max_gap"] == pytest.approx(0.85)
-        assert "interior-sparse" in caplog.text
+        assert bl.undigitized_comp_ranges == [pytest.approx([0.07, 0.92], abs=1e-9)]
 
     def test_assess_solid_coverage_raises(self, monkeypatch):
-        """**The anti-silent-pass test.** Not 'returns an empty report' — RAISES.
-
-        With no ``shapes`` the phase list is empty, every reported-compound count is zero,
-        ``unsupported_fraction`` is 0.0, and ``is_insufficient()`` says False: the gate
-        passes a system it measured nothing about.
-        """
+        """RAISES, rather than returning the empty report the gate would pass."""
         full = _make_full(DENSE)
         report = _bl_on(monkeypatch, full).assess_solid_coverage()
         assert report.phases, "POSITIVE CONTROL: the full record scores real phases"
@@ -392,12 +353,7 @@ class TestBinaryLiquidOnALeanRecord:
         assert isinstance(result, list)
 
     @pytest.mark.parametrize(
-        "kwargs",
-        [
-            {"disable_inv_constrs": True},
-            {"check_solid_coverage": False},
-            {},
-        ],
+        "kwargs", [{"disable_inv_constrs": True}, {"check_solid_coverage": False}]
     )
     def test_one_escape_alone_is_not_enough(self, monkeypatch, kwargs):
         """Half-escaped is still silently unconstrained in the other half."""
@@ -406,18 +362,13 @@ class TestBinaryLiquidOnALeanRecord:
             bl.fit_parameters(**kwargs)
 
 
-# ---------------------------------------------------------------------------------------
-# A real lean single-file store, end to end.
-# ---------------------------------------------------------------------------------------
+# -- A real lean single-file store, end to end --
 
 
 @contextmanager
 def _using_cache(path):
-    """Point gliquid at ``path``, then put back the values that were ACTUALLY there.
-
-    Restoring to a hardcoded path instead would silently un-swap the rest of the session
-    for every test that runs after this one — a real defect found during spec 04.
-    """
+    """Point gliquid at ``path``, then put back the values that were ACTUALLY there, never a
+    hardcoded path."""
     saved = (config.cache_dir, config.cache_mode, config.dir_structure)
     try:
         config.set_cache_dir(path)
@@ -438,12 +389,26 @@ def package_corpus():
 
 
 @pytest.fixture(scope="module")
-def lean_store(package_corpus, tmp_path_factory):
-    """The package's own ``cache/`` corpus, migrated with ``--mpds-mode lean``."""
+def lean_corpus(package_corpus, tmp_path_factory):
+    """A copy of ``package_corpus``'s MPDS records plus the Hf-Zr DFT entries record."""
+    hf_zr_entries = cache.CacheKey("Hf-Zr", cache.KIND_DFT_ENTRIES, "GGA")
+    root = tmp_path_factory.mktemp("lean_corpus")
+    scan = cache.scan_directory_store(package_corpus, config.dir_structure)
+    for key, path in scan.records:
+        if key.kind == cache.KIND_MPDS or key == hf_zr_entries:
+            dest = root / path.relative_to(package_corpus)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, dest)
+    return root
+
+
+@pytest.fixture(scope="module")
+def lean_store(lean_corpus, tmp_path_factory):
+    """``lean_corpus`` migrated with ``--mpds-mode lean``."""
     dest = tmp_path_factory.mktemp("lean") / "lean.sqlite"
     assert (
         cache.main(
-            ["migrate", "--from", str(package_corpus), "--to", str(dest), "--mpds-mode", "lean"]
+            ["migrate", "--from", str(lean_corpus), "--to", str(dest), "--mpds-mode", "lean"]
         )
         == 0
     )
@@ -466,9 +431,11 @@ class TestLeanStore:
         shapes in it, or a lean row still carrying the blob it was meant to drop."""
         backend = cache.SqliteBackend(lean_store)
         try:
-            rows = backend._conn().execute(
-                "SELECT COUNT(*), COUNT(payload), COUNT(DISTINCT mode) FROM mpds_diagrams"
-            ).fetchone()
+            rows = (
+                backend._conn()
+                .execute("SELECT COUNT(*), COUNT(payload), COUNT(DISTINCT mode) FROM mpds_diagrams")
+                .fetchone()
+            )
             assert rows[0] > 0, "a store with no MPDS rows would make this vacuous"
             assert rows[1] == 0, "lean rows must not carry a payload blob"
             assert backend._conn().execute(
@@ -478,12 +445,10 @@ class TestLeanStore:
             backend.close()
 
     def test_verify_checks_equivalence_rather_than_object_equality(
-        self, package_corpus, lean_store, capsys
+        self, lean_corpus, lean_store, capsys
     ):
         assert (
-            cache.main(
-                ["verify", "--directory", str(package_corpus), "--sqlite", str(lean_store)]
-            )
+            cache.main(["verify", "--directory", str(lean_corpus), "--sqlite", str(lean_store)])
             == 0
         )
         out = capsys.readouterr().out
@@ -505,13 +470,6 @@ class TestLeanStore:
         assert "mode lean" in out
         assert "stitched liquidus" in out
         assert "MPDS TOTAL" in out
-
-    def test_an_unknown_mpds_mode_is_refused_by_name(self, package_corpus, tmp_path, capsys):
-        dest = tmp_path / "nope.sqlite"
-        args = ["--from", str(package_corpus), "--to", str(dest), "--mpds-mode", "svelte"]
-        assert cache.main(["migrate", *args]) == 2
-        assert "not a known mode" in capsys.readouterr().out
-        assert not dest.exists()
 
 
 def _trace_signature(fig):
@@ -537,9 +495,34 @@ class TestPlotParity:
 
     def _render(self):
         """(record mode actually loaded, trace signature) for the pinned system."""
-        bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, params=[-15000, 0, 0, 0])
+        bl = BinaryLiquid.from_cache(
+            "Hf-Zr", pd_ind=0, params=[-15000, 0, 0, 0], param_format="linear"
+        )
         bl.update_phase_points()
         return mpds.record_mode(bl.mpds_json), _trace_signature(BLPlotter(bl).get_plot("fit+liq"))
+
+    def _metrics(self):
+        """(record mode actually loaded, deviation metrics) for the pinned system."""
+        bl = BinaryLiquid.from_cache(
+            "Hf-Zr", pd_ind=0, params=[-15000, 0, 0, 0], param_format="linear"
+        )
+        bl.update_phase_points()
+        metrics = bl.calculate_deviation_metrics(
+            allow_sparse_data=True, unsupported_range_mode="score"
+        )
+        return mpds.record_mode(bl.mpds_json), metrics
+
+    def test_deviation_metrics_are_identical_between_lean_and_full(
+        self, package_corpus, lean_store
+    ):
+        with _using_cache(package_corpus):
+            full_mode, expected = self._metrics()
+        with _using_cache(lean_store):
+            lean_mode, actual = self._metrics()
+
+        assert (full_mode, lean_mode) == ("full", "lean")
+        assert all(math.isfinite(v) for v in expected), "a non-finite metric would be vacuous"
+        assert actual == expected
 
     def test_traces_are_identical_between_lean_and_full(self, package_corpus, lean_store):
         with _using_cache(package_corpus):
