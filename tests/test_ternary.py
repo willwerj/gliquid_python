@@ -1,23 +1,11 @@
+"""Tests for gliquid.ternary.
+
+Focused on the unary reference-state path (``TernaryLiquidInterpolation.init_ref_data``),
+asserted against stable values from ``data/phase_transitions.json``.
 """
-Tests for gliquid.ternary.
-
-Focused on the unary reference-state path (``TernaryLiquidInterpolation.init_ref_data``) plus the
-offline-importability of the module.  Written to be version-agnostic: it asserts against stable
-values from ``data/phase_transitions.json`` so it passes identically on the pre-refactor (lbd
-module dicts) and post-refactor (gliquid.phase) implementations.
-
-Run with: python -m pytest tests/test_ternary.py -v
-"""
-
-import sys
-from pathlib import Path
 
 import pytest
 
-_project_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_project_root / "src"))
-
-# Must import without NEW_MP_API_KEY / a live MP connection (lazy MPRester).
 import gliquid.ternary as ht
 
 
@@ -27,11 +15,6 @@ def _ref_data_for(elements):
     ti.components = list(elements)
     ti.init_ref_data()
     return ti.ref_data
-
-
-def test_module_imports_offline():
-    """Regression guard for the lazy-MPRester fix: importing must not require an API key."""
-    assert hasattr(ht, "TernaryLiquidInterpolation")
 
 
 def test_init_ref_data_reference_values():

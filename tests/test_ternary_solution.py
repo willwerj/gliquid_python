@@ -9,8 +9,8 @@ import pytest
 import sympy as sp
 
 import gliquid.solution as sd
-import gliquid.ternary as ht
 from gliquid.binary import BinaryLiquid
+from gliquid.plotting.binary_tx import build_polymorph_transitions
 from gliquid.solution import R, SolutionModel, comp_symbols, t_sym
 from gliquid.ternary import TernaryLiquidInterpolation
 
@@ -34,7 +34,7 @@ def edge_models():
 
 @pytest.fixture(scope="module")
 def tern_models():
-    """Single-pass n-ary load over all three elements (replaces the retired 3-edge merge)."""
+    """Single-pass n-ary load over all three elements."""
     return sd.load_solid_solution_models(
         sorted(TERN), UNARY.component_data(sorted(TERN)), ref_mode="from_unary_db"
     )
@@ -42,12 +42,10 @@ def tern_models():
 
 class TestTernarySSModels:
     def test_phases_and_schema(self, tern_models):
-        # Since the 'updated Ti reference' data commit (2f85901), Ti carries an HCP-194
-        # polymorph (dH 1463.64 J/mol, T_tr 180 K) above its spacegroup-191 DFT ground state,
-        # so BCC and HCP resolve for all three elements straight from the element db. None of
-        # Hf/Ti/Zr has an FCC polymorph, but since the tiered-policy rebuild the unary DB's
-        # lattice_stabilities block bakes in the omegas FCC energies at build time, so the
-        # resolver supplies those references itself instead of the runtime fallback.
+        # Ti carries an HCP-194 polymorph (dH 1463.64 J/mol, T_tr 180 K) above its
+        # spacegroup-191 DFT ground state, so BCC and HCP resolve for all three elements
+        # straight from the element db. None of Hf/Ti/Zr has an FCC polymorph; the unary DB's
+        # lattice_stabilities block supplies the omegas FCC energies.
         assert set(tern_models) == {"BCC", "HCP", "FCC"}
         for model in tern_models.values():
             assert set(model["omega"]) == set(PAIRS)
@@ -165,7 +163,11 @@ class TestTernaryInterpolationSS:
         # from_omegas_file resolves all three phases on every edge (the omegas file's elements
         # block covers Hf/Ti/Zr for BCC/FCC/HCP), exercising the multi-phase surface path.
         ti = TernaryLiquidInterpolation(
-            TERN, xs_mix=zeros, solid_solutions=True, ss_kwargs={"ref_mode": "from_omegas_file"}
+            TERN,
+            xs_mix=zeros,
+            solid_solutions=True,
+            ss_kwargs={"ref_mode": "from_omegas_file"},
+            param_format="linear",
         )
         ti.interpolate_liquid_surface()
         n_liquid = len(ti.hsx_df)
@@ -190,7 +192,7 @@ class TestTernaryInterpolationSS:
 
     def test_flag_off_is_unchanged(self):
         zeros = {pair: [0, 0, 0, 0] for pair in ("Hf-Ti", "Ti-Zr", "Zr-Hf")}
-        ti_off = TernaryLiquidInterpolation(TERN, xs_mix=zeros)
+        ti_off = TernaryLiquidInterpolation(TERN, xs_mix=zeros, param_format="linear")
         ti_off.interpolate_liquid_surface()
         assert set(ti_off.hsx_df["Phase Name"].unique()) == {"L"}
         assert ti_off.solid_solutions is False and ti_off.ss_models == {}
@@ -203,7 +205,11 @@ class TestTernarySSPlotting:
 
         zeros = {pair: [0, 0, 0, 0] for pair in ("Hf-Ti", "Ti-Zr", "Zr-Hf")}
         ti = TernaryLiquidInterpolation(
-            TERN, xs_mix=zeros, solid_solutions=True, ss_kwargs={"ref_mode": "from_omegas_file"}
+            TERN,
+            xs_mix=zeros,
+            solid_solutions=True,
+            ss_kwargs={"ref_mode": "from_omegas_file"},
+            param_format="linear",
         )
         ti.interpolate_liquid_surface()
         ti.append_solid_solution_surfaces()
@@ -219,7 +225,7 @@ class TestTernarySSPlotting:
 def test_build_polymorph_transitions_elementref_native():
     """Finding 13: the annotation helper must use ComponentRef/PhaseRef attribute access."""
     bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
-    transitions = ht.build_polymorph_transitions(bl)
+    transitions = build_polymorph_transitions(bl)
     assert transitions, "Hf/Zr both have polymorph ladders"
     sample = transitions[0]
     assert {"name", "comp_x_pct", "transition_temp_C", "ground_state_name"} <= set(sample)
