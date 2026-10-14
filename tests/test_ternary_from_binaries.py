@@ -2,22 +2,16 @@
 
 Runs offline: BinaryLiquid instances are constructed directly (no MPDS/liquidus data),
 which is all from_binaries needs — components, mixing model, tau, ss flags.
-
-Run with: python -m pytest tests/test_ternary_from_binaries.py -v
 """
-
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-import gliquid.api as api  # noqa: E402
-from gliquid.binary import BinaryLiquid  # noqa: E402
-from gliquid.phase import UNARY, Phase  # noqa: E402
-from gliquid.ternary import TernaryLiquidInterpolation  # noqa: E402
+import gliquid.api as api
+from gliquid.binary import BinaryLiquid
+from gliquid.phase import UNARY, Phase
+from gliquid.solution import RKPolyExp
+from gliquid.ternary import TernaryLiquidInterpolation
 
 L_SETS = {
     ("Hf", "Ti"): [8000.0, -1.5, 3000.0, 0.5],
@@ -130,8 +124,8 @@ def _swapped(params):
 
 
 class TestConstructionOrderPreserved:
-    """TLI keeps the GIVEN component order (it used to force-sort); from_binaries stays
-    alphabetical by default but accepts a components= override."""
+    """TLI keeps the GIVEN component order; from_binaries stays alphabetical by default and
+    re-frames onto order=."""
 
     UNSORTED = ["Ti", "Hf", "Zr"]
 
@@ -143,6 +137,7 @@ class TestConstructionOrderPreserved:
                 "Hf-Zr": list(L_SETS[("Hf", "Zr")]),
                 "Zr-Ti": _swapped(L_SETS[("Ti", "Zr")]),
             },
+            param_format="linear",
         )
         assert tli.components == ["Ti", "Hf", "Zr"]
         assert tli.binary_systems == ["Ti-Hf", "Hf-Zr", "Zr-Ti"]
@@ -156,6 +151,7 @@ class TestConstructionOrderPreserved:
                 "Ti-Zr": list(L_SETS[("Ti", "Zr")]),
                 "Zr-Hf": _swapped(L_SETS[("Hf", "Zr")]),
             },
+            param_format="linear",
         )
         sorted_tli.interpolate_liquid_surface()
         unsorted_tli = TernaryLiquidInterpolation(
@@ -166,6 +162,7 @@ class TestConstructionOrderPreserved:
                 "Hf-Zr": list(L_SETS[("Hf", "Zr")]),
                 "Zr-Ti": _swapped(L_SETS[("Ti", "Zr")]),
             },
+            param_format="linear",
         )
         unsorted_tli.interpolate_liquid_surface()
 
@@ -185,20 +182,20 @@ class TestConstructionOrderPreserved:
             assert surf_u[key][0] == pytest.approx(surf_s[key][0], rel=1e-9, abs=1e-8)
             assert surf_u[key][1] == pytest.approx(surf_s[key][1], rel=1e-9, abs=1e-10)
 
-    def test_from_binaries_components_override(self, dummy_ch):
+    def test_from_binaries_order_reframes_the_edges(self, dummy_ch):
         binaries = [_bl(p, dummy_ch) for p in L_SETS]
-        tli = TernaryLiquidInterpolation.from_binaries(binaries, components=self.UNSORTED)
+        tli = TernaryLiquidInterpolation.from_binaries(binaries, order=self.UNSORTED)
         assert tli.components == ["Ti", "Hf", "Zr"]
         assert tli.binary_systems == ["Ti-Hf", "Hf-Zr", "Zr-Ti"]
-        # edge orientations follow the override's cyclic frame
+        # edge orientations follow the order's cyclic frame
         assert tli.xs_mix["Ti-Hf"].values == _swapped(L_SETS[("Hf", "Ti")])
         assert tli.xs_mix["Hf-Zr"].values == L_SETS[("Hf", "Zr")]
         assert tli.xs_mix["Zr-Ti"].values == _swapped(L_SETS[("Ti", "Zr")])
 
-    def test_from_binaries_bad_override_raises(self, dummy_ch):
+    def test_the_removed_components_kwarg_names_order(self, dummy_ch):
         binaries = [_bl(p, dummy_ch) for p in L_SETS]
-        with pytest.raises(ValueError, match="span"):
-            TernaryLiquidInterpolation.from_binaries(binaries, components=["Ti", "Hf", "Nb"])
+        with pytest.raises(TypeError, match="use order="):
+            TernaryLiquidInterpolation.from_binaries(binaries, components=self.UNSORTED)
 
 
 class TestWithComponentOrder:
@@ -217,6 +214,7 @@ class TestWithComponentOrder:
                 "Hf-Zr": list(L_SETS[("Hf", "Zr")]),
                 "Zr-Ti": _swapped(L_SETS[("Ti", "Zr")]),
             },
+            param_format="linear",
             **kwargs,
         )
 
@@ -224,7 +222,7 @@ class TestWithComponentOrder:
         reframed = self._unsorted_tli().with_component_order("alphabetical")
         assert reframed.components == ["Hf", "Ti", "Zr"]
         assert reframed.binary_systems == ["Hf-Ti", "Ti-Zr", "Zr-Hf"]
-        # edges now match the alphabetical-construction reference
+        # edges match the alphabetical-construction reference
         assert reframed.xs_mix["Hf-Ti"].values == L_SETS[("Hf", "Ti")]
         assert reframed.xs_mix["Ti-Zr"].values == L_SETS[("Ti", "Zr")]
         assert reframed.xs_mix["Zr-Hf"].values == _swapped(L_SETS[("Hf", "Zr")])
@@ -237,12 +235,31 @@ class TestWithComponentOrder:
     def test_triplet_key_reframed(self):
         unsorted = TernaryLiquidInterpolation(
             self.UNSORTED,
-            ternary_l0=5000.0,
-            xs_mix={"Ti-Hf": [0.0] * 4, "Hf-Zr": [0.0] * 4, "Zr-Ti": [0.0] * 4},
+            xs_mix={
+                "Ti-Hf": [0.0] * 4,
+                "Hf-Zr": [0.0] * 4,
+                "Zr-Ti": [0.0] * 4,
+                "Ti-Hf-Zr": [5000.0],
+            },
+            param_format="linear",
         )
         reframed = unsorted.with_component_order("alphabetical")
         assert "Ti-Hf-Zr" not in reframed.xs_mix
         assert reframed.xs_mix["Hf-Ti-Zr"].values == [5000.0]
+
+    def test_reframed_models_are_independent_copies(self):
+        tli = self._unsorted_tli()
+        tli.xs_mix["Ti-Hf-Zr"] = RKPolyExp("regular", [5000.0])
+        reframed = tli.with_component_order(["Hf", "Zr", "Ti"])
+        assert reframed.binary_systems == ["Hf-Zr", "Zr-Ti", "Ti-Hf"]
+        for key, rk in reframed.xs_mix.items():
+            assert all(rk is not original for original in tli.xs_mix.values()), key
+        assert reframed.xs_mix["Hf-Zr-Ti"].values == [5000.0]
+
+    def test_fit_or_pred_rekeys_onto_the_new_edges(self):
+        tli = self._unsorted_tli(fit_or_pred={"Ti-Hf": "fit", "Hf-Zr": "pred", "Zr-Ti": "fit"})
+        reframed = tli.with_component_order("alphabetical")
+        assert reframed.fit_or_pred == {"Hf-Ti": "fit", "Zr-Hf": "pred", "Ti-Zr": "fit"}
 
     def test_surface_preserved_under_reframe(self):
         unsorted = TernaryLiquidInterpolation(
@@ -253,6 +270,7 @@ class TestWithComponentOrder:
                 "Hf-Zr": list(L_SETS[("Hf", "Zr")]),
                 "Zr-Ti": _swapped(L_SETS[("Ti", "Zr")]),
             },
+            param_format="linear",
         )
         reframed = unsorted.with_component_order("alphabetical")
         unsorted.interpolate_liquid_surface()

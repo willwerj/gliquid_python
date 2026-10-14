@@ -1,53 +1,36 @@
-"""
-Author: Joshua Willwerth
-Description: The shared solution-phase thermodynamics module of gliquid — the single home for
-the symbolic expression builders (N-component core plus the binary and ternary wrappers), the
-thermodynamic symbols and composition grid, the interpolation geometry (linear/Muggianu/Kohler),
-and the solid-solution reference resolvers. Any phase type plugs into the builders through its
-per-component reference G(T) expressions (liquid H−TS references, solid-solution ΔH−TΔS
-references, or a future gas model).
+"""Shared solution-phase thermodynamics: symbolic expression builders, symbols and grid, and
+solid-solution reference resolvers.
 
-The resolver half builds per-phase sub-regular solid-solution models (a single regular-solution
-interaction Omega per phase plus per-element enthalpy/entropy offsets relative to each element's
-DFT ground state) from one of three reference sources, and reconciles each element's liquid
-reference against the solid-phase ladder the model carries so the solid-solution and liquid free
-energies share one reference frame.
+Holds the N-component expression core with its binary and ternary wrappers, the thermodynamic
+symbols and composition grid, the interpolation geometry (linear/Muggianu/Kohler), and the
+solid-solution reference resolvers. A phase type plugs into the builders through its
+per-component reference G(T) expressions.
 
-The resolvers are written against the ComponentRef/Phase API in gliquid.phase. Numeric
-behavior is pinned by tests/test_binary_solution.py and tests/test_solution.py against
-fixtures/ss_characterization_pins.json.
+The resolvers build per-phase sub-regular solid-solution models (one regular-solution
+interaction Omega per pair plus per-element enthalpy/entropy offsets above each element's DFT
+ground state) from one of three reference sources, and reconcile each element's liquid
+reference against the solid-phase ladder so solid-solution and liquid free energies share one
+reference frame.
 
-Model dict schema (one per solid-solution phase name, e.g. "BCC"; any n >= 2 components):
+Model dict schema (one per solid-solution phase name, e.g. "BCC"; any n >= 2 components)::
+
     {
       "refs": {<el>: {source, ground_material_id, ground_spacegroup, ground_symbol,
                       ground_energy_ev_per_atom, material_id, spacegroup, symbol,
                       energy_ev_per_atom, delta_h_jmol, delta_s_jmol_k}},
       "ref_mode": str,                     # resolver that produced the refs
-      "omega":   {"<A>-<B>": float},       # J/mol regular-solution interaction per
-                                           #   alphabetized pair key, all C(n,2) pairs
+      "omega":   {"<A>-<B>": float},       # J/mol interaction per alphabetized pair key
       "delta_h": {<el>: float},            # J/mol per-element enthalpy offsets
       "delta_s": {<el>: float},            # J/(mol*K) per-element entropy offsets
     }
-All values are plain JSON-able scalars so models pickle cleanly through multiprocessing.
 
-REFERENCE FRAME (the load-bearing contract every resolver must honor): ``delta_h_jmol`` and
-``delta_s_jmol_k`` are CUMULATIVE above the element's ground state — the enthalpy/entropy of the
-whole ladder up to that phase, i.e. ``Phase.enthalpy``/``Phase.entropy``, NOT the single-transition
-steps ``Phase.delta_h``/``Phase.delta_s``. They must be on the same zero as the elemental polymorph
-line compounds, which carry cumulative values (``binary.build_phases_from_chull``), because the
-hull compares the two directly and an SS phase replaces the polymorph it covers. Publishing steps
-here silently moves the pure-element melting point for any element with more than one solid
-transition below melting (Ti was off by 458 K); a single-transition element cannot reveal it,
-since there step == cumulative. The unary DB's ``lattice_stabilities`` block shares this frame:
-its values are already cumulative above the element anchor (no transition temperature), so
-``_resolve_refs_db`` publishes them directly. Their entropy is 0 by the recalculation convention
--- no transition temperature to divide by -- except for the builder's scoped metastable-entropy
-exception, which carries a NEGATIVE SGTE entropy on a few HCP entries (Au, Li, Ba, Ca, Cu, Ag) so
-their free energy climbs with temperature instead of staying pinned at the 0 K enthalpy. Those
-entries still have no transition temperature, so they stay out of ``_ordered_solid_steps`` and the
-liquid reconciliation; the sign is what keeps the element's own melting point exact.
-GitHub: https://github.com/willwerj
-ORCID: https://orcid.org/0009-0004-6334-9426
+All values are plain JSON-able scalars.
+
+Reference frame: ``delta_h_jmol`` and ``delta_s_jmol_k`` are cumulative above the element's
+ground state (``Phase.enthalpy``/``Phase.entropy``), on the same zero as the elemental
+polymorph line compounds. The unary DB's ``lattice_stabilities`` values are already in this
+frame; their entropy is 0 except where the builder recorded a metastable entropy, and they
+have no transition temperature.
 """
 
 from __future__ import annotations
@@ -82,10 +65,7 @@ DEFAULT_REF_MODE = (
 )
 
 
-# --------------------------------------------------------------------------------------
-# Shared thermodynamic symbols, composition grid, and mixing-expression helpers — the
-# single home for the definitions binary.py and ternary.py both use.
-# --------------------------------------------------------------------------------------
+# -- Shared thermodynamic symbols, composition grid and mixing-expression helpers --
 
 R = 8.314  # J/(mol*K), universal gas constant
 DEFAULT_TAU = 8000  # K; decay constant of the exp(-T/tau) excess-enthalpy envelope
@@ -98,21 +78,13 @@ x_vals = np.arange(0, 1 + x_step, x_step)
 
 
 def refined_x_vals(factor: int = 5, step: float = x_step) -> np.ndarray:
-    """Composition grid with the INTERIOR subdivided ``factor`` times.
+    """Composition grid with the interior subdivided ``factor`` times.
 
-    Used by the presentation hull only (``BinaryLiquid.refined_hsx``). A solution phase's
-    field terminates between grid nodes, so the coarse grid collapses a range of true
-    compositions onto one node and the plotted field ends in a vertical face that is not a
-    phase boundary -- Hf-Y's BCC has 14 distinct equilibria (1298-1629 C) all sitting at
-    x=0.21. Subdividing converges that face: Hf-Y's HCP termini close to a single apex at
-    ``factor=5``, the Y-side one landing on the eutectic temperature to 0.1 K.
+    Used by the presentation hull only (``BinaryLiquid.refined_hsx``). The two outermost
+    intervals keep their coarse spacing.
 
-    The two OUTERMOST intervals deliberately keep their coarse spacing. Ideal-mixing
-    entropy drives a solvus asymptotically to T=0 as x->0, so sampling nearer an axis walks
-    the terminal invariant downward without ever converging (Hf-Y's Hf+HCP+Y peritectic
-    runs 733 -> 627 -> 515 -> 446 C as the step goes 0.01 -> 0.001, eventually dropping off
-    the plot floor). Refining there would move real tie lines for no geometric gain; the
-    axis corners come from the component transition temperatures instead.
+    Raises:
+        ValueError: if ``factor`` is below 1.
     """
     if factor < 1:
         raise ValueError(f"'factor' must be a positive integer, got {factor!r}.")
@@ -125,8 +97,7 @@ def refined_x_vals(factor: int = 5, step: float = x_step) -> np.ndarray:
 def comp_symbols(n: int) -> tuple[sp.Symbol, ...]:
     """The n-1 independent composition symbols of an n-component solution phase.
 
-    ``x_0 = 1 - sum(x_i)`` is always the derived fraction. Legacy names are preserved so
-    expressions print and substitute identically to the pre-refactor modules:
+    ``x_0 = 1 - sum(x_i)`` is always the derived fraction. The symbol names are:
     n=2 -> (x,), n=3 -> (x1, x2), n=4 -> (x1, x2, x3), ...
     """
     if n < 2:
@@ -139,12 +110,8 @@ def comp_symbols(n: int) -> tuple[sp.Symbol, ...]:
 xb_sym = comp_symbols(2)[0]  # the binary composition symbol (fraction of component B)
 
 
-# --------------------------------------------------------------------------------------
-# Redlich-Kister parameter formats -- the registry of L-term formalisms. A ParamFormat
-# declares, per RK order L0..L3: the subterm roles ('a', 'b', ...), the functional form
-# L_k(T), which parameters are pinned to zero during fitting, and the fitting topology.
-# Consumers read this metadata rather than branching on the raw param_format string.
-# --------------------------------------------------------------------------------------
+# -- Redlich-Kister parameter formats: per RK order L0..L3, the subterm roles, the form L_k(T),
+# the parameters pinned to zero during fitting, and the fitting topology --
 
 RK_MAX_ORDER = 3  # Highest supported Redlich-Kister order (L0..L3)
 
@@ -311,14 +278,14 @@ class RKPolyExp:
     (``format.param_names``, e.g. ``[L0_a, L0_b, L1_a, L1_b]``).
 
     Args:
-        param_format: Registry key (``'linear'``/``'combined'``/``'comb-exp'``/
+        param_format: Registry key (``'comb-exp'``, the default, ``'linear'``, ``'combined'`` or
             ``'regular'``) or a ``ParamFormat`` instance (for unregistered formats).
         params: Flat parameter values (empty means all-zero defaults).
         tau: exp(-T/tau) decay constant consumed by the 'combined'-family forms.
     """
 
     def __init__(
-        self, param_format: str | ParamFormat = "linear", params=(), tau: float = DEFAULT_TAU
+        self, param_format: str | ParamFormat = "comb-exp", params=(), tau: float = DEFAULT_TAU
     ):
         self.format = (
             param_format
@@ -422,8 +389,7 @@ class RKPolyExp:
         """This model with the component order reversed.
 
         ``L_k`` multiplies ``(x_i - x_j)^k``, so odd orders are odd under an i/j
-        swap: every subterm of orders 1 and 3 negates (generalizes the retired
-        ``flip_binary_l1``, which negated ``params[2:]`` of the 4-vector layout).
+        swap: every subterm of orders 1 and 3 negates.
         """
         flipped = list(self._params)
         pos = 0
@@ -459,8 +425,7 @@ class SolutionModel:
     """One N-component solution phase: references + per-pair Redlich-Kister excess.
 
     The single implementation behind the binary liquid ``eqs`` dict, the ternary
-    liquid surface, and every solid-solution phase — replacing the former split
-    between a symbolic ternary path and a hand-coded numpy binary-SS path.
+    liquid surface, and every solid-solution phase.
 
     Args:
         components: Component symbols in model order (defines pair-index meaning).
@@ -513,9 +478,8 @@ class SolutionModel:
         self.interp_scheme = interp_scheme
         self.ideal = ideal
         self._grid_fns: dict = {}
-        # (dh_a, dh_b, ds_a, ds_b, omega) for the binary pure-regular case, set by
-        # from_ss_model so h_s_grid reproduces the legacy arithmetic bit-exactly: the hull
-        # goldens pin exact simplex sets and the sympy-lambdified path differs at ~1e-16.
+        # (dh_a, dh_b, ds_a, ds_b, omega) for the binary pure-regular case, set by from_ss_model;
+        # h_s_grid evaluates it with numpy arithmetic.
         self._binary_regular: tuple | None = None
 
     def _interaction_key(self, key) -> tuple[int, ...]:
@@ -589,8 +553,7 @@ class SolutionModel:
         for pair, rk in pairs.items():
             pair_terms[pair] = rk.numeric_exprs() if numeric else rk.exprs()
             weights[pair], diffs[pair] = geometry[pair]
-        # Triplet interaction terms: x_i*x_j*x_k * L0(T), composed OUTSIDE the pair
-        # geometry (permutation-symmetric, so orientation never flips them).
+        # Triplet interaction terms x_i*x_j*x_k * L0(T), outside the pair geometry.
         fracs = [1 - sum(x_syms)] + list(x_syms)
         higher_order = sp.S.Zero
         for key, rk in triplets.items():
@@ -609,7 +572,7 @@ class SolutionModel:
         )
 
     def binary_eqs(self) -> dict:
-        """The BinaryLiquid ``eqs`` dict — unchanged key names and argument orders.
+        """The BinaryLiquid ``eqs`` dict.
 
         Per-order entries ``l{k}``/``h_l{k}``/``s_l{k}`` (+ ``*_lambdified`` taking
         ``(t, L{k}_a, L{k}_b, ...)``), the liquid surface entries, the lambdified
@@ -664,9 +627,8 @@ class SolutionModel:
         Uses the 'safe' ideal form so edge/corner grid points are exact. The
         lambdified callables are cached per instance (dropped on pickle).
 
-        The binary pure-regular case evaluates through the legacy numpy arithmetic
-        (bit-exact with the retired BinaryLiquid.solid_solution_h_s — the hull
-        goldens pin exact simplex sets, which a ~1e-16 float-reassociation can flip).
+        The binary pure-regular case evaluates through numpy arithmetic, not the lambdified path:
+        the hull goldens pin exact simplex sets, which a ~1e-16 float-reassociation can flip.
         """
         if self._binary_regular is not None:
             dh_a, dh_b, ds_a, ds_b, omega = self._binary_regular
@@ -697,6 +659,41 @@ class SolutionModel:
             s = np.broadcast_to(s_fn(*x_arrays, temp), shape).astype(float)
         return h, s
 
+    def nonideal_h_s_gradients(self, x_arrays, temp: float) -> tuple[np.ndarray, ...]:
+        """H and S of the reference and excess terms, with their composition gradients.
+
+        Everything but the ideal mixing term ``R*T*sum(x_i*ln(x_i))``, which carries no
+        enthalpy and whose entropy callers add themselves. The lambdified callables are cached
+        per instance (dropped on pickle).
+
+        Args:
+            x_arrays: the length-(n-1) sequence of independent-fraction arrays, one shape.
+            temp: temperature, K.
+
+        Returns:
+            tuple: ``(h, s, dh, ds)``. ``h`` and ``s`` have the shape of ``x_arrays[0]``;
+            ``dh`` and ``ds`` add a leading axis of length n-1, the derivatives with respect to
+            each independent fraction.
+        """
+        fns = self._grid_fns.get("nonideal")
+        x_syms = comp_symbols(len(self.components))
+        if fns is None:
+            exprs = self.expressions(x_syms=x_syms, ideal="plain", numeric=True)
+            g = exprs["g_ref"] + exprs["g_xs"]
+            s = -sp.diff(g, t_sym)
+            h = g + t_sym * s
+            outputs = [h, s, *(sp.diff(h, x) for x in x_syms), *(sp.diff(s, x) for x in x_syms)]
+            fns = [sp.lambdify([*x_syms, t_sym], expr, modules="numpy") for expr in outputs]
+            self._grid_fns["nonideal"] = fns
+        shape = np.shape(x_arrays[0])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            values = [
+                np.broadcast_to(np.asarray(fn(*x_arrays, temp), dtype=float), shape).astype(float)
+                for fn in fns
+            ]
+        k = len(x_syms)
+        return values[0], values[1], np.stack(values[2 : 2 + k]), np.stack(values[2 + k :])
+
     # ------------------------------------------------------------------ plumbing
     def __getstate__(self):
         state = self.__dict__.copy()
@@ -714,10 +711,7 @@ class SolutionModel:
         )
 
 
-# --------------------------------------------------------------------------------------
-# N-component solution-phase expression builder. build_solution_expressions is the one
-# core every phase type evaluates through; SolutionModel (below) is its object form.
-# --------------------------------------------------------------------------------------
+# -- N-component solution-phase expression builder; SolutionModel is its object form --
 
 
 def build_solution_expressions(
@@ -817,7 +811,7 @@ def interp_geometry(scheme: str, x_syms, pair_order=None) -> dict:
     """Pairwise interpolation weights and composition-difference expressions.
 
     One home for the linear/Muggianu/Kohler extrapolation geometry over the C(n,2)
-    component pairs (previously ternary-only). Muggianu splits the other components'
+    component pairs. Muggianu splits the other components'
     total evenly onto the pair's endpoints (which cancels in the difference, so it equals
     linear for this Redlich-Kister order); Kohler renormalizes onto the pair's own
     sub-simplex, guarded against a vanishing pair sum.
@@ -883,8 +877,7 @@ def _find_matching_polymorph(ss_phase: str, ref: ComponentRef) -> Phase | None:
     Im-3m/229). Pick the one stable immediately below melting -- the highest transition temperature
     under ``t_fusion`` -- because that is the solid the liquid is actually in equilibrium with, and
     ``build_phases_from_chull`` deletes EVERY polymorph of a covered spacegroup from the line
-    compounds. Taking the first match instead referenced Fe's BCC solution to alpha-Fe (dH = 0) and
-    dropped delta-Fe from the hull entirely.
+    compounds.
     """
     matches = [p for p in ref.polymorphs if p.spacegroup_number == SS_SPACEGROUPS[ss_phase]]
     if not matches:
@@ -948,12 +941,8 @@ def _compute_solid_ss_entropy(
 ) -> float:
     """Cumulative entropy for a solid SS phase via the stepwise S = sum(dH_i / T_i) formula.
 
-    ``phase_refs_all`` must hold EVERY phase resolved for ``el``, not just the ones resolved so
-    far: the sum runs over the transitions BELOW this phase, so a lower-temperature phase that
-    has not been reached yet would silently drop out. ``ALL_SS_PHASES`` iterates BCC before HCP,
-    so with a partially-filled map Ti's BCC entropy missed its 180 K HCP step entirely and left
-    the Ti edge 420 K low under ``from_dft_entries``. Callers resolve all enthalpies first, then
-    call this. Transition temperatures come from the element's own ladder.
+    ``phase_refs_all`` must hold every phase resolved for ``el``: the sum runs over the transitions
+    below this phase. Transition temperatures come from the element's own ladder.
     """
     phase = _find_matching_polymorph(ss_phase, ref)
     t_this = phase.t_transition if phase else None
@@ -1013,8 +1002,7 @@ def _package_ss_models(
 
     A phase needs a reference for EVERY component and an omega for EVERY pair; a phase
     missing either is skipped with a warning and stays edge-only, regardless of component
-    count (n == 2 included) — the semantics of the retired three-edge merge
-    (build_ternary_ss_models), now unified across component counts. A genuinely uncovered
+    count (n == 2 included). A genuinely uncovered
     SYSTEM (every candidate phase dropped) surfaces as an empty dict from
     load_solid_solution_models, never an exception.
     """
@@ -1028,8 +1016,7 @@ def _package_ss_models(
         missing_pairs = [pk for pk in keys if pk not in omega_block]
         refs = model_dict["refs"]
         if not all("delta_h_jmol" in refs[el] for el in components):
-            # The resolver found this phase for only some endpoints (e.g. an element with
-            # no matching polymorph) — a continuous solution needs every reference.
+            # A continuous solution needs a reference at every endpoint.
             missing = [el for el in components if "delta_h_jmol" not in refs[el]]
             logger.warning(
                 f"SS phase '{ss_phase}' has no reference for {missing} in "
@@ -1102,8 +1089,7 @@ def _resolve_refs_legacy(
         for el in components
     }
 
-    # Pass 1 -- every enthalpy. Pass 2 -- entropies, which sum over the transitions BELOW each
-    # phase and so need the complete map (see _compute_solid_ss_entropy).
+    # Pass 1: every enthalpy. Pass 2: entropies, summed over the transitions below each phase.
     phase_refs: dict[str, dict[str, dict]] = {}
     for ss_phase, phase_block in element_blocks.items():
         if not all(el in phase_block for el in components):
@@ -1139,11 +1125,7 @@ def _resolve_refs_cache(
 
     Enthalpies come from DFT (cumulative above the lowest-energy pure entry). Entropies come from
     the element's own transition ladder via ``_compute_solid_ss_entropy``, exactly as the
-    omegas-file resolver does -- a hard-coded ``delta_s = 0`` left the SS endpoints flat in T while
-    the liquid reference still carried ``sum(dH_i / T_i)``, which depressed BOTH endpoints of every
-    element with any solid transition (Hf-Ti came out 2292 / 1338 K against 2506 / 1943 K).
-    ``component_data`` is optional only so the retired two-argument call sites keep working; without
-    it the entropies fall back to zero and that defect returns.
+    omegas-file resolver does. Without ``component_data`` the entropies fall back to zero.
     """
     compounds = _compound_components(components)
     if compounds:
@@ -1199,9 +1181,8 @@ def _resolve_refs_cache(
                 symbol=symbol or SS_SYMBOLS[ss_phase],
             )
 
-    # Second pass: cumulative transition entropy off the element's own ladder, same as the
-    # omegas-file resolver. Deferred until every enthalpy is in hand because the sum runs over
-    # the transitions BELOW each phase; zero stands only where the element has no ladder to read.
+    # Second pass: cumulative transition entropy off the element's own ladder, zero where the
+    # element has none.
     for ss_phase, refs in phase_refs.items():
         for el, phase_ref in refs.items():
             ref = (component_data or {}).get(el)
@@ -1251,9 +1232,7 @@ def _resolve_refs_db(
             p_poly = _find_matching_polymorph(ss_phase, ref)
             if p_poly is None:
                 continue
-            # CUMULATIVE above the ground state (Phase.enthalpy/entropy), not the
-            # single-transition steps -- see the module docstring's REFERENCE FRAME note.
-            # The elemental polymorph line compounds this replaces carry cumulative values.
+            # Cumulative above the ground state (Phase.enthalpy/entropy).
             phase_refs.setdefault(ss_phase, {})[el] = _make_phase_ref(
                 ss_phase=ss_phase,
                 material_id=p_poly.material_id or "unknown",
@@ -1271,8 +1250,7 @@ def _resolve_refs_db(
                 symbol=p_poly.spacegroup_symbol or SS_SYMBOLS[ss_phase],
             )
 
-        # Tier B: structures the ladder lacks come from the builder-baked lattice_stabilities
-        # block, cumulative above the same anchor.
+        # Tier B: structures off the ladder, from the lattice_stabilities block.
         for ss_phase in ALL_SS_PHASES:
             if el in phase_refs.get(ss_phase, {}):
                 continue
@@ -1289,19 +1267,15 @@ def _resolve_refs_db(
             phase_refs.setdefault(ss_phase, {})[el] = _make_phase_ref(
                 ss_phase=ss_phase,
                 material_id=p_ls.material_id or "lattice_stability",
-                # Raw DFT energy when the builder recorded one (the runtime
-                # fallback published the raw omegas eV/atom; pins froze that).
+                # Raw DFT energy when the builder recorded one.
                 energy_ev_per_atom=(
                     p_ls.energy_per_atom_ev
                     if p_ls.energy_per_atom_ev is not None
                     else p_ls.enthalpy / EV_ATOM_TO_J_MOL
                 ),
                 delta_h_jmol=p_ls.enthalpy,
-                # Normally 0.0 -- a structure with no stability field has no transition
-                # temperature, so S = sum(dH_i / T_i) is undefined. The builder's scoped
-                # metastable-entropy exception emits a negative SGTE value on a few HCP
-                # entries; publish what it wrote. These phases have no transition
-                # temperature, so _ordered_solid_steps skips them.
+                # 0.0 unless the builder recorded a metastable entropy; _ordered_solid_steps skips
+                # these phases.
                 delta_s_jmol_k=p_ls.entropy if p_ls.entropy is not None else 0.0,
                 spacegroup=p_ls.spacegroup_number,
                 symbol=p_ls.spacegroup_symbol or SS_SYMBOLS[ss_phase],
@@ -1347,9 +1321,8 @@ def _ordered_solid_steps(
     for ss_phase, refs in phase_refs.items():
         if el not in refs:
             continue
-        # _find_matching_polymorph, not ComponentRef.solid_phase: an element may carry
-        # several polymorphs of one spacegroup, and solid_phase returns the FIRST, which the
-        # filter below can then discard.
+        # _find_matching_polymorph, not ComponentRef.solid_phase, which returns a spacegroup's first
+        # polymorph.
         p = _find_matching_polymorph(ss_phase, ref) if ss_phase in SS_SPACEGROUPS else None
         t_trans = p.t_transition if p else None
         if t_trans is None or t_trans <= 0 or t_trans >= t_melt:
@@ -1375,20 +1348,16 @@ def _apply_omegas_fallback(
       * Anchored -- if the element already has a phase that the omegas block also lists, take the
         lowest-omegas-energy such phase as the anchor and shift the omegas ladder onto the primary
         source's zero. Keeps primary-source phases authoritative.
-      * Legacy convention -- if there is no shared phase (As, Sb, Bi have no BCC/FCC/HCP
-        polymorph at all in these modes), fall back to ``_resolve_refs_legacy``'s own zero: the
-        lowest omegas SS energy. Required, not optional -- refusing here would leave Bi-Sb
-        and As-Sb with no solid solution. (``from_unary_db`` no longer calls this function at
-        all: the tiered unary DB bakes the same energies into its ``lattice_stabilities`` block
-        at build time, where Ta/Ag/Co are anchored on their corrected experimental ground
-        states and the negative-value conflict guard is a builder hard error.)
+      * Legacy convention -- if there is no shared phase, fall back to ``_resolve_refs_legacy``'s
+        own zero: the lowest omegas SS energy. (``from_unary_db`` does not call this function: the
+        unary DB bakes the same energies into its ``lattice_stabilities`` block at build time.)
       * Entropy is 0.0, as ``_resolve_refs_legacy`` does for a structure the element never
         exhibits. Such a phase has no transition temperature, so ``_ordered_solid_steps`` skips it
         and the liquid reconciliation is untouched.
       * A negative anchored enthalpy is REFUSED, not clamped: it means the omegas DFT ranks this
         structure BELOW the primary source's ground state, i.e. the two sources disagree about the
-        ground state (Ag, Co, Mn). Inventing a value there moves the element's melting point --
-        Co by 182 K -- so the phase stays edge-only and the conflict is logged.
+        ground state. Inventing a value there would move the element's melting point, so the phase
+        stays edge-only and the conflict is logged.
     """
     if not omegas_elements:
         return
@@ -1464,9 +1433,8 @@ def load_solid_solution_models(
     """Build per-phase solid-solution models for an n-component system (n >= 2).
 
     One resolution pass covers any component count: the resolvers are per-element and
-    the omegas file is looked up per pair, so the retired three-edge merge
-    (``build_ternary_ss_models``) is subsumed — cross-edge consistency is automatic
-    because every element is resolved exactly once.
+    the omegas file is looked up per pair, so cross-edge consistency is automatic because
+    every element is resolved exactly once.
 
     Args:
         components: Alphabetized component list (two or more elements).
@@ -1494,9 +1462,7 @@ def load_solid_solution_models(
             and all(el in data["elements"][phase] for el in components)
         }
         if not available_phases:
-            # Coverage gate: nothing usable in the omegas file for this system — behave
-            # exactly like SS-off. Returning here skips _resolve_refs_legacy and
-            # _reconcile_liquid_refs, so component_data is never touched.
+            # No usable omegas data for this system: returns as with SS off.
             return {}
         ground_refs, phase_refs = _resolve_refs_legacy(data, components, component_data)
         phase_refs = {k: v for k, v in phase_refs.items() if k in available_phases}
@@ -1506,9 +1472,6 @@ def load_solid_solution_models(
         _apply_omegas_fallback(components, phase_refs, data.get("elements", {}), ref_mode)
 
     elif ref_mode == "from_unary_db":
-        # No runtime omegas fallback here: the builder bakes the same energies
-        # (with the same anchoring math) into the unary DB's lattice_stabilities
-        # block, and its negative-value guard is a build-time hard error.
         ground_refs, phase_refs = _resolve_refs_db(components, component_data)
 
     else:
@@ -1519,15 +1482,11 @@ def load_solid_solution_models(
     ss_models = _build_ss_models_from_refs(components, ground_refs, phase_refs)
     ss_models = _package_ss_models(ss_models, components, omega_data, ref_mode)
     if not ss_models:
-        # Coverage gate: no SS phase survived packaging (e.g. the omegas file carries no
-        # interaction parameter for this system's pair) — skip reconciliation entirely so
-        # component_data is byte-identical to the SS-off path. Same predicate for every ref_mode.
+        # No SS phase survived packaging: component_data is left as with SS off.
         return {}
 
-    # Reconcile ONLY when the resolver's zero differs from the stored ladder's.
-    # 'from_unary_db' refs ARE the stored ladder, so re-deriving from the SS-spacegroup
-    # subset would drop every polymorph whose spacegroup is not BCC/FCC/HCP. The other two
-    # frames need the re-derivation and get it.
+    # Reconciles only when the resolver's zero differs from the stored ladder's, so
+    # 'from_unary_db' refs skip it.
     if ref_mode != "from_unary_db":
         _reconcile_liquid_refs(components, component_data, phase_refs)
     return ss_models

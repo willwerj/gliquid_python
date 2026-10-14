@@ -1,0 +1,74 @@
+#!/bin/sh
+# ruff format gate for staged Python, over the same three paths the CI lint job checks.
+#
+# Reformats the staged files and re-stages them, so the commit records formatted code. A file
+# with unstaged changes alongside its staged ones is left alone and the commit aborts: `git add`
+# on a partially staged file would sweep the unstaged hunks into the commit too.
+#
+# Activate:   git config core.hooksPath .githooks
+# Skip once:  git commit --no-verify
+# `ruff check` is not run here; the CI lint job runs it and fails on any finding.
+
+ruff_bin=""
+if [ -n "$GLIQUID_RUFF" ] && [ -x "$GLIQUID_RUFF" ]; then
+    ruff_bin="env"
+elif command -v ruff >/dev/null 2>&1; then
+    ruff_bin="path"
+elif command -v python >/dev/null 2>&1 && python -m ruff --version >/dev/null 2>&1; then
+    ruff_bin="module"
+else
+    echo "pre-commit: ruff not found on PATH, in \$GLIQUID_RUFF, or as \`python -m ruff\`." >&2
+    echo "pre-commit: committing unformatted -- install ruff or set GLIQUID_RUFF." >&2
+    exit 0
+fi
+
+run_ruff() {
+    case "$ruff_bin" in
+        env)    "$GLIQUID_RUFF" "$@" ;;
+        module) python -m ruff "$@" ;;
+        *)      ruff "$@" ;;
+    esac
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACM \
+         | grep -E '^(src/gliquid|tests|tests_internal)/.*\.py$')
+[ -n "$staged" ] || exit 0
+
+unstaged=$(git diff --name-only)
+partial=""
+full=""
+for f in $staged; do
+    if printf '%s\n' "$unstaged" | grep -qxF "$f"; then
+        partial="$partial $f"
+    else
+        full="$full $f"
+    fi
+done
+
+# Partially staged files that ruff would rewrite: report, write nothing, stop the commit.
+blocked=""
+for f in $partial; do
+    run_ruff format --check --quiet "$f" >/dev/null 2>&1 || blocked="$blocked $f"
+done
+if [ -n "$blocked" ]; then
+    echo "pre-commit: these files are staged with unstaged changes alongside and are unformatted:" >&2
+    for f in $blocked; do echo "  $f" >&2; done
+    echo "pre-commit: stage or discard the rest of each file, then run:" >&2
+    echo "  ruff format$blocked" >&2
+    exit 1
+fi
+
+[ -n "$full" ] || exit 0
+# shellcheck disable=SC2086
+set -- $full
+run_ruff format --quiet "$@" || exit 1
+
+# Anything differing from the index now is ruff's work: these files had no unstaged changes.
+changed=$(git diff --name-only -- "$@")
+if [ -n "$changed" ]; then
+    # shellcheck disable=SC2086
+    git add -- $changed
+    echo "pre-commit: ruff formatted and re-staged:"
+    for f in $changed; do echo "  $f"; done
+fi
+exit 0

@@ -1,19 +1,15 @@
-"""The version is single-sourced from the git tag, and stays that way.
+"""The version is single-sourced from the git tag.
 
 `hatch-vcs` derives the distribution version from `git describe`, writes it into the
 generated `src/gliquid/_version.py` at build time, and `gliquid.__init__` reads it back
-only when no installed distribution supplies metadata. Nothing here asserts a *specific*
-number: under `hatch-vcs` the answer depends on the git state of whoever is running, so a
-hardcoded expectation would fail on every developer machine and in every CI checkout.
+only when no installed distribution supplies metadata. No specific number is asserted: it
+depends on the git state of whoever runs the suite.
 
-What is worth pinning is the shape of the wiring, because both ways it breaks are silent —
-they produce a wrong version rather than an error:
+Pinned, since both ways the wiring breaks produce a wrong version rather than an error:
 
-* a version literal creeps back into `src/gliquid/`, and the package reports a stale number
-  forever after;
-* the `pyproject.toml` wiring regresses to a static `version =` key, or loses the
-  `fallback-version` that gives a tree with no reachable tag -- an archived branch, a
-  shallow CI checkout, a build run outside a clone -- a defined answer.
+* no version literal in `src/gliquid/`;
+* the `pyproject.toml` wiring keeps a dynamic version and the `fallback-version` that gives
+  a tree with no reachable tag a defined answer.
 """
 
 import ast
@@ -98,7 +94,7 @@ class TestReportedVersion:
 
 
 class TestNoVersionLiteralInSource:
-    """The regression this whole spec exists to prevent."""
+    """The failure this whole module exists to prevent."""
 
     def test_package_source_holds_no_version_literal(self):
         root = _repo_root()

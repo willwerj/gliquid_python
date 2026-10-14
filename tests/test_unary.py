@@ -5,14 +5,10 @@ Covers the scalar liquid reference API consumed by binary/ternary fitting and th
 per-phase / entropy-reconciliation API that underpins solid-solution support.
 """
 
-import sys
-from pathlib import Path
+import warnings
 
 import pytest
 import sympy as sp
-
-_project_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_project_root / "src"))
 
 import gliquid.mpds as mpds
 import gliquid.phase as phase
@@ -30,7 +26,9 @@ def test_registry_loads_elements():
 
 
 def test_unknown_element_defaults_to_zero():
-    xx = UNARY["Xx"]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a per-symbol miss does not warn
+        xx = UNARY["Xx"]
     assert xx.h_liq == 0.0 and xx.s_liq == 0.0
     assert xx.t_fusion == 0.0 and xx.t_vaporization == 0.0
     assert xx.polymorphs == []

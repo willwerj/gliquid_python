@@ -1,23 +1,20 @@
 """Undigitized liquidus holes are masked out of the deviation metrics.
 
-Spec 02 stopped ``extract_digitized_liquidus`` fabricating a liquidus across the hole
-between two disjoint 'L' shapes. The fit was still GRADED against that hole: the mesh in
+``extract_digitized_liquidus`` does not fabricate a liquidus across the hole between two
+disjoint 'L' shapes, but the fit is still GRADED against that hole: the mesh in
 ``calculate_deviation_metrics`` spans the full endpoint range and picks each reference
-temperature by nearest neighbour, so a mesh point inside a hole was compared against
-whichever region edge happened to be closer — a flat step, invented by the metric rather
+temperature by nearest neighbour, so a mesh point inside a hole is compared against
+whichever region edge happens to be closer — a flat step, invented by the metric rather
 than by the extractor. This module pins the hole out of the number.
 
 The pin is a POISON POINT: a wildly-wrong temperature planted inside the hole. If any mesh
 point in the hole still contributed, nearest neighbour would pick the poison up and the
 metrics would explode. Each test that asserts the poison is inert is paired with a control
-that clears ``holes`` and shows the same poison does reach the metrics — otherwise the
-first assertion would also pass on a system whose mesh simply never enters the hole.
+that clears ``holes`` and shows the same poison does reach the metrics.
 
-``TestReversedFrame`` covers the trap: ``liq_coverage`` is measured on the RAW json, whose
-component frame may be reversed relative to the construction frame. The scalar coverage
-metrics are mirror-invariant, so nothing before this spec had to care — hole POSITIONS are
-not. An unmirrored hole masks the opposite end of the diagram and returns a plausible
-wrong number.
+``TestReversedFrame`` covers the frame trap: ``liq_coverage`` is computed on the RAW json,
+whose component frame may be reversed relative to the construction frame, and hole POSITIONS
+are not mirror-invariant.
 """
 
 import numpy as np
@@ -27,40 +24,20 @@ import gliquid.config as config
 import gliquid.mpds as mpds
 from gliquid.binary import BinaryLiquid
 
-
-def _svgpath(points):
-    """[[x_pct, T_celsius], ...] -> MPDS-style svgpath string."""
-    return "M " + " L ".join(f"{x},{t}" for x, t in points)
-
-
-def _shape(points):
-    return {
-        "label": "L",
-        "nphases": 1,
-        "is_solid": False,
-        "kind": "phase",
-        "svgpath": _svgpath(points),
-    }
+from ._mpds_builders import from_record, liquidus_record
+from ._mpds_builders import liquid_shape as _shape
 
 
 def _make_json(regions, elements=("Hf", "Zr"), temp=(0, 2600)):
-    return {
-        "reference": {"entry": "synthetic-test-json"},
-        "chemical_elements": list(elements),
-        "comp_range": [0, 100],
-        "temp": list(temp),
-        "labels": [],
-        "shapes": [_shape(r) for r in regions],
-    }
+    return liquidus_record([_shape(r) for r in regions], elements, temp)
 
 
 # One liquid field drawn as two 'L' shapes: a narrow left wedge (0-10 at.%), an
-# UNDIGITIZED hole (10-35 at.%), and a wide right region (35-100 at.%). Deliberately
-# asymmetric so a frame flip moves the hole somewhere unmistakably different, and
-# deliberately discontinuous across the hole (2033 C -> 1500 C) so the flat step the
-# metric used to invent there is large. The hole is 0.25 wide and 75% of the span is
-# locally sampled, so this passes from_cache's interior-coverage gate (0.45 / 0.50) and
-# reaches the fit -- which is the whole point: these are systems that DO get fitted.
+# UNDIGITIZED hole (10-35 at.%), and a wide right region (35-100 at.%). Asymmetric, so a frame
+# flip moves the hole somewhere unmistakably different, and discontinuous across the hole
+# (2033 C -> 1500 C), so a flat step across it is large. The hole is 0.25 wide and 75% of the
+# span is locally sampled, so this passes from_cache's interior-coverage gate (0.45 / 0.50)
+# and reaches the fit.
 LEFT_REGION = [[x, 2233 - 20 * x] for x in range(0, 11, 2)]
 RIGHT_REGION = [[x, 1500 + (1855 - 1500) * (x - 35) / 65] for x in range(35, 101, 5)]
 HOLE = [0.10, 0.35]
@@ -78,13 +55,7 @@ def _holed_json():
 
 
 def _load(monkeypatch, mpds_json, spec="Hf-Zr", **kwargs):
-    """A real ``from_cache`` over a synthetic json — only the cache load is stubbed."""
-    monkeypatch.setattr(
-        mpds,
-        "load_mpds_data",
-        lambda input, pd_ind=None: (mpds_json, mpds.extract_digitized_liquidus(mpds_json)),
-    )
-    bl = BinaryLiquid.from_cache(spec, **kwargs)
+    bl = from_record(monkeypatch, mpds_json, spec, **kwargs)
     bl.update_phase_points()
     return bl
 
@@ -120,10 +91,8 @@ class TestCoverageReportsHoles:
         assert cov["holes"][1] == pytest.approx([0.50, 0.70], abs=1e-9)
 
     def test_a_gap_the_fill_would_bridge_is_not_a_hole(self):
-        """The threshold is the fill trigger, not 'the regions were drawn separately'.
-        Two regions 4 at.% apart leave a seam narrower than ``_FILL_GAP_X``, which is
-        indistinguishable from ordinary sampling — masking it would move a system that
-        nobody would call holed."""
+        """The threshold is the fill trigger, not 'the regions were drawn separately': two
+        regions 4 at.% apart leave a seam narrower than ``_FILL_GAP_X``, which is not a hole."""
         assert 0.04 < mpds._FILL_GAP_X
         near = _make_json(
             [
@@ -171,30 +140,33 @@ class TestHolesAreMaskedOutOfTheMetrics:
         assert bl.calculate_deviation_metrics()[0] > 100 * clean[0]
 
     def test_masking_changes_the_metrics_it_is_supposed_to_change(self, monkeypatch):
-        """The flat step the metric used to invent across the hole really was being
-        scored: dropping those mesh points moves MAE."""
+        """Unmasked, the flat step across the hole is scored: dropping those mesh points
+        moves MAE."""
         bl = _load(monkeypatch, _holed_json())
         masked = bl.calculate_deviation_metrics()
         bl.liq_coverage = dict(bl.liq_coverage, holes=[])
         assert bl.calculate_deviation_metrics()[0] != pytest.approx(masked[0], abs=1e-9)
 
-    def test_holes_are_masked_even_with_ignored_ranges_off(self, monkeypatch):
-        """``ignored_ranges=False`` asks for the metric without fit_parameters' judgement
-        calls. A hole is not a judgement call — there is no data there either way."""
+    def test_holes_are_masked_even_in_score_mode(self, monkeypatch):
+        """``unsupported_range_mode='score'`` asks for the metric without fit_parameters'
+        judgement calls. A hole is not a judgement call — there is no data there either way."""
         bl = _load(monkeypatch, _holed_json())
-        clean = bl.calculate_deviation_metrics(ignored_ranges=False)
+        clean = bl.calculate_deviation_metrics(unsupported_range_mode="score")
         _poison(bl, IN_HOLE)
-        assert bl.calculate_deviation_metrics(ignored_ranges=False) == clean
+        assert bl.calculate_deviation_metrics(unsupported_range_mode="score") == clean
 
-    def test_holes_and_ignored_ranges_mask_together(self, monkeypatch):
-        """Both sources go through one mask, so neither cancels the other."""
+    def test_holes_and_unsupported_ranges_mask_together(self, monkeypatch):
+        """Both sources go through one DROP mask under ``'ignore'``, so neither cancels the
+        other. The mode is explicit because only ``'ignore'`` drops the second source; under
+        ``'score'`` and ``'cap'`` the unsupported range stays in the mesh (``'cap'`` scores
+        it one-sidedly: ``tests/test_capped_unsupported_objective.py``)."""
         bl = _load(monkeypatch, _holed_json())
-        bl.ignored_comp_ranges = [[0.60, 0.75]]
-        clean = bl.calculate_deviation_metrics()
+        bl.unsupported_comp_ranges = [[0.60, 0.75]]
+        clean = bl.calculate_deviation_metrics(unsupported_range_mode="ignore")
         assert all(np.isfinite(clean))
         _poison(bl, IN_HOLE)
         _poison(bl, 0.675)
-        assert bl.calculate_deviation_metrics() == clean
+        assert bl.calculate_deviation_metrics(unsupported_range_mode="ignore") == clean
 
     def test_data_outside_the_hole_still_counts(self, monkeypatch):
         """The mask must be the hole and nothing but the hole."""
@@ -205,7 +177,7 @@ class TestHolesAreMaskedOutOfTheMetrics:
 
     def test_an_over_masked_system_reports_inf_not_a_flattering_score(self, monkeypatch):
         """Bi-Si class. When masking leaves under ten mesh points the metric refuses to
-        report, exactly as it already does when ignored_comp_ranges over-masks."""
+        report, exactly as it already does when unsupported_comp_ranges over-masks."""
         bl = _load(monkeypatch, _holed_json())
         bl.liq_coverage = dict(bl.liq_coverage, holes=[[0.08, 0.95]])
         assert bl.calculate_deviation_metrics() == (float("inf"),) * 4
@@ -219,7 +191,7 @@ class TestHolesAreMaskedOutOfTheMetrics:
 
 
 class TestNoHoleNoChange:
-    """A system without a hole must take exactly the path it took before this spec."""
+    """A system without a hole takes the same path with or without the hole machinery."""
 
     def test_contiguous_field_masks_nothing(self, monkeypatch):
         bl = _load(monkeypatch, _make_json([CONTIGUOUS]))
@@ -242,13 +214,9 @@ class TestNoHoleNoChange:
 
 
 class TestReversedFrame:
-    """The frame trap: ``liq_coverage`` is measured on the raw json, not the fit frame.
-
-    Every test here is asymmetric on purpose. The hole sits at 0.10-0.35 of the
-    alphabetical Hf-Zr frame, so in the Zr-Hf frame it must sit at 0.65-0.90. Dropping the
-    mirror in ``from_cache`` / ``with_component_order`` leaves it at 0.10-0.35, which masks
-    real digitized data at one end while leaving the fabricated step at the other — and
-    still returns a finite, plausible-looking number.
+    """The frame trap: ``liq_coverage`` is computed on the raw json, not the fit frame. The
+    hole sits at 0.10-0.35 of the alphabetical Hf-Zr frame, so in the Zr-Hf frame it must sit
+    at 0.65-0.90.
     """
 
     def test_mirror_liquidus_coverage_moves_positions_and_leaves_scalars(self):
@@ -307,13 +275,9 @@ class TestReversedFrame:
 
 
 class TestRealDisjointSystems:
-    """The cached corpus, where the holes came from.
-
-    Read straight off disk rather than through ``from_cache``: these pins are about hole
-    POSITIONS in a real digitization, and routing them through the DFT hull would couple
-    them to the entry cache (several cached entries monty-decode against pymatgen paths
-    this version no longer has). Only Hf-Zr ships with the package, so the rest are
-    opportunistic on the workspace's nested ``matrix_data`` store.
+    """Hole POSITIONS in cached digitizations, read straight off disk rather than through
+    ``from_cache``. Only Hf-Zr ships with the package; the rest need the maintainer's
+    per-system corpus store.
     """
 
     @staticmethod
@@ -326,10 +290,9 @@ class TestRealDisjointSystems:
 
         name = f"{system}_MPDS_PD_0.json"
         candidates = [api.resolve_cache_path(CacheKey(system, "mpds", "0"))]
-        candidates += [
-            parent / "matrix_data" / system / name
-            for parent in Path(config.project_root).resolve().parents
-        ]
+        root = config.project_root
+        parents = Path(root).resolve().parents if root is not None else ()
+        candidates += [parent / "matrix_data" / system / name for parent in parents]
         # resolve_cache_path answers None for a store with no filesystem paths — a real
         # answer, so it is filtered rather than assumed away.
         path = next((p for p in candidates if p is not None and p.exists()), None)

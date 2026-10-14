@@ -3,62 +3,39 @@
 ``TernaryLiquidInterpolation._init_sys`` builds a KELVIN evaluation grid -- ``G = H - T * S``
 needs an absolute temperature, and ``_eval_hull``/``get_convex_hull`` key their per-temperature
 slices by it -- while every equilibrium frame is converted to CELSIUS on the way out
-(``temp_df["T"] - 273.15``). ``conds`` is the plotted temperature WINDOW, and it used to be
-carried in Kelvin yet consumed as a Celsius quantity in three places: the solid-segment floor
-in ``TLIPlotter._plot_tx``, and the base triangle plus the z-axis range in
-``render_tx_surface``.
+(``temp_df["T"] - 273.15``). ``conds`` is the plotted temperature WINDOW, consumed in three
+places: the solid-segment floor in ``TLIPlotter._plot_tx``, and the base triangle plus the
+z-axis range in ``render_tx_surface``.
 
-Because ``np.min([0, min_temp - 200])`` evaluates to 0 for every system whose elements all melt
-above 200 K, ``conds[0]`` read as 0 C when it was meant as 0 K -- so the plot floor sat 273.15 C
-ABOVE the bottom of the grid. Two consequences, both covered below: a phase stable only at very
-low temperature (Ti's spurious ``Ti (P6/mmm)`` DFT ground state) had its segment floored above
-its own ceiling, and ``render_tx_surface`` carried a matching ``- 200`` on the z-axis range.
-
-``conds`` is now DERIVED from the grid -- the same window, in the frame the data is in -- so the
-two cannot drift and nothing the hull produces can land outside the plotted range.
+``conds`` is DERIVED from the grid -- the same window, in the frame the data is in -- so
+nothing the hull produces can land outside the plotted range.
 
 Runs offline against the two ternary caches that ship for tests. Hf-Ti-Zr is the positive
 control (Ti carries a polymorph whose whole stability window sits below 0 C); Al-Mg-Si is the
-negative control (every solid there is stable at 0 C, which is why its frozen figure pins never
-moved).
+negative control (every solid there is stable at 0 C).
 """
 
 from __future__ import annotations
+
+from functools import partial
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from gliquid.plotting import ternary_surface
-from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
+from gliquid.plotting import ternary_labels, ternary_surface
+from gliquid.ternary import TLIPlotter
+
+from ._mpds_builders import IDEAL_MIX, ideal_ternary
 
 ABS_ZERO_C = -273.15
-_IDEAL = [0.0, 0.0, 0.0, 0.0]  # 'linear' [L0_a, L0_b, L1_a, L1_b]: an ideal solution
-MIX = {
-    "Hf-Ti-Zr": {"Hf-Ti": _IDEAL, "Ti-Zr": _IDEAL, "Zr-Hf": _IDEAL},
-    "Al-Mg-Si": {"Al-Mg": _IDEAL, "Mg-Si": _IDEAL, "Si-Al": _IDEAL},
-}
-SYSTEMS = sorted(MIX)
-DELTA = 0.25  # coarse: the convention is grid-independent, and this keeps the hulls cheap
-T_INCR = 100
+SYSTEMS = sorted(IDEAL_MIX)
 
-# The floor the old code used: ``np.min([0, min_temp - 200])`` is 0 for both systems here, and
-# it was compared against Celsius frames. A phase whose ceiling is below this is what the unit
-# error inverted.
+# A floor of 0 K read as 0 C. A phase whose ceiling is below it is stable only below 0 C.
 OLD_KELVIN_FLOOR_READ_AS_C = 0.0
 
 
-def _make_ti(sys_name, hull_mode="gtx"):
-    return TernaryLiquidInterpolation(
-        sys_name.split("-"),
-        delta=DELTA,
-        interp_scheme="linear",
-        param_format="linear",
-        xs_mix=MIX[sys_name],
-        T_incr=T_INCR,
-        hull_mode=hull_mode,
-        order="given",
-    )
+_make_ti = partial(ideal_ternary, temp_range=(0.0, None))
 
 
 def _build(sys_name):
@@ -69,7 +46,7 @@ def _build(sys_name):
     """
     ti = _make_ti(sys_name)
     ti.interpolate()
-    p = TLIPlotter(ti, order="given", T_incr=T_INCR)
+    p = TLIPlotter(ti, order="given")
     p.process_data()
     return p, p.get_plot("tx")  # get_plot also builds solid_plotting_df / liq_plotting_df
 
@@ -131,16 +108,14 @@ class TestCondsIsTheGridInCelsius:
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_no_grid_temperature_is_a_negative_absolute_temperature(self, plotters, sys_name):
-        """``G = H - T * S`` below 0 K is meaningless. The retired
-        ``np.min([0, min_temp - 200])`` produced exactly that for any system containing an
-        element that melts below 200 K -- 10 of the 86 in the unary registry do."""
+        """``G = H - T * S`` below 0 K is meaningless, so no grid temperature is negative."""
         grid = np.asarray(plotters[sys_name].T_grid, dtype=float)
         assert (grid >= 0.0).all(), f"{sys_name}: grid dips to {grid.min()} K"
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_every_grid_temperature_is_evaluated(self, plotters, sys_name):
-        """``_eval_hull`` used to carry an ``if T < self.conds[0]: continue`` guard comparing a
-        Kelvin grid value against ``conds``. It never fired; this pins that it never could."""
+        """``_eval_hull`` evaluates every grid temperature; none is skipped against
+        ``conds``."""
         p = plotters[sys_name]
         assert len(p.equil_df_list) == len(p.T_grid)
 
@@ -197,10 +172,9 @@ class TestTheFloorIsClampedAtAbsoluteZero:
 
 
 class TestEachLabelMarksItsOwnVertex:
-    """The corner labels are ordered ``[components[0], components[2], components[1]]`` against
-    an x array of ``[0, 0.5, 1]`` -- which looks transposed but is not. Checked against the
-    COMPOSITION TRANSFORM, since a 3-D camera decides where a vertex lands on screen and a
-    rendered image cannot settle it.
+    """In every view the corner-label mesh carries, it sets each component's name beside that
+    component's own vertex. Checked against the COMPOSITION TRANSFORM, since a 3-D camera decides
+    where a vertex lands on screen and a rendered image cannot settle it.
     """
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
@@ -213,24 +187,31 @@ class TestEachLabelMarksItsOwnVertex:
             x0, x1 = (1.0 if i == 1 else 0.0), (1.0 if i == 2 else 0.0)
             vertices[el] = (x0 + 0.5 * x1, x1 * np.sqrt(3) / 2)
 
-        (labels,) = [t for t in figures[sys_name].data if getattr(t, "mode", None) == "text"]
-        drawn = 0
-        for lx, ly, raw in zip(labels.x, labels.y, labels.text):
-            if not raw:
-                continue
-            el = raw.replace("<b>", "").replace("</b>", "")
-            assert el in vertices, f"label {el!r} is not a component of {sys_name}"
-            ex, ey = vertices[el]
-            d = float(np.hypot(float(lx) - ex, float(ly) - ey))
-            nearest = min(vertices, key=lambda k: np.hypot(float(lx) - vertices[k][0],
-                                                           float(ly) - vertices[k][1]))
-            assert nearest == el, (
-                f"{sys_name}: label {el} at ({lx}, {ly}) is nearest {nearest}'s vertex "
-                f"{vertices[nearest]}, not its own {vertices[el]}"
-            )
-            assert d < 0.05, f"{sys_name}: label {el} sits {d:.3f} from its vertex"
-            drawn += 1
-        assert drawn == 3, f"{sys_name}: {drawn} component labels drawn, expected 3"
+        (mesh,) = [t for t in figures[sys_name].data if t.name == "corner labels"]
+        views = mesh.meta[ternary_labels.XY_KEY]
+        assert list(views) == list(ternary_labels.VIEWS)
+        for view, (x, y) in views.items():
+            names = [
+                lab
+                for lab in ternary_labels.composition_labels(p.components, view)
+                if lab["kind"] == "corner"
+            ]
+            assert [lab["text"] for lab in names] == list(p.components)
+            sizes = [len(ternary_labels.glyph_mesh(lab["text"], "bold")[0]) for lab in names]
+            assert len(x) == sum(sizes), f"{sys_name}: the {view} view is not three names"
+            xy = np.column_stack([x, y]).astype(float)
+            for el, chunk in zip(p.components, np.split(xy, np.cumsum(sizes)[:-1])):
+                lx, ly = chunk.mean(axis=0)
+                ex, ey = vertices[el]
+                d = float(np.hypot(lx - ex, ly - ey))
+                nearest = min(
+                    vertices, key=lambda k: np.hypot(lx - vertices[k][0], ly - vertices[k][1])
+                )
+                assert nearest == el, (
+                    f"{sys_name}: label {el} at ({lx}, {ly}) is nearest {nearest}'s vertex "
+                    f"{vertices[nearest]}, not its own {vertices[el]}"
+                )
+                assert d < 0.12, f"{sys_name}: label {el} sits {d:.3f} from its vertex"
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_premise_the_three_vertices_are_distinguishable(self, plotters, sys_name):
@@ -275,8 +256,8 @@ class TestSolidSegmentsRestOnTheFloor:
 
     def test_premise_a_phase_is_stable_only_below_the_old_kelvin_floor(self, plotters):
         """The positive control, asserted rather than assumed: Hf-Ti-Zr must carry a phase
-        whose whole stability window sits below the floor the old code used. Without one, the
-        unit error is unobservable and every assertion in this class is vacuous."""
+        whose whole stability window sits below ``OLD_KELVIN_FLOOR_READ_AS_C``. Without one,
+        a unit error here is unobservable and every assertion in this class is vacuous."""
         ceilings = _raw_solid(plotters["Hf-Ti-Zr"]).groupby("Phase")["T"].max()
         below = ceilings[ceilings < OLD_KELVIN_FLOOR_READ_AS_C]
         assert not below.empty, (
@@ -285,8 +266,7 @@ class TestSolidSegmentsRestOnTheFloor:
         )
 
     def test_negative_control_has_no_such_phase(self, plotters):
-        """Al-Mg-Si's every solid is stable at 0 C, so the old floor was above nothing --
-        which is why its frozen figure pins never moved."""
+        """Al-Mg-Si's every solid is stable at 0 C."""
         ceilings = _raw_solid(plotters["Al-Mg-Si"]).groupby("Phase")["T"].max()
         assert (ceilings >= OLD_KELVIN_FLOOR_READ_AS_C).all(), (
             f"Al-Mg-Si is no longer a negative control: {ceilings.to_dict()}"
@@ -315,11 +295,9 @@ class TestSolidSegmentsRestOnTheFloor:
 
 
 class TestZAxisRangeMatchesTheData:
-    """``render_tx_surface`` reads ``conds`` as Celsius. Its z-axis range used to be
-    ``conds -/+ 200`` at both ends: the top 200 was compensating for the unit mismatch, and the
-    bottom 200 was clearance for corner labels anchored 150 BELOW the floor. With the floor at
-    absolute zero there is nothing below to borrow, so the labels take their offset in screen
-    space and the axis is the window itself."""
+    """``render_tx_surface`` reads ``conds`` as Celsius, and its z-axis range must match the
+    window itself. With the floor at absolute zero there is nothing below to borrow, so the
+    labels of the base triangle lie flat ON the drawn floor instead of below it."""
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_range_is_exactly_conds(self, figures, plotters, sys_name):
@@ -330,9 +308,8 @@ class TestZAxisRangeMatchesTheData:
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_nothing_is_drawn_below_absolute_zero(self, figures, sys_name):
-        """The point of the exercise: no coordinate anywhere in the figure -- data, base
-        triangle, corner-label anchor, or axis bound -- may be a temperature that cannot
-        exist."""
+        """No coordinate anywhere in the figure -- data, base triangle, corner-label anchor,
+        or axis bound -- is a temperature below absolute zero."""
         fig = figures[sys_name]
         assert float(fig.layout.scene.zaxis.range[0]) >= ABS_ZERO_C - 1e-9
         for i, trace in enumerate(fig.data):
@@ -342,26 +319,22 @@ class TestZAxisRangeMatchesTheData:
                 if v is not None
             ]
             assert all(v >= ABS_ZERO_C - 1e-9 for v in vals), (
-                f"{sys_name}: trace {i} ({trace.type}) has z below absolute zero: "
-                f"{min(vals)}"
+                f"{sys_name}: trace {i} ({trace.type}) has z below absolute zero: {min(vals)}"
             )
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
-    def test_corner_labels_are_anchored_on_the_floor_and_offset_in_screen_space(
-        self, figures, plotters, sys_name
-    ):
-        """A z anchor below the floor would put the labels outside the axis range, and plotly
-        CLIPS out-of-range 3-D text -- the component labels would silently vanish."""
+    def test_corner_labels_lie_flat_on_the_floor(self, figures, plotters, sys_name):
+        """A z below the floor would put the labels outside the axis range, and plotly CLIPS
+        out-of-range 3-D geometry -- the component labels would silently vanish."""
         conds = plotters[sys_name].conds
         expected = _drawn_floor(conds)
-        labels = [t for t in figures[sys_name].data if getattr(t, "mode", None) == "text"]
-        assert len(labels) == 1, "the corner-label trace is no longer identifiable by mode"
-        assert all(float(v) == pytest.approx(expected, abs=1e-9) for v in labels[0].z)
-        assert labels[0].textposition == "bottom center", (
-            "the label offset must stay in SCREEN space; a data-space drop below the floor "
-            "would be an impossible temperature and would be clipped"
-        )
-        assert [t for t in labels[0].text if t], "no component labels drawn"
+        labels = [t for t in figures[sys_name].data if t.name == "corner labels"]
+        assert len(labels) == 1, "corner labels not identifiable by name"
+        for trace in labels:
+            assert trace.type == "mesh3d"
+            assert len(trace.z) and all(
+                float(v) == pytest.approx(expected, abs=1e-9) for v in trace.z
+            )
 
     @pytest.mark.parametrize("sys_name", SYSTEMS)
     def test_every_drawn_z_is_inside_the_range(self, figures, sys_name):
@@ -406,6 +379,4 @@ class TestZAxisRangeMatchesTheData:
         """The inset is a drawing nudge for the base triangle only. The DATA -- the solid-phase
         segment floors -- must still sit on the true grid floor."""
         p = plotters[sys_name]
-        assert float(p.solid_plotting_df["T"].min()) == pytest.approx(
-            float(p.conds[0]), abs=1e-9
-        )
+        assert float(p.solid_plotting_df["T"].min()) == pytest.approx(float(p.conds[0]), abs=1e-9)

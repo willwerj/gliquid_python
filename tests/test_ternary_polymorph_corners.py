@@ -1,22 +1,23 @@
 """Elemental polymorph ladders must enter the TERNARY hull, not just the binary one.
 
 ``TernaryLiquidInterpolation`` references its liquid to ``UNARY[el].h_liq``/``s_liq``, which
-are cumulative above the DFT GROUND-STATE polymorph. Its solid side used to come from
-``pdia.stable_entries`` alone -- at a pure-element vertex, the ground state at formation
-energy 0 and nothing else. The liquid therefore crossed the EXTRAPOLATED ground state and a
-pure corner melted at ``h_liq / s_liq`` instead of ``t_fusion``:
+are cumulative above the DFT GROUND-STATE polymorph. Its solid side must carry the same
+ladder, via ``component_data[comp].polymorphs``, or a pure corner melts at ``h_liq / s_liq``
+instead of ``t_fusion``:
 
     T_corner = h_liq / s_liq  <  t_fusion   whenever the ladder has a sub-melting transition
 
-because every such transition contributes ``dH_i / T_i`` with ``T_i < T_melt``. Measured 74 K
-low for Sn, 870 K for Ti, across 27 of the 84 elements carrying a liquid reference.
-``gliquid.binary`` was never affected -- ``build_phases_from_chull`` inserts
-``component_data[comp].polymorphs`` explicitly, and ``get_ternary_form_en`` was the only hull
-consumer in the package with no paired ``.polymorphs`` injection.
+because every such transition contributes ``dH_i / T_i`` with ``T_i < T_melt``.
+``gliquid.binary`` is not affected -- ``build_phases_from_chull`` inserts
+``component_data[comp].polymorphs`` explicitly, and ``get_ternary_form_en`` is the hull
+consumer this module pairs it with.
 
 Runs offline against the two ternary caches that ship for tests:
   Hf-Ti-Zr -- ALL THREE elements carry a sub-melting bcc transition (positive control)
   Al-Mg-Si -- NONE of the three does (negative control: nothing may move)
+
+Every fixture runs in both hull modes: gtx snaps each corner to the T_incr grid, hsx reads it
+off a facet and lands on t_fusion itself.
 """
 
 from __future__ import annotations
@@ -40,6 +41,17 @@ _IDEAL = [0.0, 0.0, 0.0, 0.0]
 ZERO_MIX = {"Hf-Ti": _IDEAL, "Ti-Zr": _IDEAL, "Zr-Hf": _IDEAL}
 ZERO_MIX_AMS = {"Al-Mg": _IDEAL, "Mg-Si": _IDEAL, "Si-Al": _IDEAL}
 T_INCR = 10
+HULL_MODES = ["gtx", "hsx"]
+#: hsx corner temperatures sit on t_fusion to within the reference data's own rounding.
+HSX_TOL_K = 0.05
+
+
+def _expected_corner(el, hull_mode):
+    """The rendered corner temperature (K): t_fusion, rounded up to the grid under gtx."""
+    t_fusion = UNARY[el].t_fusion
+    if hull_mode == "gtx":
+        return pytest.approx(math.ceil(t_fusion / T_INCR) * T_INCR, abs=1e-6)
+    return pytest.approx(t_fusion, abs=HSX_TOL_K)
 
 
 def _sub_melting_steps(symbol):
@@ -51,7 +63,7 @@ def _sub_melting_steps(symbol):
     ]
 
 
-def _corner_temps(components, xs_mix, **kwargs):
+def _corner_temps(components, xs_mix, hull_mode, **kwargs):
     """Rendered liquidus temperature (K) at each pure-element vertex."""
     ti = TernaryLiquidInterpolation(
         list(components),
@@ -60,6 +72,7 @@ def _corner_temps(components, xs_mix, **kwargs):
         param_format="linear",
         xs_mix=xs_mix,
         T_incr=T_INCR,
+        hull_mode=hull_mode,
         order="given",
         **kwargs,
     )
@@ -68,8 +81,10 @@ def _corner_temps(components, xs_mix, **kwargs):
     import pandas as pd
 
     df = pd.concat(ti.equil_df_list, ignore_index=True)
-    liq = df[df["Phase"] == "L"].sort_values("T").drop_duplicates(
-        subset=["x0_orig", "x1_orig"], keep="first"
+    liq = (
+        df[df["Phase"] == "L"]
+        .sort_values("T")
+        .drop_duplicates(subset=["x0_orig", "x1_orig"], keep="first")
     )
     lookup = {
         (round(float(r.x0_orig), 4), round(float(r.x1_orig), 4)): float(r.T) + 273.15
@@ -82,14 +97,14 @@ def _corner_temps(components, xs_mix, **kwargs):
     }, ti
 
 
-@pytest.fixture(scope="module")
-def htz():
-    return _corner_temps(AFFECTED, ZERO_MIX)
+@pytest.fixture(scope="module", params=HULL_MODES)
+def htz(request):
+    return _corner_temps(AFFECTED, ZERO_MIX, request.param)
 
 
-@pytest.fixture(scope="module")
-def ams():
-    return _corner_temps(UNAFFECTED, ZERO_MIX_AMS)
+@pytest.fixture(scope="module", params=HULL_MODES)
+def ams(request):
+    return _corner_temps(UNAFFECTED, ZERO_MIX_AMS, request.param)
 
 
 class TestTheDefectIsRealInTheData:
@@ -114,24 +129,20 @@ class TestTheDefectIsRealInTheData:
 class TestCornersReachTFusion:
     @pytest.mark.parametrize("el", AFFECTED)
     def test_affected_corner_melts_at_t_fusion(self, htz, el):
-        corners, _ = htz
+        corners, ti = htz
         assert corners[el] is not None, f"no liquid vertex found for {el}"
-        # The hull snaps to the T_incr grid, so the corner is t_fusion rounded UP.
-        expected = math.ceil(UNARY[el].t_fusion / T_INCR) * T_INCR
-        assert corners[el] == pytest.approx(expected, abs=1e-6)
+        assert corners[el] == _expected_corner(el, ti.hull_mode)
 
     @pytest.mark.parametrize("el", AFFECTED)
     def test_affected_corner_is_not_the_h_over_s_value(self, htz, el):
-        """The specific regression: melting at the extrapolated ground state."""
+        """Guards against melting at the extrapolated ground state."""
         corners, _ = htz
-        broken = math.ceil(UNARY[el].h_liq / UNARY[el].s_liq / T_INCR) * T_INCR
-        assert corners[el] != pytest.approx(broken, abs=1e-6)
+        assert abs(corners[el] - UNARY[el].h_liq / UNARY[el].s_liq) > T_INCR
 
     @pytest.mark.parametrize("el", UNAFFECTED)
     def test_unaffected_corner_unchanged(self, ams, el):
-        corners, _ = ams
-        expected = math.ceil(UNARY[el].t_fusion / T_INCR) * T_INCR
-        assert corners[el] == pytest.approx(expected, abs=1e-6)
+        corners, ti = ams
+        assert corners[el] == _expected_corner(el, ti.hull_mode)
 
 
 class TestLadderOnTheHull:
@@ -151,7 +162,8 @@ class TestLadderOnTheHull:
 
     def test_polymorph_names_stay_distinct(self, htz):
         """get_ternary_form_en dedupes by phase name keeping min H; a collision would
-        silently drop the high-temperature polymorph and reinstate the defect."""
+        silently drop the high-temperature polymorph and reinstate the wrong corner
+        temperature."""
         _, ti = htz
         names = list(ti.tern_mp_df["Phase Name"])
         assert len(names) == len(set(names))
@@ -162,9 +174,7 @@ class TestLadderOnTheHull:
         stable compounds."""
         _, ti = htz
         pdia, _ = api.get_dft_convexhull(list(AFFECTED), "GGA", data_dir=ti.data_dir)
-        expected = min(
-            pdia.get_form_energy_per_atom(e) * 96485.0 for e in pdia.stable_entries
-        )
+        expected = min(pdia.get_form_energy_per_atom(e) * 96485.0 for e in pdia.stable_entries)
         assert ti.ternary_meta["deepest_formation_energy"] == pytest.approx(expected)
 
 
@@ -173,8 +183,12 @@ class TestSolidSolutionExclusion:
 
     def test_ss_covered_spacegroups_are_not_line_compounds(self):
         ti = TernaryLiquidInterpolation(
-            AFFECTED, delta=0.25, xs_mix=ZERO_MIX, param_format="linear",
-            solid_solutions=True, order="given",
+            AFFECTED,
+            delta=0.25,
+            xs_mix=ZERO_MIX,
+            param_format="linear",
+            solid_solutions=True,
+            order="given",
         )
         ti.interpolate()
         assert ti.ss_models, "no SS models built -- the exclusion is untested"
@@ -197,40 +211,22 @@ class TestSolidSolutionExclusion:
         assert {"beta-Hf (bcc)", "beta-Ti (bcc)", "beta-Zr (bcc)"} <= names
 
 
-# ----------------------------------------------------------------------------------
-# The ladder reaches the hull (above). Does it reach the FIGURE?
-# ----------------------------------------------------------------------------------
-def _plotter(components, xs_mix):
-    """A TLIPlotter with its tx frame built.
-
-    ``fit_or_pred`` is deliberately left empty: ``_init_sys`` only builds the binary edge
-    sub-figures when BOTH ``xs_mix`` and ``fit_or_pred`` are populated, and those are not
-    under test here -- skipping them keeps the fixture cheap.
-    """
-    ti = TernaryLiquidInterpolation(
-        list(components),
-        delta=0.25,
-        interp_scheme="linear",
-        param_format="linear",
-        xs_mix=xs_mix,
-        T_incr=T_INCR,
-        order="given",
-    )
-    ti.interpolate()
-    p = TLIPlotter(ti, order="given", T_incr=T_INCR)
-    p.process_data()
+# -- The ladder reaches the figure --
+def _plotter(ti):
+    """A TLIPlotter over the processed ``_corner_temps`` model ``ti``, its tx frame built."""
+    p = TLIPlotter(ti, order="given")
     p.get_plot("tx")  # builds solid_plotting_df as a side effect
     return p
 
 
 @pytest.fixture(scope="module")
-def htz_plot():
-    return _plotter(AFFECTED, ZERO_MIX)
+def htz_plot(htz):
+    return _plotter(htz[1])
 
 
 @pytest.fixture(scope="module")
-def ams_plot():
-    return _plotter(UNAFFECTED, ZERO_MIX_AMS)
+def ams_plot(ams):
+    return _plotter(ams[1])
 
 
 def _corner_xy(components, el):
@@ -239,8 +235,9 @@ def _corner_xy(components, el):
 
 
 def _raw_solid(plotter):
+    """The hull's solid rows inside the plotted temperature window."""
     df = pd.concat(plotter.equil_df_list, ignore_index=True)
-    return df[df["Phase"] != "L"]
+    return df[(df["Phase"] != "L") & (df["T"] >= plotter.conds[0])]
 
 
 def _corner_rows(plotter, components, el):
@@ -256,7 +253,9 @@ def _corner_rows(plotter, components, el):
 
     cx, cy = _corner_xy(components, el)
     raw = _raw_solid(plotter)
-    seed = raw[np.isclose(raw["x0_orig"], cx, atol=1e-6) & np.isclose(raw["x1_orig"], cy, atol=1e-6)]
+    seed = raw[
+        np.isclose(raw["x0_orig"], cx, atol=1e-6) & np.isclose(raw["x1_orig"], cy, atol=1e-6)
+    ]
     assert not seed.empty, f"no solid row at {el}'s vertex -- fixture or convention changed"
     tx0, tx1 = float(seed["x0"].iloc[0]), float(seed["x1"].iloc[0])
 
@@ -267,13 +266,8 @@ def _corner_rows(plotter, components, el):
 
 
 class TestLadderSurvivesIntoTheFigure:
-    """The hull finds the whole ladder; the figure must not silently drop most of it.
-
-    ``_plot_tx`` deduplicated the solid frame on ``["x0", "x1"]`` alone, and every polymorph
-    of one element shares that element's corner -- so only the highest-temperature one
-    survived and was then floored at ``conds[0]``, rendering the corner as ONE unbroken line
-    from the plot floor to the melting point with no transition visible.
-    """
+    """The figure keeps every polymorph of the ladder the hull finds, although all the
+    polymorphs of one element share its corner."""
 
     @pytest.mark.parametrize("el", AFFECTED)
     def test_premise_hull_really_carries_a_ladder_here(self, htz_plot, el):
@@ -292,12 +286,8 @@ class TestLadderSurvivesIntoTheFigure:
 
     @pytest.mark.parametrize("el", AFFECTED)
     def test_ladder_segments_stack_instead_of_all_starting_at_the_floor(self, htz_plot, el):
-        """Each polymorph must occupy its OWN temperature band.
-
-        The ground state starts at the plot floor; every higher polymorph starts where the
-        one below it ends. If they all started at conds[0] the segments would overlap and
-        the transition would be invisible even with the phases present.
-        """
+        """Each polymorph occupies its OWN temperature band: the ground state starts at the
+        plot floor, every higher polymorph where the one below it ends."""
         _, at = _corner_rows(htz_plot, AFFECTED, el)
         spans = sorted(
             ((float(g["T"].min()), float(g["T"].max()), ph) for ph, g in at.groupby("Phase")),
@@ -307,12 +297,9 @@ class TestLadderSurvivesIntoTheFigure:
         floor = float(htz_plot.conds[0])
 
         # The stack starts exactly ON the plot floor: conds[0] is the bottom of the temperature
-        # grid in Celsius, so it is at or below every phase's ceiling. (It used to be carried in
-        # Kelvin, putting the floor 273.15 C above the grid, so a phase stable only at very low
-        # temperature -- Ti's spurious P6/mmm, ceiling -93.15 C -- topped out below it and needed
-        # a fallback. See tests/test_ternary_temperature_units.py.) Above that, the segments must
-        # tile the corner without inverting or overlapping -- that is what makes each transition
-        # visible.
+        # grid in Celsius, at or below every phase's ceiling (test_ternary_temperature_units.py
+        # holds the Celsius/Kelvin contract). Above it the segments tile the corner without
+        # inverting or overlapping.
         assert spans[0][0] == pytest.approx(floor, abs=1e-6), (
             f"{el}: stack starts at {spans[0][0]}, not on the plot floor {floor}"
         )
@@ -341,7 +328,9 @@ class TestLadderSurvivesIntoTheFigure:
         frozen on this very system.
         """
         raw, at = _corner_rows(ams_plot, UNAFFECTED, el)
-        assert raw["Phase"].nunique() == 1, f"{el} is no longer a control: {sorted(set(raw['Phase']))}"
+        assert raw["Phase"].nunique() == 1, (
+            f"{el} is no longer a control: {sorted(set(raw['Phase']))}"
+        )
         assert at["Phase"].nunique() == 1
         assert float(at["T"].min()) == pytest.approx(float(ams_plot.conds[0]), abs=1e-6)
 

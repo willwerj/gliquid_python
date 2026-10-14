@@ -1,10 +1,9 @@
 """Characterization pins for the TLIPlotter figure / hull-slice API.
 
 Freezes the figure structure of ``plot_ternary`` and the hull-slice data + figure of
-``extract_single_hull_at_T`` for the Al-Mg-Si fixture, so the composition refactor
-(``get_plot('tx')`` / ``get_plot('ch')`` / ``get_convex_hull``) provably reproduces them.
-The pinned VALUES are frozen by scratchpad/freeze_tliplotter_figures.py against the
-pre-refactor class; only the construction/method names adapt across the refactor.
+``extract_single_hull_at_T`` for the Al-Mg-Si fixture, checked through ``get_plot('tx')`` /
+``get_plot('ch')`` / ``get_convex_hull``. The pinned VALUES are re-frozen by
+refreeze_ternary_solid_side_pins.py and repin_mg_anchor_fixtures.py.
 
 Runs offline (shipped Al-Mg-Si MP entries).
 """
@@ -15,6 +14,8 @@ from pathlib import Path
 
 import plotly.graph_objects as go
 import pytest
+
+import gliquid.ternary as tmod
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 import pin_utils as pu  # noqa: E402
@@ -31,19 +32,20 @@ C = PIN["construction"]
 
 @pytest.fixture(scope="module")
 def plotter():
-    tmod = pu.get_ternary_mod()
     p = tmod.TLIPlotter.from_components(
         list(C["components"]),
         delta=C["delta"],
         T_incr=C["T_incr"],
+        hull_mode="gtx",
         xs_mix={k: list(v) for k, v in C["xs_mix"].items()},
+        param_format="linear",
     )
     p.process_data()
     return p
 
 
 def test_tx_figure_structure(plotter):
-    fig = plotter.get_plot("tx")
+    fig = plotter.get_plot("tx", interactive_legend=False)
     assert isinstance(fig, go.Figure)
     assert len(fig.data) == PIN["tx_n_traces"]
     assert sorted(t.type for t in fig.data) == PIN["tx_trace_types"]

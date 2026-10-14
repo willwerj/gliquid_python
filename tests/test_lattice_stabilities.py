@@ -1,9 +1,8 @@
 """Tier B lattice-stability block: loader (phase.py) and resolver (solution.py).
 
-All synthetic — valid against any phase_transitions.json vintage. The block
-supersedes the runtime omegas fallback for ``from_unary_db``: builder-baked
-cumulative enthalpies above the element anchor, no transition temperature,
-kept OUT of ``polymorphs``/hull/liquid machinery by construction.
+All synthetic. For ``from_unary_db`` the block holds builder-baked cumulative enthalpies
+above the element anchor, with no transition temperature, kept OUT of
+``polymorphs``/hull/liquid machinery by construction.
 
 Entropy is 0 by the recalculation convention (nothing to divide by without a
 transition temperature), except where the builder's scoped metastable-entropy
@@ -151,9 +150,7 @@ class TestResolver:
         assert set(phase_refs) == {"BCC"}
 
 
-# --------------------------------------------------------------------------------------
-# Scoped metastable-entropy exception (04-metastable-entropy-exception)
-# --------------------------------------------------------------------------------------
+# -- Scoped metastable-entropy exception --
 # The builder may emit a NEGATIVE delta_S on a lattice stability for a metastable
 # structure, where dS = dH / T_trans is undefined. Both the loader and the resolver
 # must carry that value through instead of re-flattening it to 0, and it must stay out
@@ -219,7 +216,7 @@ class TestMetastableEntropyException:
         assert ref.liquid_ref_from_solids() == (13810.0, pytest.approx(13810.0 / 1811.0))
 
     def test_negative_entropy_cannot_overtake_the_ground_state(self, registry_factory):
-        """The safety argument, checked rather than assumed.
+        """A NEGATIVE dS cannot overtake the ground state.
 
         The endpoint melting reconstruction is max((h_liq - dH) / (s_liq - dS)) over the
         candidate solids. A NEGATIVE dS only enlarges the denominator, so the metastable
@@ -240,9 +237,7 @@ class TestMetastableEntropyException:
         assert crossings["HCP"] < crossings["BCC"]
 
 
-# --------------------------------------------------------------------------------------
-# Virtual ladder phases (05-virtual-polymorphs)
-# --------------------------------------------------------------------------------------
+# -- Virtual ladder phases --
 # A real equilibrium polymorph that Materials Project has no entry for is injected onto
 # the ladder by the builder with a synthetic ``materials_project_id`` ("virtual-Y-beta").
 # From the package's point of view it must behave as an ORDINARY ladder phase: resolved by
@@ -344,13 +339,12 @@ class TestVirtualLadderPhase:
         assert s == pytest.approx(4886.73 / 1751 + 11400.0 / 1795.0, abs=1e-4)
 
     def test_endpoint_melting_survives_every_loaded_subset(self, registry_factory):
-        """The load-bearing property: inserting a ladder step must not move the endpoint.
+        """Inserting a ladder step does not move the endpoint.
 
         Whatever subset of {BCC, FCC, HCP} a partner leaves loaded, the element still melts
         at its own t_fusion, because any polymorph NOT covered by a loaded SS phase stays in
         the crossing pool as a line compound. With HCP alone loaded it is the injected bcc
-        phase that supplies the crossing -- which is exactly the case that would break if a
-        virtual phase were treated as a metastable reference instead of a ladder step.
+        phase that supplies the crossing.
         """
         import itertools
 

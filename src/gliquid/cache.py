@@ -4,10 +4,8 @@ A record is named by a :class:`CacheKey`; a store implements :class:`CacheBacken
 :class:`DirectoryBackend` is a directory tree of per-system JSON files;
 :class:`SqliteBackend` is a single-file store.
 
-``read_json``/``write_json`` exchange **Python objects, not bytes**. A bytes-level API would
-force a backend that holds a semantic REDUCTION of a record (the lean MPDS mode) to
-fabricate a JSON blob it does not have, and the fabrication would be indistinguishable from
-the real thing downstream.
+``read_json``/``write_json`` exchange **Python objects, not bytes**, so a backend that
+holds a semantic REDUCTION of a record (the lean MPDS mode) never fabricates a JSON blob.
 
 ``config.cache_mode`` (``"directory"`` / ``"sqlite"``) selects the backend and is
 **orthogonal** to ``config.dir_structure`` (``"flat"`` / ``"nested"``), which is a
@@ -19,9 +17,8 @@ makes a corpus shippable (a container image, a web app, a colleague's laptop). I
 
 A SQLite store may additionally carry a **pooled entry store** (``entry_pool``): DFT
 entries deduplicated by ``entry_id`` across systems, read back as
-``chemsys IN (<the subsets>)``. It is a fallback source for ``dft_entries`` reads, exists
-for the TERNARY scope only, and is licensed by a drift measurement rather than by the
-obvious size win -- see the comment above ``_ENTRY_POOL_SQL``.
+``chemsys IN (<the subsets>)``. It is a fallback source for ``dft_entries`` reads and
+exists for the TERNARY scope only -- see the comment above ``_ENTRY_POOL_SQL``.
 
 It may also carry the **ML feature corpus** (``ml_features`` / ``ml_feature_columns``): one
 row of model input features per system, per feature frame. The model itself ships inside the
@@ -37,7 +34,9 @@ imports it, so it must never import ``gliquid.api`` back.
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
+import copy
 import datetime
 import hashlib
 import json
@@ -63,31 +62,33 @@ logger = logging.getLogger(__name__)
 #: A per-system Materials Project DFT-entry cache. ``variant`` is the ``dft_type``.
 KIND_DFT_ENTRIES = "dft_entries"
 
-#: A digitized MPDS phase diagram. ``variant`` is ``str(pd_ind)``, or ``""`` for the
-#: indexless ``<sys>.json`` naming used by single-diagram stores.
+#: A per-system set of imputed solid phases; ``variant`` is the ``dft_type``. SqliteBackend keeps
+#: it in the ``imputed_entries`` table and distinguishes an empty set from an absent one;
+#: DirectoryBackend keeps it as tagged entries inside the :data:`KIND_DFT_ENTRIES` record.
+KIND_IMPUTED_ENTRIES = "imputed_entries"
+
+#: A digitized MPDS phase diagram. ``variant`` is ``str(pd_ind)``, or ``""`` for the indexless
+#: ``<sys>.json`` naming.
 KIND_MPDS = "mpds"
 
-_KINDS = (KIND_DFT_ENTRIES, KIND_MPDS)
+_KINDS = (KIND_DFT_ENTRIES, KIND_IMPUTED_ENTRIES, KIND_MPDS)
 
 
-#: Re-exported from :mod:`gliquid.config`. The same class object, so existing
-#: ``except CacheModeError`` clauses keep working.
+#: Re-exported from :mod:`gliquid.config` (the same class object).
 CacheModeError = config.CacheModeError
 
 
 @dataclass(frozen=True)
 class CacheKey:
-    """The name of one cached record — deliberately NOT a string.
+    """The name of one cached record.
 
-    A string key would have to be parsed apart again by every backend:
-    :class:`DirectoryBackend` needs the parts to rebuild today's filenames, and the SQLite
-    store needs them as a composite primary key. Keeping them separate means the on-disk
-    naming convention is a property of the backend rather than of the key.
+    The parts stay separate: :class:`DirectoryBackend` builds filenames from them and the SQLite
+    store uses them as a composite primary key.
 
     Attributes:
         sys_name: The canonical system name — the output of ``api._canonical_sys_name``
             (alphabetical and hyphenated, e.g. ``'Cu-Mg'``).
-        kind: :data:`KIND_DFT_ENTRIES` or :data:`KIND_MPDS`.
+        kind: :data:`KIND_DFT_ENTRIES`, :data:`KIND_IMPUTED_ENTRIES` or :data:`KIND_MPDS`.
         variant: The ``dft_type`` for DFT entries; ``str(pd_ind)`` for MPDS, where ``""``
             means the indexless ``<sys>.json`` naming.
     """
@@ -129,9 +130,8 @@ def atomic_write_json(path: str | os.PathLike, payload: Any) -> None:
     """Serialize ``payload`` to ``path`` atomically, via a temp file + ``os.replace``.
 
     A plain ``json.dump`` to the cache path writes incrementally, so an interrupted or
-    failing write leaves a TRUNCATED file that later reads accept as a valid cache. Worse,
-    concurrent cold fetches of the same system interleave into one file, which a campaign
-    fanned out over a process pool produces in bursts.
+    failing write leaves a TRUNCATED file that later reads accept as a valid cache, and
+    concurrent writes of the same system interleave into one file.
 
     The temp file is created in the DESTINATION directory so it shares a filesystem with
     the target; ``os.replace`` is only atomic within one filesystem, and is atomic on both
@@ -149,7 +149,7 @@ def atomic_write_json(path: str | os.PathLike, payload: Any) -> None:
             json.dump(payload, handle)
         os.replace(tmp_path, path)
     except BaseException:
-        # Never leave the scratch file behind on a failed write.
+        # Removes the scratch file on a failed write.
         try:
             os.unlink(tmp_path)
         except OSError:  # pragma: no cover - already gone, or undeletable
@@ -157,14 +157,250 @@ def atomic_write_json(path: str | os.PathLike, payload: Any) -> None:
         raise
 
 
+#: The ``entry_id`` prefix that tags an imputed entry.
+IMPUTED_ID_PREFIX = "imputed:"
+
+
+def is_imputed_entry_dict(entry_dict: dict) -> bool:
+    """True if a cached ``ComputedEntry`` dict was synthesized by phase-energy imputation.
+
+    Imputed entries are tagged on write with an ``entry_id`` of the form ``"imputed:..."``
+    and ``data={'imputed': True}``; either marker is sufficient.
+    """
+    if str(entry_dict.get("entry_id", "")).startswith(IMPUTED_ID_PREFIX):
+        return True
+    data = entry_dict.get("data") or {}
+    return bool(isinstance(data, dict) and data.get("imputed"))
+
+
+def imputed_entry_label(entry_dict: dict) -> str:
+    """The phase name an imputed ``ComputedEntry`` dict is placed under.
+
+    Args:
+        entry_dict: a tagged ``ComputedEntry.as_dict()`` payload; its ``data`` may be missing
+            or ``None``.
+
+    Returns:
+        str: ``data['label']`` when it is set, else the ``entry_id`` without a leading
+        :data:`IMPUTED_ID_PREFIX`.
+    """
+    label = (entry_dict.get("data") or {}).get("label")
+    if label:
+        return str(label)
+    return str(entry_dict.get("entry_id", "")).removeprefix(IMPUTED_ID_PREFIX)
+
+
+#: The ``entry_id`` prefix that tags a user-defined entry.
+USER_ID_PREFIX = "user:"
+
+#: Entry-data key naming a non-DFT entry's kind; a user-defined entry stores ``"user"``.
+NON_DFT_KEY = "non_dft"
+
+#: Entry-data key for a user-defined entry's entropy in J/mol-atom/K; an entry without it has none.
+ENTROPY_KEY = "entropy_j_per_mol_k"
+
+
+def _entry_fields(entry) -> tuple[object, dict, int | None]:
+    """``(entry_id, data, element count)`` of an entry object or its ``as_dict()`` payload.
+
+    The element count is None for a payload with no ``composition``.
+    """
+    if isinstance(entry, dict):
+        composition = entry.get("composition")
+        n_elements = (
+            sum(1 for amount in composition.values() if amount)
+            if isinstance(composition, dict)
+            else None
+        )
+        return entry.get("entry_id"), entry.get("data") or {}, n_elements
+    original = getattr(entry, "original_entry", None) or entry
+    return (
+        getattr(original, "entry_id", None),
+        getattr(original, "data", None) or {},
+        len(original.composition.elements),
+    )
+
+
+def non_dft_entry_kind(entry) -> str | None:
+    """How a hull entry stands in for a DFT-computed compound, if it does.
+
+    Args:
+        entry: a hull entry, or its ``as_dict()`` payload. A transformed entry is read
+            through its ``original_entry``.
+
+    Returns:
+        str | None: ``"imputed"`` for an entry :func:`is_imputed_entry_dict` accepts;
+        ``"user"`` for an entry whose ``entry_id`` starts with :data:`USER_ID_PREFIX`, whose
+        ``data[NON_DFT_KEY]`` is ``"user"``, or which has no ``entry_id`` at all; None for
+        every other entry. An entry of a single element is a reference state and is always
+        None.
+    """
+    entry_id, data, n_elements = _entry_fields(entry)
+    if n_elements == 1:
+        return None
+    if is_imputed_entry_dict({"entry_id": entry_id or "", "data": data}):
+        return "imputed"
+    if entry_id is None or str(entry_id).startswith(USER_ID_PREFIX):
+        return "user"
+    if isinstance(data, dict) and data.get(NON_DFT_KEY) == "user":
+        return "user"
+    return None
+
+
+def non_dft_entry_label(entry) -> str:
+    """The phase name a non-DFT entry is placed under.
+
+    Args:
+        entry: a hull entry, or its ``as_dict()`` payload.
+
+    Returns:
+        str: ``data['label']`` when it is set; else the ``entry_id`` without a leading
+        :data:`IMPUTED_ID_PREFIX` or :data:`USER_ID_PREFIX`; else the entry's ``name``.
+    """
+    entry_id, data, _ = _entry_fields(entry)
+    label = data.get("label") if isinstance(data, dict) else None
+    if label:
+        return str(label)
+    if entry_id is not None:
+        return str(entry_id).removeprefix(IMPUTED_ID_PREFIX).removeprefix(USER_ID_PREFIX)
+    name = entry.get("name") if isinstance(entry, dict) else getattr(entry, "name", None)
+    return str(name)
+
+
+_MP_STYLE_ID = re.compile(r"^([a-z]+)-(\d+|[a-z]{8,})$")
+
+
+def _classic_number(body: str) -> int:
+    """The number an id body spells: decimal digits, or base-26 letters with ``a`` = 0."""
+    if body.isdigit():
+        return int(body)
+    number = 0
+    for letter in body:
+        number = number * 26 + ord(letter) - ord("a")
+    return number
+
+
+def canonical_entry_id(entry_id) -> str | None:
+    """``entry_id`` spelled one way for the classic and the new Materials Project id forms.
+
+    A classic id (``'mp-1367-GGA'``) reads as itself. A new-API id, as its dict
+    (``{'identifier': 'mp-aaaaacap', 'suffix': 'GGA', 'separator': '-'}``) or that dict's
+    ``str()``, reads in its classic spelling (``'mp-1367-GGA'``); a bare new-API identifier
+    (``'mp-aaaaacap'``) reads as ``'mp-1367'``. Any other id reads as ``str(entry_id)``.
+
+    Args:
+        entry_id: An entry's ``entry_id``, a ``data['replaces']`` item, or ``None``.
+
+    Returns:
+        str | None: The id to compare entries by; ``None`` for ``None``.
+    """
+    if entry_id is None:
+        return None
+    if isinstance(entry_id, str) and entry_id.startswith("{"):
+        try:
+            parsed = ast.literal_eval(entry_id)
+        except (ValueError, SyntaxError):
+            return entry_id
+        if not isinstance(parsed, dict):
+            return entry_id
+        entry_id = parsed
+    if isinstance(entry_id, dict):
+        identifier, suffix = entry_id.get("identifier"), entry_id.get("suffix")
+        match = _MP_STYLE_ID.match(identifier) if isinstance(identifier, str) else None
+        if match is None:
+            return str(entry_id)
+    else:
+        text = str(entry_id)
+        head, _, suffix = text.partition("-")
+        body, _, suffix = suffix.partition("-")
+        match = _MP_STYLE_ID.match(f"{head}-{body}")
+        if match is None:
+            return text
+    prefix, body = match.groups()
+    classic = f"{prefix}-{_classic_number(body)}"
+    return f"{classic}-{suffix}" if suffix else classic
+
+
+def _dict_correction(entry: dict) -> float:
+    """Total stored energy correction of an entry payload, in eV."""
+    if entry.get("correction") is not None:
+        return float(entry["correction"])
+    total = 0.0
+    for adjustment in entry.get("energy_adjustments") or []:
+        if "adj_per_atom" in adjustment:
+            total += float(adjustment["adj_per_atom"]) * float(adjustment.get("n_atoms", 0.0))
+        else:
+            total += float(adjustment.get("value", 0.0))
+    return total
+
+
+def entry_energies_by_id(entries) -> dict[str, float]:
+    """``{canonical entry id: corrected energy per atom in eV}`` over the DFT entries given.
+
+    Args:
+        entries: entry payloads (``as_dict()`` dicts) or pymatgen entries; a transformed entry
+            is read through its ``original_entry``. Imputed and user-defined entries, and
+            entries without an ``entry_id``, are skipped.
+
+    Returns:
+        dict[str, float]: keyed by :func:`canonical_entry_id`, so a classic and a new-API id of
+        one entry share a key. A repeated id keeps its last energy.
+    """
+    energies: dict[str, float] = {}
+    for entry in entries:
+        if non_dft_entry_kind(entry) is not None:
+            continue
+        if isinstance(entry, dict):
+            composition = entry.get("composition") or {}
+            n_atoms = sum(amount for amount in composition.values() if amount)
+            if not n_atoms or entry.get("energy") is None:
+                continue
+            per_atom = (float(entry["energy"]) + _dict_correction(entry)) / n_atoms
+            entry_id = entry.get("entry_id")
+        else:
+            original = getattr(entry, "original_entry", None) or entry
+            per_atom = float(original.energy_per_atom)
+            entry_id = getattr(original, "entry_id", None)
+        key = canonical_entry_id(entry_id)
+        if key is not None:
+            energies[key] = per_atom
+    return energies
+
+
+def entry_energy_drift(
+    reference: dict[str, float], other: dict[str, float], *, tol: float = 1e-6
+) -> list[tuple[str, float, float]]:
+    """Ids held by both energy maps whose energies per atom differ by more than ``tol`` eV.
+
+    Args:
+        reference: ``{canonical id: eV/atom}``, as :func:`entry_energies_by_id` returns.
+        other: a second map of the same form.
+        tol: the largest difference, in eV/atom, still counted as equal.
+
+    Returns:
+        list[tuple[str, float, float]]: ``(id, reference energy, other energy)``, largest
+        absolute difference first.
+    """
+    shared = [
+        (key, reference[key], other[key])
+        for key in reference.keys() & other.keys()
+        if abs(reference[key] - other[key]) > tol
+    ]
+    return sorted(shared, key=lambda row: (-abs(row[2] - row[1]), row[0]))
+
+
 def record_filename(key: CacheKey) -> str:
     """Today's on-disk filename for a record — the naming contract, in one place.
 
-    Three conventions, all of which exist in the corpus right now:
+    Three conventions:
     ``<sys>_ENTRIES_MP_<dft_type>.json``, ``<sys>_MPDS_PD_<n>.json``, and the indexless
     ``<sys>.json`` that single-diagram stores use.
+
+    :data:`KIND_IMPUTED_ENTRIES` names the SAME file as :data:`KIND_DFT_ENTRIES`, because a
+    directory store holds imputed entries inside that record; the mapping is therefore not
+    injective, and :func:`parse_record_filename` resolves that name to the DFT kind.
     """
-    if key.kind == KIND_DFT_ENTRIES:
+    if key.kind in (KIND_DFT_ENTRIES, KIND_IMPUTED_ENTRIES):
         return f"{key.sys_name}_ENTRIES_MP_{key.variant}.json"
     if key.kind == KIND_MPDS:
         if key.variant == "":
@@ -173,9 +409,8 @@ def record_filename(key: CacheKey) -> str:
     raise ValueError(f"Unknown cache kind {key.kind!r}. Must be one of {list(_KINDS)}.")
 
 
-#: The inverse of :func:`record_filename`, as patterns. Ordered: the two *decorated*
-#: namings are tried before the bare ``<sys>.json``, because ``Cu-Mg_ENTRIES_MP_GGA.json``
-#: is also "some name ending in .json" and must not be read as an MPDS record.
+#: The inverse of :func:`record_filename`, as patterns, tried in order: the two decorated
+#: namings before the bare ``<sys>.json``.
 _ENTRIES_NAME_RE = re.compile(r"\A(?P<sys>.+)_ENTRIES_MP_(?P<variant>.+)\.json\Z")
 _MPDS_NAME_RE = re.compile(r"\A(?P<sys>.+)_MPDS_PD_(?P<variant>.+)\.json\Z")
 _PLAIN_NAME_RE = re.compile(r"\A(?P<sys>.+)\.json\Z")
@@ -184,9 +419,8 @@ _PLAIN_NAME_RE = re.compile(r"\A(?P<sys>.+)\.json\Z")
 def parse_record_filename(name: str, sys_name: str | None = None) -> CacheKey | None:
     """``record_filename`` inverted: a filename to a :class:`CacheKey`, or ``None``.
 
-    ``None`` means "not a cache record at all" -- corpora hold plenty of neighbours that
-    are not (``fit_results_cache_comb-exp.json``, ``all_feature_dft_data.json``, every
-    ``.svg`` and ``.webp`` beside them), and reading one as a record would invent a system.
+    ``None`` means "not a cache record at all" -- corpora hold plenty of neighbours that are
+    not, and reading one as a record would invent a system.
 
     Args:
         name: The bare filename.
@@ -205,7 +439,6 @@ def parse_record_filename(name: str, sys_name: str | None = None) -> CacheKey | 
 
 
 # Every IUPAC element symbol, used to decide whether a name looks like a system.
-# Hard-coded to keep this module stdlib-only: ``gliquid.api`` imports it.
 _ELEMENT_SYMBOLS = frozenset(
     """H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga
     Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm
@@ -234,25 +467,46 @@ def looks_like_system_name(name: str) -> bool:
 
     ``api._canonical_sys_name`` builds these as ``'-'.join(sorted(components))`` where each
     component is an element or a composition, so ``'Cu-Mg'``, ``'Hf-Ti-Zr'`` and the
-    compound-system ``'CuMg-Mg'`` all qualify while ``'fit_results_cache_comb-exp'`` and
-    ``'all_feature_dft_data'`` do not.
+    compound-system ``'CuMg-Mg'`` all qualify while a name with a non-formula part does not.
     """
     parts = name.split("-")
     return len(parts) >= 2 and all(_is_formula(part) for part in parts)
 
 
+# Set once the first write into the implicit default store has been logged.
+_IMPLICIT_STORE_ANNOUNCED = False
+
+
+def _is_implicit_store_root(root: Path) -> bool:
+    """Whether ``root`` is the implicit ``<cwd>/gliquid_cache`` default store's directory."""
+    return config._cache_dir_is_implicit() and root.resolve() == Path(config.cache_dir)
+
+
+def _announce_implicit_store() -> None:
+    """Log the implicit default store's location at INFO, once per process."""
+    global _IMPLICIT_STORE_ANNOUNCED
+    if _IMPLICIT_STORE_ANNOUNCED:
+        return
+    _IMPLICIT_STORE_ANNOUNCED = True
+    logger.info(
+        "Writing to the default gliquid cache store at %s. Choose another location with "
+        "gliquid.config.set_cache_dir(...) or the %s environment variable.",
+        config.cache_dir,
+        config.CACHE_DIR_ENV_VAR,
+    )
+
+
 class DirectoryBackend:
-    """A directory tree of per-system JSON files — the store gliquid has always had.
+    """A directory tree of per-system JSON files.
 
     Args:
         root: The corpus directory. ``None`` means "whatever ``config.cache_dir`` is at the
             time of the call", so a ``set_cache_dir()`` part-way through a session is
-            observed — which is how the test suites and the fitting campaigns drive it.
+            observed.
         dir_structure: ``"flat"`` (every file directly under ``root``) or ``"nested"``
             (under ``root/<sys_name>/``). ``None`` means "whatever ``config.dir_structure``
             is at the time of the call". An EXPLICIT ``root`` defaults to ``"flat"``,
-            which is the historical meaning of passing ``data_dir=`` to
-            ``api.get_dft_convexhull`` and friends.
+            matching an explicit ``data_dir=`` to ``api.get_dft_convexhull`` and friends.
     """
 
     def __init__(
@@ -287,8 +541,7 @@ class DirectoryBackend:
     def sys_location(self, sys_name: str) -> Path:
         """The directory holding ``sys_name``'s records.
 
-        Creates it in nested mode, on the READ path as well as the write path. Campaign
-        drivers depend on that for cold fetches, so it is preserved deliberately.
+        Creates it in nested mode, on the READ path as well as the write path.
         """
         root = self._root_path(f"Reading the cache for '{sys_name}'")
         structure = self._structure()
@@ -314,10 +567,59 @@ class DirectoryBackend:
 
     def read_json(self, key: CacheKey) -> Any:
         with open(self.path_for(key)) as handle:
-            return json.load(handle)
+            payload = json.load(handle)
+        if key.kind == KIND_IMPUTED_ENTRIES:
+            return [e for e in payload if isinstance(e, dict) and is_imputed_entry_dict(e)]
+        return payload
 
     def write_json(self, key: CacheKey, payload: Any) -> None:
+        """Store ``payload`` under ``key``, creating the store root (parents included) first.
+
+        Raises:
+            config.ConfigError: The root is the implicit ``<cwd>/gliquid_cache`` default and
+                cannot be created. Any other root's creation failure raises its ``OSError``.
+        """
+        self._create_root()
+        if key.kind == KIND_IMPUTED_ENTRIES:
+            payload = self._entries_record_with_imputed(key, payload)
         atomic_write_json(self.path_for(key), payload)
+
+    def _create_root(self) -> None:
+        """Create the store root for a write; the read path never creates it in flat mode.
+
+        The first write into the implicit default store in a process logs its location at
+        INFO. An unset global store is left to ``path_for``, which raises ``ConfigError``.
+        """
+        root = self._root if self._root is not None else config.cache_dir
+        if root is None:
+            return
+        root = Path(root)
+        if not _is_implicit_store_root(root):
+            os.makedirs(root, exist_ok=True)
+            return
+        try:
+            os.makedirs(root, exist_ok=True)
+        except OSError as exc:
+            raise config.ConfigError(
+                f"Cannot create the default gliquid cache store at {config.cache_dir}: "
+                f"{exc}. Choose another location with gliquid.config.set_cache_dir(...) or "
+                f"the {config.CACHE_DIR_ENV_VAR} environment variable."
+            ) from exc
+        _announce_implicit_store()
+
+    def _entries_record_with_imputed(self, key: CacheKey, imputed: Any) -> list:
+        """The DFT-entries record with every tagged entry replaced by ``imputed``.
+
+        An absent record contributes no real entries, so writing the imputed kind alone
+        would leave a record of imputed entries only — call
+        ``api.cache_imputed_entries``, which materializes the DFT record first.
+        """
+        try:
+            with open(self.path_for(key)) as handle:
+                existing = json.load(handle)
+        except FileNotFoundError:
+            existing = []
+        return [e for e in existing if not is_imputed_entry_dict(e)] + list(imputed)
 
     def variants(self, sys_name: str, kind: str) -> list[str]:
         if kind not in _KINDS:
@@ -331,8 +633,14 @@ class DirectoryBackend:
         found = []
         for name in names:
             parsed = parse_record_filename(name, sys_name)
-            if parsed is not None and parsed.kind == kind:
+            if parsed is None:
+                continue
+            if parsed.kind == kind:
                 found.append(parsed.variant)
+            elif kind == KIND_IMPUTED_ENTRIES and parsed.kind == KIND_DFT_ENTRIES:
+                # Tagged entries sit inside the DFT record, so reporting a variant reads it.
+                if self.read_json(CacheKey(sys_name, KIND_IMPUTED_ENTRIES, parsed.variant)):
+                    found.append(parsed.variant)
         return sorted(found)
 
 
@@ -341,9 +649,7 @@ class DirectoryScan:
     """Everything a directory store holds, split into records and non-records.
 
     ``ignored`` is carried rather than dropped so a migration can SAY how many neighbours
-    it walked past. A store that silently reports "0 records migrated" and a store that
-    silently reports "3 records migrated" out of 11,671 are the same failure, and both are
-    invisible without this count.
+    it walked past.
     """
 
     root: Path
@@ -395,22 +701,18 @@ def scan_directory_store(root: str | os.PathLike, dir_structure: str = "flat") -
     return scan
 
 
-# ---------------------------------------------------------------------------------------
-# The single-file store
-# ---------------------------------------------------------------------------------------
+# -- The single-file store --
 
-#: Bumped when the schema changes incompatibly. A store whose ``PRAGMA user_version``
-#: EXCEEDS this is refused rather than read with the wrong column meanings.
-SQLITE_SCHEMA_VERSION = 1
+#: Schema version; a store whose ``PRAGMA user_version`` exceeds it is refused.
+SQLITE_SCHEMA_VERSION = 2
 
 #: How a DFT payload is encoded. Recorded in ``meta`` so a reader can tell.
 DFT_CODEC = "json+zlib6"
 
 _ZLIB_LEVEL = 6
 
-#: MPDS fields lifted out of the payload into addressable columns, for ``info`` and
-#: LEAN reads. ``entry``/``jcode``/``year`` are looked for at the top level and under
-#: ``reference``.
+#: MPDS fields lifted out of a FULL payload into the ``header`` column, for ``info``; ``entry``,
+#: ``jcode`` and ``year`` are read from the top level or from ``reference``.
 _MPDS_HEADER_FIELDS = (
     "chemical_elements",
     "temp",
@@ -422,18 +724,19 @@ _MPDS_HEADER_FIELDS = (
     "year",
 )
 
-#: The whole MPDS json, compressed. Everything gliquid can do, at ~93-97% ``shapes``.
+#: The only header fields a LEAN record carries: the frame, the plotted range and the citation.
+_MPDS_LEAN_FIELDS = ("chemical_elements", "temp", "comp_range", "reference")
+
+#: The whole MPDS json, compressed. Serves every MPDS consumer.
 MPDS_MODE_FULL = "full"
 
-#: Header plus the pre-fill stitched liquidus and its covered regions; no ``shapes``.
-#: Serves ``extract_digitized_liquidus``, ``liquidus_coverage`` and a liquidus plot;
-#: every other MPDS consumer raises.
+#: The lean header plus the pre-fill stitched liquidus and its covered regions. Serves
+#: ``extract_digitized_liquidus``, ``liquidus_coverage`` and a liquidus plot, nothing else.
 MPDS_MODE_LEAN = "lean"
 
 MPDS_MODES = (MPDS_MODE_FULL, MPDS_MODE_LEAN)
 
-#: Mirrors ``gliquid.mpds._GLIQUID_KEY`` / ``LEAN_SCHEMA``. Duplicated rather than imported
-#: because ``mpds`` imports THIS module; the round-trip test pins the two together.
+#: Mirrors ``gliquid.mpds._GLIQUID_KEY`` / ``LEAN_SCHEMA``; the round-trip test pins the two.
 LEAN_BLOCK_KEY = "_gliquid"
 LEAN_SCHEMA = 1
 
@@ -454,13 +757,31 @@ CREATE TABLE IF NOT EXISTS dft_entries (
   PRIMARY KEY (sys_name, dft_type)
 ) WITHOUT ROWID;
 
+-- Imputed solid phases, held APART from `dft_entries` rather than appended to its
+-- payload the way a directory store holds them (`api.cache_imputed_entries`). That
+-- payload's `sha256` proves the DFT data round-trips losslessly; folding an imputation
+-- set into it changes the proof, leaving no way to say "same DFT data, different
+-- imputation set".
+--
+-- An EMPTY payload is a real row: it means the system was checked and nothing was
+-- imputable. A MISSING row means never computed. Do not conflate them.
+CREATE TABLE IF NOT EXISTS imputed_entries (
+  sys_name    TEXT NOT NULL,
+  dft_type    TEXT NOT NULL,
+  payload     BLOB NOT NULL,     -- zlib level 6 over UTF-8 json.dumps(list[entry_dict])
+  n_entries   INTEGER NOT NULL,
+  sha256      TEXT NOT NULL,     -- of the UNCOMPRESSED bytes: the losslessness proof
+  written_utc TEXT NOT NULL,
+  PRIMARY KEY (sys_name, dft_type)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS mpds_diagrams (
   sys_name    TEXT NOT NULL,
   variant     TEXT NOT NULL,     -- '0','1',... ; '' == the indexless <sys>.json naming.
                                  -- NOT NULL on purpose: NULL breaks primary-key semantics.
   mode        TEXT NOT NULL,     -- 'full' | 'lean'; see MPDS_MODE_* above
   header      TEXT NOT NULL,     -- json: chemical_elements, temp, comp_range, reference,
-                                 --       labels, entry, jcode, year
+                                 --       plus labels, entry, jcode, year in full mode only
   payload     BLOB,              -- full mode: zlib of the whole mpds_json. NULL in lean.
   stitched    BLOB,              -- lean mode only: zlib of the PRE-fill [[x, T], ...]
   regions     TEXT,              -- lean mode only: json of the covered [[lo, hi], ...]
@@ -469,15 +790,9 @@ CREATE TABLE IF NOT EXISTS mpds_diagrams (
 ) WITHOUT ROWID;
 """
 
-# The pooled entry store, for ternaries. Reading a system is
-# ``chemsys IN (<its non-empty subsets>)`` -- 7 for a ternary, 3 for a binary -- over
-# ``idx_pool_chemsys``. Payloads are zlib-compressed per entry so a single entry is
-# addressable without inflating the rest.
-#
-# Binaries are NOT pooled: repeated entry_ids there can carry differing payloads.
-# ``entry_pool_systems`` records coverage -- an entry query cannot distinguish a system
-# with no ternary compounds from one never fetched.
-# ``entry_pool`` is deliberately not WITHOUT ROWID: its payloads spill to overflow pages.
+# The pooled entry store for ternaries: a system reads ``chemsys IN (<its non-empty subsets>)``
+# over ``idx_pool_chemsys``, with each payload zlib-compressed per entry. Binaries are not pooled.
+# ``entry_pool_systems`` records which systems the pool covers.
 _ENTRY_POOL_SQL = """
 CREATE TABLE IF NOT EXISTS entry_pool (
   entry_id   TEXT PRIMARY KEY,
@@ -506,14 +821,9 @@ CREATE TABLE IF NOT EXISTS entry_pool_systems (
 ) WITHOUT ROWID;
 """
 
-# The ML feature corpus: the per-system model input tables, one row per system per
-# frame. The model itself ships in the wheel at ``gliquid/models/<bundle_id>/``.
-# ``frame`` is ``'symmetric'`` or ``'antisymmetric'``, named as in ``feature_names.json``
-# and ``_prepare_row(mode=...)``.
-#
+# The ML feature corpus: one row per system per frame (``'symmetric'`` or ``'antisymmetric'``),
+# ``features`` raw little-endian float64 in ``ml_feature_columns.columns`` order.
 # ``system`` is ORDERED: Ag-Au and Au-Ag are distinct rows. Do not canonicalise.
-# ``features`` is raw little-endian float64 in ``ml_feature_columns.columns`` order;
-# a row is meaningless without that table, written in the same transaction.
 _ML_FEATURES_SQL = """
 CREATE TABLE IF NOT EXISTS ml_feature_columns (
   frame     TEXT NOT NULL PRIMARY KEY,   -- 'symmetric' | 'antisymmetric'
@@ -529,23 +839,9 @@ CREATE TABLE IF NOT EXISTS ml_features (
 ) WITHOUT ROWID;
 """
 
-#: How an ``ml_features`` payload is encoded. Recorded in ``meta`` so a reader can tell.
-ML_FEATURE_CODEC = "float64-le"
-
-#: The two feature spaces the production model was trained in. Mirrors the keys of the
-#: bundle's ``feature_names.json`` and the ``mode`` argument of ``_prepare_row``.
+#: The two feature spaces of the production model: the keys of the bundle's
+#: ``feature_names.json`` and the ``mode`` argument of ``_prepare_row``.
 ML_FRAMES = ("symmetric", "antisymmetric")
-
-
-#: ``entry_pool_meta`` keys with a defined meaning. A pool refreshed against a different
-#: MP database version must record that here.
-POOL_META_KEYS = (
-    "element_scope",  # json list of element symbols the pool was built to cover
-    "mp_database_version",
-    "fetched_utc",
-    "n_systems_covered",
-    "builder_version",
-)
 
 
 def chemsys_key(elements) -> str:
@@ -667,13 +963,10 @@ def _read_only_uri(path: Path, immutable: bool) -> str:
 class SqliteBackend:
     """The whole corpus in one SQLite file — the DISTRIBUTION format.
 
-    **Read-mostly by design, not by accident.** ``write_json`` raises unless the store was
-    opened ``writable=True``. SQLite admits exactly one writer, and a campaign fanned out
-    over a process pool is a burst of concurrent cold-fetch writes -- which is why
-    :func:`atomic_write_json` exists on the directory side. Pointed at one file those
-    writers would serialize behind ``database is locked``. So: the directory tree
-    stays the WORKING format, and this is the format you hand to someone else. Populate it
-    with ``python -m gliquid.cache migrate``.
+    **Read-mostly by design.** ``write_json`` raises unless the store was opened
+    ``writable=True``: SQLite admits exactly one writer, so the directory tree stays the
+    WORKING format and this is the format you hand to someone else. Populate it with
+    ``python -m gliquid.cache migrate``.
 
     Args:
         path: The store file.
@@ -702,15 +995,15 @@ class SqliteBackend:
         self._create = bool(create)
         self._immutable = immutable
         self._timeout = float(timeout)
-        # One connection per (process, thread). sqlite3 connections are neither picklable
-        # nor safe to share across a fork, and gliquid's drivers do both fork and thread.
+        # One connection per (process, thread).
         self._connections: dict[tuple[int, int], sqlite3.Connection] = {}
         self._lock = threading.Lock()
-# Whether this store carries the pooled-entry tables. Memoized; invalidated by
-# `ensure_entry_pool`.
+        # Whether this store carries the pooled-entry tables; reset by ``ensure_entry_pool``.
         self._pool_present: bool | None = None
         # Same memoization, same invalidation rule, for the ML feature tables.
         self._ml_features_present: bool | None = None
+        # Same again for `imputed_entries`, absent from every schema-v1 store.
+        self._imputed_present: bool | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - diagnostics only
         mode = "rw" if self._writable else "ro"
@@ -811,8 +1104,7 @@ class SqliteBackend:
     def bulk_write(self) -> Iterator[None]:
         """One explicit transaction around many :meth:`write_json` calls.
 
-        Autocommit (one transaction per row) is correct but pays a WAL frame flush per
-        record; a migration writes tens of thousands.
+        Autocommit (one transaction per row) is correct but pays a WAL frame flush per record.
         """
         self._require_writable("Bulk writing")
         conn = self._conn()
@@ -827,10 +1119,9 @@ class SqliteBackend:
     def vacuum(self) -> None:
         """Rebuild the file compactly. For a store about to be SHIPPED, not for a working one.
 
-        Worth ~1% on a ``migrate``d store (spec 04 measured 20 KB of 45 MiB) but ~10% on an
-        incrementally built pool, where rows arrive interleaved across chemsystems and leave
-        partially filled pages behind. Must run outside a transaction, so it is a method
-        rather than something ``bulk_write`` could do.
+        Most useful on an incrementally built pool, where rows arrive interleaved across
+        chemsystems and leave partially filled pages behind. Must run outside a transaction, so
+        it is a method rather than something ``bulk_write`` could do.
         """
         self._require_writable("Vacuuming the store")
         self._conn().execute("VACUUM")
@@ -865,14 +1156,17 @@ class SqliteBackend:
     def exists(self, key: CacheKey) -> bool:
         if key.kind == KIND_DFT_ENTRIES:
             sql = "SELECT 1 FROM dft_entries WHERE sys_name = ? AND dft_type = ?"
+        elif key.kind == KIND_IMPUTED_ENTRIES:
+            if not self.has_imputed_entries:
+                return False
+            sql = "SELECT 1 FROM imputed_entries WHERE sys_name = ? AND dft_type = ?"
         elif key.kind == KIND_MPDS:
             sql = "SELECT 1 FROM mpds_diagrams WHERE sys_name = ? AND variant = ?"
         else:
             raise ValueError(f"Unknown cache kind {key.kind!r}. Must be one of {list(_KINDS)}.")
         if self._conn().execute(sql, (key.sys_name, key.variant)).fetchone() is not None:
             return True
-# A record the pool covers must report present here: `get_dft_convexhull` decides
-# whether to fetch on this answer alone.
+        # A record the pool covers reports present.
         return key.kind == KIND_DFT_ENTRIES and self.pool_covers(key.sys_name, key.variant)
 
     def read_json(self, key: CacheKey) -> Any:
@@ -888,6 +1182,10 @@ class SqliteBackend:
             if pooled is not None:
                 return pooled
             raise FileNotFoundError(f"No cached record {self.locate(key)}")
+        if key.kind == KIND_IMPUTED_ENTRIES:
+            if not self.has_imputed_entries:
+                raise FileNotFoundError(f"No cached record {self.locate(key)}")
+            return self.read_imputed_entries(key.sys_name, key.variant)
         if key.kind == KIND_MPDS:
             row = conn.execute(
                 "SELECT mode, payload, stitched, regions, header FROM mpds_diagrams "
@@ -900,8 +1198,7 @@ class SqliteBackend:
             if mode == MPDS_MODE_FULL and payload is not None:
                 return json.loads(zlib.decompress(payload))
             if mode == MPDS_MODE_LEAN:
-                # Reassembled into the SAME dict shape a full record has, plus the reserved
-                # block -- see gliquid.mpds for why this is a key and not a class.
+                # The full-record dict shape plus the reserved lean block.
                 record = json.loads(header)
                 record[LEAN_BLOCK_KEY] = {
                     "mode": MPDS_MODE_LEAN,
@@ -936,14 +1233,18 @@ class SqliteBackend:
 
         An MPDS payload carrying the reserved ``_gliquid`` lean block is stored **as a lean
         row** — header plus stitched curve plus regions, no ``payload`` blob — so that
-        ``write_json`` → ``read_json`` round-trips whatever it was handed. The alternative,
-        compressing the lean dict whole into the ``payload`` column, would leave a row
-        labelled ``mode='full'`` that has no ``shapes``: the one state the whole contract
-        exists to make impossible.
+        ``write_json`` → ``read_json`` round-trips whatever it was handed; no ``mode='full'``
+        row ever lacks ``shapes``.
+
+        A :data:`KIND_IMPUTED_ENTRIES` payload goes to :meth:`write_imputed_entries`,
+        replacing the system's set; the ``dft_entries`` payload is never touched.
         """
         self._require_writable(f"Writing {record_filename(key)}")
         if key.kind == KIND_MPDS and _is_lean_record(payload):
             self._write_lean_mpds(key, payload)
+            return
+        if key.kind == KIND_IMPUTED_ENTRIES:
+            self.write_imputed_entries(key.sys_name, payload, dft_type=key.variant)
             return
         blob = json.dumps(payload).encode("utf-8")
         compressed = zlib.compress(blob, _ZLIB_LEVEL)
@@ -987,9 +1288,12 @@ class SqliteBackend:
             raise ValueError(f"Unknown cache kind {key.kind!r}. Must be one of {list(_KINDS)}.")
 
     def _write_lean_mpds(self, key: CacheKey, payload: dict) -> None:
-        """Store a lean MPDS record across the ``header`` / ``stitched`` / ``regions`` columns."""
+        """Store a lean MPDS record across the ``header`` / ``stitched`` / ``regions`` columns.
+
+        Only the ``_MPDS_LEAN_FIELDS`` of the payload's header are stored.
+        """
         block = payload[LEAN_BLOCK_KEY]
-        header = {k: v for k, v in payload.items() if k != LEAN_BLOCK_KEY}
+        header = {k: payload[k] for k in _MPDS_LEAN_FIELDS if k in payload}
         stitched = block.get("stitched")
         covered = block.get("covered")
         self._conn().execute(
@@ -1016,15 +1320,17 @@ class SqliteBackend:
     def variants(self, sys_name: str, kind: str) -> list[str]:
         if kind == KIND_DFT_ENTRIES:
             sql = "SELECT dft_type FROM dft_entries WHERE sys_name = ?"
+        elif kind == KIND_IMPUTED_ENTRIES:
+            if not self.has_imputed_entries:
+                return []
+            sql = "SELECT dft_type FROM imputed_entries WHERE sys_name = ?"
         elif kind == KIND_MPDS:
             sql = "SELECT variant FROM mpds_diagrams WHERE sys_name = ?"
         else:
             raise ValueError(f"Unknown cache kind {kind!r}. Must be one of {list(_KINDS)}.")
         found = {row[0] for row in self._conn().execute(sql, (sys_name,))}
         if kind == KIND_DFT_ENTRIES and self.has_entry_pool:
-            # Kept in step with `exists`: a backend that answers True there and [] here
-            # would be internally inconsistent, and the inconsistency would only surface in
-            # whichever consumer happened to ask the other question.
+            # Reports the same records ``exists`` does, pool coverage included.
             found.update(
                 row[0]
                 for row in self._conn().execute(
@@ -1062,9 +1368,142 @@ class SqliteBackend:
         )
         return None if row is None else row[0]
 
-    # -- the pooled entry store ------------------------------------------------------
-    #
-    # A fallback for `dft_entries`: a per-system blob, when one exists, always wins.
+    # -- imputed entries: one set per system, keyed like ``dft_entries`` --
+
+    @property
+    def has_imputed_entries(self) -> bool:
+        """Whether this store carries ``imputed_entries`` — false for a schema-v1 store."""
+        if self._imputed_present is None:
+            row = (
+                self._conn()
+                .execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'imputed_entries'"
+                )
+                .fetchone()
+            )
+            self._imputed_present = row[0] == 1
+        return self._imputed_present
+
+    def write_imputed_entries(self, sys_name: str, entry_dicts, dft_type: str = "GGA") -> None:
+        """Store ``sys_name``'s imputed entries, replacing any set already there.
+
+        An empty ``entry_dicts`` writes a row rather than skipping one. "Checked, nothing
+        imputable" is the majority answer and it has to be distinguishable from "never
+        computed", which is what an absent row means.
+
+        Args:
+            sys_name: Canonical system name, as for :class:`CacheKey`.
+            entry_dicts: Tagged ``ComputedEntry.as_dict()`` payloads; may be empty.
+            dft_type: Functional the energies are referenced to.
+
+        Raises:
+            CacheModeError: if the store is open read-only.
+            SqliteStoreError: if the store predates the table.
+        """
+        self._require_writable(f"Writing imputed entries for {sys_name}")
+        self._require_imputed_table()
+        payload = list(entry_dicts)
+        blob = json.dumps(payload).encode("utf-8")
+        self._conn().execute(
+            "INSERT INTO imputed_entries "
+            "(sys_name, dft_type, payload, n_entries, sha256, written_utc) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(sys_name, dft_type) DO UPDATE SET "
+            "payload = excluded.payload, n_entries = excluded.n_entries, "
+            "sha256 = excluded.sha256, written_utc = excluded.written_utc",
+            (
+                sys_name,
+                dft_type,
+                zlib.compress(blob, _ZLIB_LEVEL),
+                len(payload),
+                hashlib.sha256(blob).hexdigest(),
+                _utc_now(),
+            ),
+        )
+
+    def read_imputed_entries(self, sys_name: str, dft_type: str = "GGA") -> list[dict]:
+        """``sys_name``'s imputed entries — ``[]`` when the row records that there are none.
+
+        Raises:
+            FileNotFoundError: when there is no row, which means never computed. An empty
+                list is the other answer and it is not an error.
+            SqliteStoreError: if the store predates the table.
+        """
+        self._require_imputed_table()
+        row = (
+            self._conn()
+            .execute(
+                "SELECT payload FROM imputed_entries WHERE sys_name = ? AND dft_type = ?",
+                (sys_name, dft_type),
+            )
+            .fetchone()
+        )
+        if row is None:
+            raise FileNotFoundError(
+                f"No imputed-entry record for {sys_name} ({dft_type}) in {self._path}. "
+                f"An absent row means the system was never imputed; a system that was "
+                f"checked and produced nothing carries an empty row."
+            )
+        return json.loads(zlib.decompress(row[0]))
+
+    def imputed_entry_systems(self) -> list[tuple[str, str]]:
+        """Every ``(sys_name, dft_type)`` carrying an imputed-entry row, sorted."""
+        if not self.has_imputed_entries:
+            return []
+        return sorted(
+            (str(a), str(b))
+            for a, b in self._conn().execute("SELECT sys_name, dft_type FROM imputed_entries")
+        )
+
+    def stored_imputed_sha256(self, sys_name: str, dft_type: str = "GGA") -> str | None:
+        """The sha256 of an imputed set's UNCOMPRESSED bytes, as written. ``None`` if absent."""
+        if not self.has_imputed_entries:
+            return None
+        row = (
+            self._conn()
+            .execute(
+                "SELECT sha256 FROM imputed_entries WHERE sys_name = ? AND dft_type = ?",
+                (sys_name, dft_type),
+            )
+            .fetchone()
+        )
+        return None if row is None else row[0]
+
+    def imputed_entry_stats(self) -> dict:
+        """Counts and payload size for ``imputed_entries`` — ``{}`` when the table is absent."""
+        if not self.has_imputed_entries:
+            return {}
+        rows, systems, entries, payload = (
+            self._conn()
+            .execute(
+                "SELECT COUNT(*), COUNT(DISTINCT sys_name), COALESCE(SUM(n_entries), 0), "
+                "COALESCE(SUM(LENGTH(payload)), 0) FROM imputed_entries"
+            )
+            .fetchone()
+        )
+        empty = (
+            self._conn()
+            .execute("SELECT COUNT(*) FROM imputed_entries WHERE n_entries = 0")
+            .fetchone()[0]
+        )
+        return {
+            "records": int(rows),
+            "systems": int(systems),
+            "entries": int(entries),
+            "empty_records": int(empty),
+            "payload_bytes": int(payload),
+        }
+
+    def _require_imputed_table(self) -> None:
+        if self.has_imputed_entries:
+            return
+        raise SqliteStoreError(
+            f"{self._path} carries no `imputed_entries` table: it was written by a gliquid "
+            f"whose cache schema predates version 2. Rebuild the store with this version."
+        )
+
+    # -- the pooled entry store: read when no per-system ``dft_entries`` record exists --
 
     def ensure_entry_pool(self) -> None:
         """Create the pooled-entry tables if this store does not have them yet.
@@ -1081,10 +1520,14 @@ class SqliteBackend:
     def has_entry_pool(self) -> bool:
         """Whether this store carries the pooled-entry tables."""
         if self._pool_present is None:
-            row = self._conn().execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN "
-                "('entry_pool', 'entry_pool_systems', 'entry_pool_meta')"
-            ).fetchone()
+            row = (
+                self._conn()
+                .execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN "
+                    "('entry_pool', 'entry_pool_systems', 'entry_pool_meta')"
+                )
+                .fetchone()
+            )
             self._pool_present = row[0] == 3
         return self._pool_present
 
@@ -1106,11 +1549,9 @@ class SqliteBackend:
         """Add ``entries`` to the pool. Returns ``(written, drifted_ids, unkeyable)``.
 
         **Drift is reported, never resolved.** When an ``entry_id`` is already present with
-        a DIFFERENT payload the existing row is kept and the id is returned, because there
-        is no principled way to choose between two payloads the Materials Project served
-        for the same id at different times -- that is precisely why the binary corpus is not
-        pooled. A builder that ignores this return value has re-created the failure the
-        drift measurement ruled out.
+        a DIFFERENT payload the existing row is kept and the id is returned: there is no
+        principled way to choose between two payloads served for the same id. A builder must
+        handle the returned ids.
 
         ``unkeyable`` carries entries with no usable ``entry_id``; they are NOT stored,
         because a synthesized key would merge distinct entries into one row.
@@ -1199,10 +1640,14 @@ class SqliteBackend:
         """Whether the pool was BUILT for this system — not merely whether rows exist."""
         if not self.has_entry_pool:
             return False
-        row = self._conn().execute(
-            "SELECT 1 FROM entry_pool_systems WHERE sys_name = ? AND dft_type = ?",
-            (sys_name, dft_type),
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute(
+                "SELECT 1 FROM entry_pool_systems WHERE sys_name = ? AND dft_type = ?",
+                (sys_name, dft_type),
+            )
+            .fetchone()
+        )
         return row is not None
 
     def pool_systems(self) -> list[tuple]:
@@ -1268,9 +1713,7 @@ class SqliteBackend:
             "entry_rows_reconstructed": pooled_rows,
         }
 
-    # -- the ML feature corpus --------------------------------------------------------
-    #
-    # Model input features, read by ``gliquid.production_model_runner.get_rows_for_system``.
+    # -- the ML feature corpus, read by ``production_model_runner.get_rows_for_system`` --
 
     def ensure_ml_features(self) -> None:
         """Create the ML feature tables if this store does not have them yet.
@@ -1287,10 +1730,14 @@ class SqliteBackend:
     def has_ml_features(self) -> bool:
         """Whether this store carries the ML feature tables."""
         if self._ml_features_present is None:
-            row = self._conn().execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN "
-                "('ml_features', 'ml_feature_columns')"
-            ).fetchone()
+            row = (
+                self._conn()
+                .execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN "
+                    "('ml_features', 'ml_feature_columns')"
+                )
+                .fetchone()
+            )
             self._ml_features_present = row[0] == 2
         return self._ml_features_present
 
@@ -1337,29 +1784,26 @@ class SqliteBackend:
         """The ordered column names of ``frame``, or ``None`` when the store has none."""
         if not self.has_ml_features:
             return None
-        row = self._conn().execute(
-            "SELECT columns FROM ml_feature_columns WHERE frame = ?", (frame,)
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute("SELECT columns FROM ml_feature_columns WHERE frame = ?", (frame,))
+            .fetchone()
+        )
         return None if row is None else json.loads(row[0])
 
     def ml_features_bundle_id(self, frame: str) -> str | None:
         """The model bundle ``frame``'s columns were exported for. Diagnostics only."""
         if not self.has_ml_features:
             return None
-        row = self._conn().execute(
-            "SELECT bundle_id FROM ml_feature_columns WHERE frame = ?", (frame,)
-        ).fetchone()
+        row = (
+            self._conn()
+            .execute("SELECT bundle_id FROM ml_feature_columns WHERE frame = ?", (frame,))
+            .fetchone()
+        )
         return None if row is None else row[0]
 
     def ml_feature_rows(self, frame: str) -> list[tuple[str, list[float]]]:
-        """Every ``(system, values)`` pair of ``frame``, ordered by system name.
-
-        The whole frame rather than a point read on purpose: the consumer
-        (``ProductionModelRunner``) materializes both frames once into DataFrames and then
-        answers thousands of ``predict_system`` calls from memory, and its beeswarm plots
-        need the full frame anyway. A per-system query would pay a round trip per call for
-        a table that is 2.6 MB whole.
-        """
+        """Every ``(system, values)`` pair of ``frame``, ordered by system name."""
         if not self.has_ml_features:
             return []
         columns = self.ml_feature_columns(frame)
@@ -1413,9 +1857,8 @@ def _drop_null_frame(header: dict) -> dict:
     """A lean header made comparable to ``mpds_header`` of the record it came from.
 
     ``gliquid.mpds.lean_record`` writes ``chemical_elements: null`` when the source json
-    carries no frame block, because ``mpds_frame_matches`` treats an ABSENT frame as
-    *matching* the caller and a silently mis-mirrored construction is the bug that would
-    cause. ``mpds_header`` simply omits the key in that case, so the explicit null is the
+    carries no frame block (``mpds_frame_matches`` treats an ABSENT frame as *matching* the
+    caller). ``mpds_header`` simply omits the key in that case, so the explicit null is the
     one intended difference between the two and is dropped before comparison.
     """
     if header.get("chemical_elements") is None:
@@ -1431,8 +1874,9 @@ def _is_lean_record(payload: Any) -> bool:
     return isinstance(block, dict) and block.get("mode") == MPDS_MODE_LEAN
 
 
-def mpds_header(mpds_json: Any) -> dict:
-    """The addressable header columns of an MPDS record.
+def mpds_header(mpds_json: Any, *, lean: bool = False) -> dict:
+    """The addressable header columns of an MPDS record; ``lean=True`` keeps only the
+    ``_MPDS_LEAN_FIELDS`` a lean record carries.
 
     Tolerates the ``{"reference": None}`` placeholder that ``load_mpds_data`` caches when a
     system has no digitized diagram — that IS a record, and dropping it would make the
@@ -1442,7 +1886,7 @@ def mpds_header(mpds_json: Any) -> dict:
         return {}
     reference = mpds_json.get("reference")
     header: dict[str, Any] = {}
-    for name in _MPDS_HEADER_FIELDS:
+    for name in _MPDS_LEAN_FIELDS if lean else _MPDS_HEADER_FIELDS:
         if name in mpds_json:
             header[name] = mpds_json[name]
         elif isinstance(reference, dict) and name in reference:
@@ -1450,8 +1894,7 @@ def mpds_header(mpds_json: Any) -> dict:
     return header
 
 
-#: The store ``resolve_backend(None)`` hands out. Reads ``config`` at call time rather
-#: than snapshotting it, so a mid-session ``set_cache_dir`` is observed.
+#: The store ``resolve_backend(None)`` hands out, read from ``config`` at call time.
 _GLOBAL_DIRECTORY_BACKEND = DirectoryBackend()
 
 _BACKEND_METHODS = ("exists", "read_json", "write_json", "variants", "locate")
@@ -1460,8 +1903,8 @@ _BACKEND_METHODS = ("exists", "read_json", "write_json", "variants", "locate")
 def store_label(backend: CacheBackend, sys_name: str) -> str:
     """A human name for where ``sys_name``'s records live — for log lines only.
 
-    Directory stores answer with the system directory, which is what the pre-seam log
-    lines printed; other stores fall back to a record handle.
+    Directory stores answer with the system directory; other stores fall back to a record
+    handle.
     """
     sys_location = getattr(backend, "sys_location", None)
     if sys_location is not None:
@@ -1469,8 +1912,7 @@ def store_label(backend: CacheBackend, sys_name: str) -> str:
     return str(backend.locate(CacheKey(sys_name, KIND_MPDS, "")))
 
 
-#: Read-only ``SqliteBackend``s by store path, opened once per process. Keyed by path so
-#: a mid-session ``set_cache_dir`` to a different store is observed.
+#: Read-only ``SqliteBackend``s by store path, opened once per process.
 _SQLITE_BACKENDS: dict[str, SqliteBackend] = {}
 
 
@@ -1496,8 +1938,7 @@ def resolve_backend(override: CacheBackend | str | os.PathLike | None = None) ->
 
     Args:
         override: ``None`` uses the configured global store. A ``str``/``Path`` builds a
-            :class:`DirectoryBackend` with a **flat** layout inside it — the historical
-            meaning of an explicit ``data_dir=`` argument, which is why it does not consult
+            :class:`DirectoryBackend` with a **flat** layout inside it, without consulting
             ``config.dir_structure`` — unless the path names a single FILE store
             (``.sqlite`` / ``.sqlite3`` / ``.db``), which opens read-only.
             An already-constructed backend is used as-is.
@@ -1520,8 +1961,7 @@ def resolve_backend(override: CacheBackend | str | os.PathLike | None = None) ->
             )
         return _GLOBAL_DIRECTORY_BACKEND
     if isinstance(override, (str, os.PathLike)):
-        # One rule for "is this a single-file store", shared with config.set_cache_dir, so
-        # an explicit data_dir= and a configured cache_dir cannot disagree about a path.
+        # The same single-file-store test config.set_cache_dir applies.
         if config._is_file_store(Path(override)):
             return sqlite_backend_for(override)
         return DirectoryBackend(override)
@@ -1533,12 +1973,139 @@ def resolve_backend(override: CacheBackend | str | os.PathLike | None = None) ->
     )
 
 
-# ---------------------------------------------------------------------------------------
-# CLI -- ``python -m gliquid.cache {migrate,verify,info}``
-#
-# Everything below writes to stdout; library code above this line reports through
-# ``logger`` (exemption registered in tests/test_logging_boundary.py::EXEMPT).
-# ---------------------------------------------------------------------------------------
+class OverlayBackend:
+    """An in-memory layer over another store: reads fall through, writes stay in memory.
+
+    Every record written through the overlay lives in the overlay only, and the base store
+    is never written. A record the overlay holds shadows the base's record under the same
+    key, so the overlay is a copy-on-write view of the base. Records are deep-copied on the
+    way in and out.
+
+    One overlay holds one session's writes. The caller owns its lifetime: create one per
+    session, pass it wherever a store is accepted (``data_dir=`` / ``resolve_backend``), and
+    drop it when the session ends. Its records are visible only through that instance.
+
+    A directory base keeps imputed entries tagged inside the DFT-entries record; once the
+    overlay holds a system's imputed set, a read of that system's DFT record drops the tagged
+    entries the base embeds, so the overlay's set is the only one served.
+
+    Read-only extras of the base -- the SQLite pool and metadata readers named in
+    ``PASSTHROUGH`` -- are served from the base. Path and writer extras are not.
+
+    Args:
+        base: the store reads fall through to -- a backend, a path, or ``None`` for the
+            configured store, resolved once by :func:`resolve_backend`.
+        label: the name :meth:`locate` gives the overlay in record handles.
+    """
+
+    PASSTHROUGH = frozenset(
+        {
+            "has_entry_pool",
+            "meta",
+            "pool_covers",
+            "pool_meta",
+            "pool_systems",
+            "read_pool_entries",
+        }
+    )
+
+    def __init__(
+        self, base: CacheBackend | str | os.PathLike | None = None, *, label: str = "session"
+    ):
+        self.base = resolve_backend(base)
+        self.label = str(label)
+        self._records: dict[CacheKey, Any] = {}
+        self._lock = threading.RLock()
+
+    def __repr__(self) -> str:  # pragma: no cover - diagnostics only
+        return f"OverlayBackend(base={self.base!r}, label={self.label!r}, records={len(self._records)})"
+
+    def __getattr__(self, name: str):
+        if name in OverlayBackend.PASSTHROUGH:
+            return getattr(self.__dict__["base"], name)
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
+    def __deepcopy__(self, memo):
+        return self
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        base = getattr(self.base, "capabilities", frozenset())
+        return frozenset({"read", "write"}) | (frozenset(base) & {"variants"})
+
+    @property
+    def writable(self) -> bool:
+        return True
+
+    @property
+    def records(self) -> list[CacheKey]:
+        """The keys the overlay holds."""
+        with self._lock:
+            return list(self._records)
+
+    def exists(self, key: CacheKey) -> bool:
+        with self._lock:
+            if key in self._records:
+                return True
+        return self.base.exists(key)
+
+    def read_json(self, key: CacheKey) -> Any:
+        with self._lock:
+            if key in self._records:
+                return copy.deepcopy(self._records[key])
+            shadows_imputed = key.kind == KIND_DFT_ENTRIES and (
+                CacheKey(key.sys_name, KIND_IMPUTED_ENTRIES, key.variant) in self._records
+            )
+        payload = self.base.read_json(key)
+        if shadows_imputed and isinstance(payload, list):
+            payload = [e for e in payload if not (isinstance(e, dict) and is_imputed_entry_dict(e))]
+        return payload
+
+    def write_json(self, key: CacheKey, payload: Any) -> None:
+        with self._lock:
+            self._records[key] = copy.deepcopy(payload)
+
+    def variants(self, sys_name: str, kind: str) -> list[str]:
+        if kind not in _KINDS:
+            raise ValueError(f"Unknown cache kind {kind!r}. Must be one of {list(_KINDS)}.")
+        with self._lock:
+            held = {k.variant for k in self._records if k.sys_name == sys_name and k.kind == kind}
+        return sorted(held | set(self.base.variants(sys_name, kind)))
+
+    def locate(self, key: CacheKey) -> str:
+        with self._lock:
+            if key in self._records:
+                return f"overlay[{self.label}]#{record_filename(key)}"
+        return self.base.locate(key)
+
+    def discard(self, key: CacheKey | None = None) -> None:
+        """Drop one record, or every record when ``key`` is ``None``."""
+        with self._lock:
+            if key is None:
+                self._records.clear()
+            else:
+                self._records.pop(key, None)
+
+
+def _store_location(backend: CacheBackend) -> Path | None:
+    """The path a store keeps its records under, or ``None`` when it cannot be derived.
+
+    A ``DirectoryBackend`` answers with its root (``config.cache_dir`` for a root of
+    ``None``), a ``SqliteBackend`` with its file, and an ``OverlayBackend`` with its base's
+    location. Any other store answers ``None``. Creates nothing.
+    """
+    # Never derive this through sys_location / path_for / locate: nested mode creates directories.
+    if isinstance(backend, OverlayBackend):
+        return _store_location(backend.base)
+    if isinstance(backend, SqliteBackend):
+        return backend.path
+    if isinstance(backend, DirectoryBackend):
+        root = backend._root if backend._root is not None else config.cache_dir
+        return Path(root) if root is not None else None
+    return None
+
+
+# -- CLI: ``python -m gliquid.cache {migrate,verify,info}``; writes to stdout --
 
 
 def _emit(message: str = "") -> None:
@@ -1620,13 +2187,11 @@ def migrate(
 ) -> int:
     """Build a single-file store from a directory corpus. Returns a process exit code.
 
-    Unparseable source files are **reported and refused**, not skipped: a corpus holding a
-    truncated cache file is a corpus with a silently wrong answer in it, and a migration
-    that drops it only moves the silence somewhere new. ``skip_unparseable`` is the
-    explicit opt-out, and it still reports every file it passed over.
+    Unparseable source files are **reported and refused**, not skipped. ``skip_unparseable``
+    is the explicit opt-out, and it still reports every file it passed over.
 
     ``mpds_mode='lean'`` reduces every MPDS record to its header plus the PRE-fill stitched
-    liquidus (``gliquid.mpds.lean_record``), which is ~93-97% smaller and is all a fit or a
+    liquidus (``gliquid.mpds.lean_record``), which is all a fit or a
     liquidus plot reads. Every OTHER MPDS consumer raises on such a record rather than
     answering from a missing block — see ``gliquid.mpds.record_mode``.
     """
@@ -1648,8 +2213,7 @@ def migrate(
         _emit(f"ERROR: {empty}")
         return 1
 
-    # Built under a .partial name and moved into place only on success, so a refused
-    # migration leaves no store at all rather than a plausible-looking incomplete one.
+    # Built under a .partial name and moved into place only on success.
     partial = dest.with_name(dest.name + ".partial")
     for stale in (partial, *(partial.with_name(partial.name + s) for s in ("-wal", "-shm"))):
         with contextlib.suppress(OSError):
@@ -1687,8 +2251,10 @@ def migrate(
                     if key.kind == KIND_MPDS and mpds_mode == MPDS_MODE_LEAN:
                         try:
                             payload = reduce(payload)
-                        except Exception as exc:  # noqa: BLE001 - reported, never swallowed
-                            failures.append((path, f"lean reduction failed: {type(exc).__name__}: {exc}"))
+                        except Exception as exc:  # noqa: BLE001 - reported as a failure
+                            failures.append(
+                                (path, f"lean reduction failed: {type(exc).__name__}: {exc}")
+                            )
                             continue
                     backend.write_json(key, payload)
                     written[key.kind] += 1
@@ -1740,17 +2306,10 @@ def verify(
 ) -> int:
     """Compare a directory corpus against a single-file store, record by record.
 
-    The comparison is on the PARSED PYTHON OBJECTS, which is the level the seam exchanges
-    (see the module docstring). For DFT records the stored sha256 of the uncompressed bytes
-    is re-derived as well, so losslessness is proved on the bytes and not only through an
-    equality operator.
-
-    Against a **lean** store, object equality is the wrong question — the reduction threw
-    ``shapes`` away on purpose. MPDS records are checked on what a lean record CLAIMS to
-    preserve instead: identical ``extract_digitized_liquidus`` output and identical
-    ``liquidus_coverage`` metrics, plus identical header fields. That equivalence is the
-    whole justification for the reduction, so it is checked here rather than asserted, and
-    a lean store whose MPDS half was compared ZERO times fails.
+    Records are compared as parsed Python objects; for DFT records the stored sha256 of the
+    uncompressed bytes is re-derived as well. Against a lean store, MPDS records are compared on
+    ``extract_digitized_liquidus`` output, ``liquidus_coverage`` metrics and header fields, and a
+    lean store whose MPDS records were compared zero times fails.
     """
     directory, sqlite_path = Path(directory), Path(sqlite_path)
     backend = SqliteBackend(sqlite_path)
@@ -1761,7 +2320,7 @@ def verify(
         if mpds_mode == MPDS_MODE_LEAN:
             from gliquid.mpds import extract_digitized_liquidus, liquidus_coverage
 
-            def equivalence(full, lean):  # noqa: F811 - defined only in lean mode
+            def equivalence(full, lean):  # defined only in lean mode
                 """(same_liquidus, same_coverage) between a full record and its reduction."""
                 return (
                     _json_equivalent(
@@ -1808,7 +2367,7 @@ def verify(
                 if not same_coverage:
                     coverage_divergences.append(backend.locate(key))
                 header = {k: v for k, v in stored_record.items() if k != LEAN_BLOCK_KEY}
-                if not _json_equivalent(mpds_header(expected), _drop_null_frame(header)):
+                if not _json_equivalent(mpds_header(expected, lean=True), _drop_null_frame(header)):
                     mismatches.append(backend.locate(key))
             elif not _json_equivalent(expected, stored_record):
                 mismatches.append(backend.locate(key))
@@ -1917,15 +2476,25 @@ def info(sqlite_path: str | os.PathLike) -> int:
         _emit(f"  header text             : {_human_bytes(header)}")
         _emit(f"  stitched liquidus       : {_human_bytes(stitched)}")
         _emit(f"  covered regions         : {_human_bytes(regions)}")
-        # The number spec 05 is measured on: everything the MPDS half of the store costs.
+        # Everything the MPDS half of the store costs.
         _emit(f"  MPDS TOTAL              : {_human_bytes(payload + header + stitched + regions)}")
         for mode, count in conn.execute("SELECT mode, COUNT(*) FROM mpds_diagrams GROUP BY mode"):
             _emit(f"  mode {mode:<18} : {count:,}")
         indexless = conn.execute("SELECT COUNT(*) FROM mpds_diagrams WHERE variant = ''").fetchone()
         _emit(f"  indexless (<sys>.json)  : {indexless[0]:,}")
 
-        # Printed only when the store actually carries a pool, so a `migrate`d store's
-        # output is unchanged and the presence of this section is itself the signal.
+        # Printed for every schema-v2 store; its absence marks a v1 store.
+        imputed = backend.imputed_entry_stats()
+        if imputed:
+            _emit("")
+            _emit("imputed_entries")
+            _emit(f"  records                 : {imputed['records']:,}")
+            _emit(f"  distinct systems        : {imputed['systems']:,}")
+            _emit(f"  imputed entries         : {imputed['entries']:,}")
+            _emit(f"  empty records           : {imputed['empty_records']:,}")
+            _emit(f"  compressed payload      : {_human_bytes(imputed['payload_bytes'])}")
+
+        # Printed only when the store carries a pool.
         stats = backend.pool_stats()
         if stats:
             _emit("")
@@ -1946,8 +2515,7 @@ def info(sqlite_path: str | os.PathLike) -> int:
                 shown = value if len(value) <= 96 else value[:93] + "..."
                 _emit(f"  {key:<24}: {shown}")
 
-        # Same rule as the pool: printed only when the store carries the tables, so its
-        # presence in the output IS the signal that this store can serve `predict_system`.
+        # Printed only when the store carries the ML feature tables.
         ml_stats = backend.ml_feature_stats()
         if ml_stats:
             _emit("")
@@ -1986,9 +2554,8 @@ def build_parser() -> argparse.ArgumentParser:
         default="flat",
         help="how the source arranges records (default: flat)",
     )
-    # Deliberately NOT argparse `choices`: every other error in this CLI is an `_emit`ed
-    # "ERROR: ..." line on stdout with an exit code, and an argparse rejection would go to
-    # stderr instead, which is the one place a caller piping this tool is not reading.
+    # Validated here rather than by argparse ``choices``, so the error is an ``_emit``ed line on
+    # stdout.
     mig.add_argument(
         "--mpds-mode",
         default=MPDS_MODE_FULL,

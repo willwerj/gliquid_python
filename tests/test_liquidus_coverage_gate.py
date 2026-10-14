@@ -1,18 +1,15 @@
 """Liquidus interior-coverage gate: span-complete but interior-sparse data must not fit.
 
-``mpds.extract_digitized_liquidus`` linearly fills every composition gap wider than 0.06
-before anyone downstream can measure it, so a liquidus digitized only near the two pure
-ends (Bi-Si class: liquid wedges at 0-7 and 92-100 at.%, nothing in between) reaches
-``BinaryLiquid.from_cache`` as a full-span curve whose interior is ~85% fabricated — and
-the endpoint-span gate (``comp_range_fit_lim``) admits it. ``from_cache`` therefore also
-measures the PRE-fill stitched curve (``mpds.liquidus_coverage``) and flags ``init_error``
-when its widest gap exceeds ``config.liquidus_max_gap`` or less than
-``config.liquidus_min_coverage`` of the span is locally sampled.
+``mpds.extract_digitized_liquidus`` linearly fills every composition gap wider than 0.06,
+so a liquidus digitized only near the two pure ends (Bi-Si class: liquid wedges at 0-7 and
+92-100 at.%, nothing in between) reaches ``BinaryLiquid.from_cache`` as a full-span curve.
+``from_cache`` therefore also measures the PRE-fill stitched curve
+(``mpds.liquidus_coverage``) and flags ``init_error`` when its widest gap exceeds
+``config.liquidus_max_gap`` or less than ``config.liquidus_min_coverage`` of the span is
+locally sampled.
 
-Thresholds (0.45 / 0.50 at gap_tol 0.10) were calibrated on the 1433 span-admitted cached
-systems: they newly reject only the 9 whose interiors are ~half fabricated or worse, and
-leave ordinarily-sampled curves (typical spacing 0.01-0.03, corpus p95 max_gap 0.141)
-untouched — see dev/scripts/_generated/scan_liquidus_coverage.py.
+Thresholds (0.45 / 0.50 at gap_tol 0.10) reject only liquidus curves whose interiors are
+about half fabricated or worse.
 """
 
 import pytest
@@ -21,21 +18,14 @@ import gliquid.config as config
 import gliquid.mpds as mpds
 from gliquid.binary import BinaryLiquid
 
-
-def _svgpath(points):
-    """[[x_pct, T_celsius], ...] -> MPDS-style svgpath string."""
-    return "M " + " L ".join(f"{x},{t}" for x, t in points)
+from ._mpds_builders import from_record, liquidus_record, stub_mpds_load
+from ._mpds_builders import svgpath as _svgpath
 
 
 def _make_json(points, elements=("Hf", "Zr"), temp=(0, 2600)):
-    return {
-        "reference": {"entry": "synthetic-test-json"},
-        "chemical_elements": list(elements),
-        "comp_range": [0, 100],
-        "temp": list(temp),
-        "labels": [],
-        "shapes": [{"label": "L", "nphases": 1, "svgpath": _svgpath(points)}],
-    }
+    return liquidus_record(
+        [{"label": "L", "nphases": 1, "svgpath": _svgpath(points)}], elements, temp
+    )
 
 
 # Bi-Si class: wedges near the pure ends, an ~85 at.% hole between them.
@@ -89,13 +79,7 @@ class TestFromCacheGate:
     only the cache/API load is stubbed so the jsons are synthetic."""
 
     def _from_cache(self, monkeypatch, points, **kwargs):
-        mpds_json = _make_json(points)
-
-        def fake_load(input, pd_ind=None):
-            return mpds_json, mpds.extract_digitized_liquidus(mpds_json)
-
-        monkeypatch.setattr(mpds, "load_mpds_data", fake_load)
-        return BinaryLiquid.from_cache("Hf-Zr", **kwargs)
+        return from_record(monkeypatch, _make_json(points), **kwargs)
 
     def test_gappy_liquidus_is_rejected(self, monkeypatch, caplog):
         bl = self._from_cache(monkeypatch, GAPPY_POINTS)
@@ -157,12 +141,7 @@ class TestConfigThresholds:
             [x, 1855 - 6 * (100 - x)] for x in range(60, 101, 2)
         ]  # one 0.2 hole
         original = config.liquidus_max_gap
-        mpds_json = _make_json(moderate)
-        monkeypatch.setattr(
-            mpds,
-            "load_mpds_data",
-            lambda input, pd_ind=None: (mpds_json, mpds.extract_digitized_liquidus(mpds_json)),
-        )
+        stub_mpds_load(monkeypatch, _make_json(moderate))
         try:
             assert BinaryLiquid.from_cache("Hf-Zr").init_error is False
             config.set_liquidus_coverage_thresholds(max_gap=0.15)

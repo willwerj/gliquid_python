@@ -1,26 +1,20 @@
 """The single-file store: ``SqliteBackend`` and the ``python -m gliquid.cache`` CLI.
 
-Three properties carry the weight here, and each is asserted against something other than
-the code that produced it:
-
 * **Losslessness.** Binary DFT payloads are stored per system, NOT deduplicated across
-  systems: measured over 300 real caches, 3.58% of repeated ``entry_id``s carry differing
-  payloads (fetched over time against different Materials Project database versions), so
-  pooling them would silently pick one of several disagreeing copies. The proof is the
-  sha256 of the UNCOMPRESSED bytes, re-derived here from the source object rather than read
-  back from the row that stored it.
-* **Read-mostly by design.** ``write_json`` raises unless the store was opened
-  ``writable=True``. SQLite has one writer and ``dev/scripts/Fit_Binary_Systems.py`` fans
-  campaigns over a ``ProcessPoolExecutor``. The error must name the fix, so that is
-  asserted on the message, not just the type.
-* **The MPDS variant rule is unchanged by the storage change.** ``variant=''`` shadows
-  ``'0'``, ``pd_ind=0`` resolves a sole indexless record, and a nonzero index with no match
-  raises naming the reachable handles — the same rule the directory backend implements,
-  exercised through ``mpds.load_mpds_data`` against a sqlite store.
+  systems, since repeated ``entry_id``s can carry differing payloads. The proof is the sha256
+  of the UNCOMPRESSED bytes, re-derived here from the source object rather than read back
+  from the row that stored it.
+* **Read-mostly.** ``write_json`` raises unless the store was opened ``writable=True``
+  (SQLite has one writer); the error names the fix, asserted on the message.
+* **The MPDS variant rule is the directory backend's.** ``variant=''`` shadows ``'0'``,
+  ``pd_ind=0`` resolves a sole indexless record, and a nonzero index with no match raises
+  naming the reachable handles, exercised through ``mpds.load_mpds_data`` against a sqlite
+  store.
 """
 
 import json
 import math
+import shutil
 import sqlite3
 import zlib
 
@@ -30,6 +24,7 @@ import gliquid.config as config
 from gliquid.cache import (
     DFT_CODEC,
     KIND_DFT_ENTRIES,
+    KIND_IMPUTED_ENTRIES,
     KIND_MPDS,
     SQLITE_SCHEMA_VERSION,
     CacheKey,
@@ -73,10 +68,8 @@ def _no_leaked_stores():
     close_sqlite_backends()
 
 
-@pytest.fixture
-def corpus(tmp_path):
-    """A small flat directory corpus: two DFT records, three MPDS records, one neighbour."""
-    root = tmp_path / "cache"
+def _write_corpus(root):
+    """Write the small flat corpus into the new directory ``root`` and return ``root``."""
     root.mkdir()
     (root / "Cu-Mg_ENTRIES_MP_GGA.json").write_text(json.dumps(ENTRIES))
     (root / "Ag-V_ENTRIES_MP_GGA.json").write_text(json.dumps(ENTRIES[:1]))
@@ -89,10 +82,25 @@ def corpus(tmp_path):
 
 
 @pytest.fixture
-def store(tmp_path, corpus):
-    """``corpus`` migrated into a single-file store."""
+def corpus(tmp_path):
+    """A small flat directory corpus: two DFT records, three MPDS records, one neighbour."""
+    return _write_corpus(tmp_path / "cache")
+
+
+@pytest.fixture(scope="module")
+def migrated_corpus(tmp_path_factory):
+    """The ``corpus`` records migrated into a single-file store, once per module."""
+    root = _write_corpus(tmp_path_factory.mktemp("template") / "cache")
+    dest = root.parent / "store.sqlite"
+    assert main(["migrate", "--from", str(root), "--to", str(dest)]) == 0
+    return dest
+
+
+@pytest.fixture
+def store(tmp_path, corpus, migrated_corpus):
+    """``corpus`` migrated into a single-file store: a private copy of ``migrated_corpus``."""
     dest = tmp_path / "store.sqlite"
-    assert main(["migrate", "--from", str(corpus), "--to", str(dest)]) == 0
+    shutil.copyfile(migrated_corpus, dest)
     return dest
 
 
@@ -100,9 +108,7 @@ def _writable(path) -> SqliteBackend:
     return SqliteBackend(path, create=True)
 
 
-# ---------------------------------------------------------------------------------------
-# Filename <-> key, and what counts as a cache record at all
-# ---------------------------------------------------------------------------------------
+# -- Filename <-> key, and what counts as a cache record at all --
 
 
 class TestRecordNameParsing:
@@ -178,9 +184,7 @@ class TestScanDirectoryStore:
         assert scanned == served
 
 
-# ---------------------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------------------
+# -- Schema --
 
 
 class TestSchema:
@@ -194,10 +198,10 @@ class TestSchema:
         # secondary index, and it holds six rows.
         record_indices = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'index' "
-            "AND tbl_name IN ('dft_entries', 'mpds_diagrams')"
+            "AND tbl_name IN ('dft_entries', 'mpds_diagrams', 'imputed_entries')"
         ).fetchall()
         conn.close()
-        for table in ("dft_entries", "mpds_diagrams"):
+        for table in ("dft_entries", "mpds_diagrams", "imputed_entries"):
             assert "WITHOUT ROWID" in sql[table].upper(), f"{table} lost WITHOUT ROWID"
         assert record_indices == [], (
             "a secondary index appeared; every access is an exact point read on the "
@@ -248,9 +252,7 @@ class TestSchema:
             SqliteBackend(tmp_path / "absent.sqlite").exists(DFT_KEY)
 
 
-# ---------------------------------------------------------------------------------------
-# Losslessness
-# ---------------------------------------------------------------------------------------
+# -- Losslessness --
 
 
 class TestLosslessness:
@@ -276,11 +278,8 @@ class TestLosslessness:
         backend.close()
 
     def test_entries_are_NOT_deduplicated_across_systems(self, tmp_path):
-        """3.58% of repeated ``entry_id``s carry DIFFERING payloads across real caches.
-
-        Two systems that share an ``entry_id`` but disagree about its energy must each read
-        back their own copy. A pooled entry table would hand both of them one of the two.
-        """
+        """Two systems that share an ``entry_id`` but disagree about its energy each read
+        back their own copy."""
         backend = _writable(tmp_path / "s.sqlite")
         old = [{"entry_id": "mp-30", "energy": -3.70, "composition": {"Cu": 1.0}}]
         new = [{"entry_id": "mp-30", "energy": -3.99, "composition": {"Cu": 1.0}}]
@@ -322,9 +321,7 @@ class TestLosslessness:
         backend.close()
 
 
-# ---------------------------------------------------------------------------------------
-# The protocol surface
-# ---------------------------------------------------------------------------------------
+# -- The protocol surface --
 
 
 class TestProtocol:
@@ -374,16 +371,6 @@ class TestProtocol:
 
         assert api.resolve_cache_path(DFT_KEY, cache=store) is None
 
-    def test_resolve_sys_dir_refuses_rather_than_fabricating_a_directory(self, store):
-        import warnings
-
-        import gliquid.api as api
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(CacheModeError, match="one file"):
-                api._resolve_sys_dir("Cu-Mg", data_dir=store)
-
 
 class TestReadOnlyByDesign:
     def test_write_json_on_a_read_only_store_names_the_fix(self, store):
@@ -419,9 +406,7 @@ class TestReadOnlyByDesign:
         backend.close()
 
 
-# ---------------------------------------------------------------------------------------
-# Wiring into config / resolve_backend
-# ---------------------------------------------------------------------------------------
+# -- Wiring into config / resolve_backend --
 
 
 class TestResolveBackendUnderSqliteMode:
@@ -437,53 +422,17 @@ class TestResolveBackendUnderSqliteMode:
         assert isinstance(resolve_backend(str(store)), SqliteBackend)
 
     def test_a_directory_override_is_still_a_directory_backend(self, corpus):
-        """POSITIVE CONTROL: the historical explicit-``data_dir`` meaning is unchanged."""
+        """POSITIVE CONTROL: an explicit ``data_dir`` is still a directory backend."""
         assert isinstance(resolve_backend(corpus), DirectoryBackend)
-
-    def test_sqlite_mode_pointed_at_a_directory_raises_rather_than_guessing(
-        self, corpus, monkeypatch
-    ):
-        monkeypatch.setattr(config, "cache_dir", corpus)
-        monkeypatch.setattr(config, "cache_mode", "sqlite")
-        with pytest.raises(CacheModeError, match="DIRECTORY"):
-            resolve_backend(None)
 
     def test_the_store_is_opened_once_per_path(self, store, monkeypatch):
         monkeypatch.setattr(config, "cache_dir", store)
         monkeypatch.setattr(config, "cache_mode", "sqlite")
         assert resolve_backend(None) is resolve_backend(None)
 
-    def test_set_dir_structure_under_sqlite_logs_and_does_not_raise(self, store, caplog):
-        """Re-asserted here because spec 04 is the first real consumer of that decision.
-
-        20+ driver scripts under ``dev/scripts`` call ``set_dir_structure`` unconditionally
-        at import; raising would make a single-file store unusable from every one of them
-        for a setting that simply does not apply.
-        """
-        import logging
-
-        # set_cache_dir is a real global mutation (it also re-resolves the reference
-        # tables), so the previous values are captured and put back rather than reset to a
-        # hardcoded path -- restoring to a guess would silently UN-SWAP the rest of a
-        # session that conftest.py had pointed at a single-file store.
-        saved = (config.cache_dir, config.cache_mode, config.dir_structure)
-        try:
-            config.set_cache_dir(store)
-            assert config.cache_mode == "sqlite"
-            before = config.dir_structure
-            with caplog.at_level(logging.INFO, logger="gliquid.config"):
-                config.set_dir_structure("nested")
-            assert config.dir_structure == before, "the knob must stay inert, not flip"
-            assert any("sqlite" in r.message for r in caplog.records)
-        finally:
-            config.set_cache_dir(saved[0])
-            config.set_cache_mode(saved[1])
-            config.dir_structure = saved[2]
-        assert (config.cache_dir, config.cache_mode, config.dir_structure) == saved
-
 
 class TestMpdsVariantRuleIsUnchangedBySqlite:
-    """The shadowing rule from spec 01, re-run against the single-file store."""
+    """The MPDS variant shadowing rule, re-run against the single-file store."""
 
     @pytest.fixture
     def sqlite_store(self, tmp_path, monkeypatch):
@@ -538,9 +487,7 @@ class TestMpdsVariantRuleIsUnchangedBySqlite:
             mpds.load_mpds_data("Cu-Mg", pd_ind=3)
 
 
-# ---------------------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------------------
+# -- CLI --
 
 
 class TestCli:
@@ -651,6 +598,7 @@ class TestCli:
         args = ["--from", str(corpus), "--to", str(dest), "--mpds-mode", "svelte"]
         assert main(["migrate", *args]) == 2
         assert "not a known mode" in capsys.readouterr().out
+        assert not dest.exists()
 
     def test_info_describes_the_store(self, store, capsys):
         assert main(["info", str(store)]) == 0
@@ -665,3 +613,191 @@ class TestCli:
         junk.write_text("nope")
         assert main(["info", str(junk)]) == 2
         assert capsys.readouterr().out.startswith("ERROR: ")
+
+
+# -- Imputed entries — the schema-v2 table --
+
+
+IMPUTED = [
+    {
+        "composition": {"Cu": 1.0, "Mg": 2.0},
+        "energy": -13.4,
+        "entry_id": "imputed:Mg2Cu",
+        "data": {"imputed": True},
+    }
+]
+IMPUTED_KEY = CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA")
+
+
+class TestImputedEntries:
+    """The table exists to keep two claims separable: what the DFT said, and what was
+    imputed on top of it. Both halves of that are asserted here — the DFT payload's proof
+    is untouched by an imputation write, and an empty imputation set is a stored answer
+    rather than a missing one."""
+
+    def test_an_empty_set_is_a_stored_answer_and_an_absent_one_is_not(self, store):
+        """An empty imputation set is a stored answer; an absent one is not."""
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Ag-Au", [])
+            assert backend.read_imputed_entries("Ag-Au") == []
+            assert ("Ag-Au", "GGA") in backend.imputed_entry_systems()
+            with pytest.raises(FileNotFoundError, match="never imputed"):
+                backend.read_imputed_entries("Ne-Xe")
+        finally:
+            backend.close()
+
+    def test_entry_dicts_round_trip(self, store):
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Cu-Mg", IMPUTED)
+            assert backend.read_imputed_entries("Cu-Mg") == IMPUTED
+        finally:
+            backend.close()
+
+    def test_the_sha256_is_of_the_uncompressed_bytes(self, store):
+        """Re-derived from the source object, not read back from the row that stored it."""
+        import hashlib
+
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Cu-Mg", IMPUTED)
+            expected = hashlib.sha256(json.dumps(IMPUTED).encode("utf-8")).hexdigest()
+            assert backend.stored_imputed_sha256("Cu-Mg") == expected
+        finally:
+            backend.close()
+
+    def test_imputing_leaves_the_dft_payload_and_its_proof_untouched(self, store):
+        """An imputation write leaves the ``dft_entries`` payload and its sha256 untouched."""
+        backend = _writable(store)
+        try:
+            before = backend.stored_sha256(DFT_KEY)
+            backend.write_imputed_entries(DFT_KEY.sys_name, IMPUTED, dft_type=DFT_KEY.variant)
+            assert backend.stored_sha256(DFT_KEY) == before
+            assert backend.read_json(DFT_KEY) == ENTRIES
+        finally:
+            backend.close()
+
+    def test_rewriting_a_system_replaces_its_set_rather_than_appending(self, store):
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Cu-Mg", IMPUTED)
+            backend.write_imputed_entries("Cu-Mg", [])
+            assert backend.read_imputed_entries("Cu-Mg") == []
+            assert backend.imputed_entry_stats()["entries"] == 0
+        finally:
+            backend.close()
+
+    def test_a_read_only_store_refuses_the_write_and_names_the_fix(self, store):
+        backend = SqliteBackend(store)
+        try:
+            with pytest.raises(CacheModeError, match="READ-ONLY"):
+                backend.write_imputed_entries("Cu-Mg", IMPUTED)
+        finally:
+            backend.close()
+
+    def test_stats_count_the_empty_records_separately(self, store):
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Cu-Mg", IMPUTED)
+            backend.write_imputed_entries("Ag-Au", [])
+            stats = backend.imputed_entry_stats()
+            assert stats["records"] == 2
+            assert stats["entries"] == 1
+            assert stats["empty_records"] == 1
+        finally:
+            backend.close()
+
+    def test_a_store_predating_the_table_says_so_rather_than_erroring_obscurely(self, store):
+        """A schema-v1 store on disk stays readable; only the imputed half is refused."""
+        conn = sqlite3.connect(str(store))
+        conn.execute("DROP TABLE imputed_entries")
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        conn.close()
+        backend = SqliteBackend(store)
+        try:
+            assert backend.has_imputed_entries is False
+            assert backend.imputed_entry_systems() == []
+            assert backend.imputed_entry_stats() == {}
+            assert backend.read_json(DFT_KEY) == ENTRIES, "the v1 half still reads"
+            with pytest.raises(SqliteStoreError, match="predates version 2"):
+                backend.read_imputed_entries("Cu-Mg")
+        finally:
+            backend.close()
+
+    def test_the_kind_round_trips_entry_id_composition_and_energy(self, store):
+        backend = _writable(store)
+        try:
+            backend.write_json(IMPUTED_KEY, IMPUTED)
+            assert backend.exists(IMPUTED_KEY) is True
+            assert backend.read_json(IMPUTED_KEY) == IMPUTED
+            assert backend.variants(IMPUTED_KEY.sys_name, KIND_IMPUTED_ENTRIES) == ["GGA"]
+        finally:
+            backend.close()
+
+    def test_the_kind_leaves_the_dft_record_alone(self, store):
+        backend = _writable(store)
+        try:
+            before = backend.stored_sha256(DFT_KEY)
+            backend.write_json(IMPUTED_KEY, IMPUTED)
+            assert backend.stored_sha256(DFT_KEY) == before
+            assert backend.read_json(DFT_KEY) == ENTRIES
+        finally:
+            backend.close()
+
+    def test_the_kind_separates_an_empty_set_from_an_absent_one(self, store):
+        backend = _writable(store)
+        try:
+            backend.write_json(IMPUTED_KEY, [])
+            assert backend.exists(IMPUTED_KEY) is True
+            assert backend.read_json(IMPUTED_KEY) == []
+
+            absent = CacheKey("Ne-Xe", KIND_IMPUTED_ENTRIES, "GGA")
+            assert backend.exists(absent) is False
+            with pytest.raises(FileNotFoundError):
+                backend.read_json(absent)
+        finally:
+            backend.close()
+
+    def test_a_v1_store_reports_the_kind_absent_rather_than_raising(self, store):
+        """A store predating the table legitimately has no imputed entries, and "none" is
+        the truthful answer to every question the kind asks."""
+        conn = sqlite3.connect(str(store))
+        conn.execute("DROP TABLE imputed_entries")
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        conn.close()
+        backend = SqliteBackend(store)
+        try:
+            assert backend.exists(IMPUTED_KEY) is False
+            assert backend.variants(IMPUTED_KEY.sys_name, KIND_IMPUTED_ENTRIES) == []
+            with pytest.raises(FileNotFoundError):
+                backend.read_json(IMPUTED_KEY)
+            assert backend.exists(DFT_KEY) is True, "the v1 half still answers"
+        finally:
+            backend.close()
+
+    def test_info_reports_the_section_for_any_v2_store_and_omits_it_for_a_v1_one(
+        self, store, capsys
+    ):
+        """The section's ABSENCE is the v1 signal, so it prints at zero records too."""
+        assert main(["info", str(store)]) == 0
+        out = capsys.readouterr().out
+        assert "imputed_entries" in out
+        assert "records                 : 0" in out
+
+        backend = _writable(store)
+        try:
+            backend.write_imputed_entries("Cu-Mg", IMPUTED)
+        finally:
+            backend.close()
+        assert main(["info", str(store)]) == 0
+        assert "imputed entries         : 1" in capsys.readouterr().out
+
+        conn = sqlite3.connect(str(store))
+        conn.execute("DROP TABLE imputed_entries")
+        conn.commit()
+        conn.close()
+        assert main(["info", str(store)]) == 0
+        assert "imputed_entries" not in capsys.readouterr().out

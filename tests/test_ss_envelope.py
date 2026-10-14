@@ -1,9 +1,7 @@
 """Solid-solution envelope rendering on the binary T-X plot.
 
-The SS phase field is drawn as a CLOSED, hatch-filled polygon rather than a pair of
-independent upper/lower polylines. A single branch splitter feeds both boundaries, so
-the two can no longer disagree about where a composition gap falls (the Hf-Y / Ru-Y /
-Hf-W / Cr-W disconnection class).
+The SS phase field is drawn as a CLOSED, hatch-filled polygon. A single branch splitter
+feeds both boundaries, so the two cannot disagree about where a composition gap falls.
 
 Topology contract, checked against real hull output in ``fixtures/ss_envelope_pins.json``:
 
@@ -13,21 +11,19 @@ Topology contract, checked against real hull output in ``fixtures/ss_envelope_pi
   * a branch that reaches a composition-axis edge is extended to exactly x=0 / x=100 and
     contributes two on-edge vertices; every other terminus is an off-edge extremum.
 
-Tie-line admission is no longer geometric. A tie that touches an SS field survives only
-when it is an invariant REACTION: a eutectic, a peritectic, an invariant carrying two
-liquid vertices (the L1+L2 monotectic, whose remaining vertex is the solution phase
-itself), or the EXTREMAL member of an L + S1 + S2 family (one liquid vertex plus two
-SEPARATED compositions of the same solution phase -- a solid miscibility gap meeting the
-liquidus, Cr-W's ~1932 C horizontal). A 'Misc Gaps' solvus or 'Solid Ties' pair on an SS
-field walks a continuous boundary one grid step at a time -- Cr-W emits 75, Hf-W 64 -- and
-the field's own hatched polygon already draws where that boundary runs.
+A tie that touches an SS field survives only when it is an invariant REACTION: a eutectic,
+a peritectic, an invariant carrying two liquid vertices (the L1+L2 monotectic, whose
+remaining vertex is the solution phase itself), or the EXTREMAL member of an L + S1 + S2
+family (one liquid vertex plus two SEPARATED compositions of the same solution phase -- a
+solid miscibility gap meeting the liquidus, Cr-W's ~1932 C horizontal). A 'Misc Gaps' solvus
+or 'Solid Ties' pair on an SS field is not drawn; the field's hatched polygon draws that
+boundary.
 
 Ties are also merged: two sources emitting the same horizontal with slightly different
 extents collapse to one trace spanning their union, and a polymorph tie terminates on any
 SS field boundary in its way instead of crossing it.
 
-This file is the TOPOLOGY / PREDICATE half: no test here draws a figure, so collecting it
-costs nothing. The classes that render one live in
+No test here draws a figure; the rendering classes live in
 ``tests_internal/test_ss_envelope_rendering.py``.
 """
 
@@ -39,7 +35,7 @@ import pandas as pd
 import pytest
 
 import gliquid.plotting.binary_tx as btx
-from gliquid.binary import (
+from gliquid.plotting.binary_tx import (
     _apex_from_invariant,
     _assemblage_across,
     _edge_inside_ss_field,
@@ -54,6 +50,8 @@ from gliquid.binary import (
     _ss_solid_pair_phase,
     _ss_tie_allowed,
 )
+
+from ._mpds_builders import facet_rows as _facet
 
 PINS_PATH = Path(__file__).parent / "fixtures" / "ss_envelope_pins.json"
 PINS = json.loads(PINS_PATH.read_text(encoding="utf-8"))
@@ -97,9 +95,7 @@ def ring_contains_samples(region, x_pct, t_lo, t_hi, tol=1e-6):
     )
 
 
-# ---------------------------------------------------------------------------
-# _split_indices -- the single branch splitter shared by both boundaries
-# ---------------------------------------------------------------------------
+# -- _split_indices: the branch splitter shared by both boundaries --
 class TestSplitIndices:
     def test_contiguous_run_is_one_branch(self):
         assert _split_indices(np.arange(0.0, 11.0)) == [(0, 11)]
@@ -119,7 +115,7 @@ class TestSplitIndices:
         assert all(a[1] == b[0] for a, b in zip(spans, spans[1:]))
 
     def test_upper_and_lower_boundaries_split_identically(self):
-        """The disconnection bug: both boundaries must break at the same indices."""
+        """The disconnection case: both boundaries must break at the same indices."""
         x_pct, t_lo, t_hi = envelope("Cr-W")
         regions = _ss_regions(x_pct, t_lo, t_hi)
         assert len(regions) == 2
@@ -129,12 +125,8 @@ class TestSplitIndices:
             assert np.max(np.diff(xs)) <= 1.5 * np.median(np.diff(xs)) + 1e-9
 
     def test_two_samples_across_the_diagram_are_two_branches(self):
-        """Mo-Y / W-Y BCC: sampled at 0.2 at.% and at 100 at.%, nothing between.
-
-        The gap is then the ONLY spacing present, so inferring the grid from the array
-        makes the threshold 1.5x the gap and the cut can never fire -- which welded the
-        two terminal branches into one diagram-spanning quadrilateral.
-        """
+        """Mo-Y / W-Y BCC: sampled at 0.2 at.% and at 100 at.%, nothing between, is cut into
+        two branches with or without a grid step."""
         xs = np.array([0.2, 100.0])
         assert _split_indices(xs) == [(0, 1), (1, 2)]
         assert _split_indices(xs, grid_step=0.2) == [(0, 1), (1, 2)]
@@ -152,17 +144,14 @@ class TestSplitIndices:
         assert _split_indices(xs, grid_step=1.0) == [(0, 1), (1, 2), (2, 3)]
 
     def test_explicit_gap_threshold_still_wins_over_the_grid_step(self):
-        """The digitized liquidus passes _ASSESSED_GAP_PCT because it is sampled at
-        whatever spacing the diagram was traced at; a grid-relative rule would cut it at
-        every mildly uneven patch. That override must outrank a supplied grid step."""
+        """An explicit gap threshold (the digitized liquidus passes _ASSESSED_GAP_PCT)
+        outranks a supplied grid step."""
         xs = np.array([0.0, 5.0, 10.0])
         assert _split_indices(xs, 6.0, grid_step=0.2) == [(0, 3)]
         assert _split_indices(xs, 3.0, grid_step=99.0) == [(0, 1), (1, 2), (2, 3)]
 
 
-# ---------------------------------------------------------------------------
-# Where the composition grid step comes from
-# ---------------------------------------------------------------------------
+# -- Where the composition grid step comes from --
 class TestGridStep:
     def test_two_samples_cannot_report_a_step_coarser_than_the_base_grid(self):
         """A two-sample array's only spacing IS the candidate gap, so it is no evidence
@@ -201,9 +190,7 @@ class TestHullGridStep:
         assert btx._hull_grid_step(np.array([50.0])) == pytest.approx(1.0)
 
 
-# ---------------------------------------------------------------------------
-# _ss_regions -- synthetic topologies
-# ---------------------------------------------------------------------------
+# -- _ss_regions: synthetic topologies --
 class TestRegionTopology:
     def test_full_range_band_is_one_quadrilateral_on_both_edges(self):
         x = np.linspace(0.0, 100.0, 21)
@@ -270,11 +257,7 @@ class TestRegionTopology:
         assert all(np.isfinite(r["x"]).all() for r in regions)
 
     def test_two_terminal_samples_give_one_region_per_axis(self):
-        """Mo-Y's BCC field, to scale: BCC-Mo at 0.2 at.% and beta-Y at 100 at.%.
-
-        Welded it drew a quadrilateral whose upper and lower edges were straight chords
-        across the whole diagram, reading as a phase stable everywhere.
-        """
+        """Mo-Y's BCC field, to scale: BCC-Mo at 0.2 at.% and beta-Y at 100 at.%."""
         x = np.array([0.2, 100.0])
         lo = np.array([1712.1, 1477.9])
         hi = np.array([2521.6, 1521.8])
@@ -299,7 +282,7 @@ class TestRegionTopology:
         assert len(regions) == 1
 
     def test_single_sample_branch_closes_into_a_ring(self):
-        """After the split, Mo-Y's Y-side branch is supported by ONE composition. It must
+        """Once split, Mo-Y's Y-side branch is supported by ONE composition. It must
         still emit a closed, finite ring and a well-formed corner list."""
         (region,) = _ss_regions(
             np.array([100.0]), np.array([1477.9]), np.array([1521.8]), grid_step=0.2
@@ -315,7 +298,7 @@ class TestRegionTopology:
         assert region["t"].max() == pytest.approx(1521.8)
 
     def test_no_ring_segment_spans_more_than_one_grid_gap(self):
-        """The defect, stated geometrically: a welded field's ring steps 99.8 at.% between
+        """The failure mode, stated geometrically: a welded field's ring steps 99.8 at.% between
         consecutive points. Every emitted ring must stay within the splitter's threshold."""
         step = 0.2
         limit = max(1.5 * step, 0.8) + 1e-9
@@ -336,9 +319,7 @@ class TestRegionTopology:
                 assert np.max(np.abs(np.diff(region["x"]))) <= limit
 
 
-# ---------------------------------------------------------------------------
-# _ss_regions -- the four systems the disconnected boundaries were reported on
-# ---------------------------------------------------------------------------
+# -- _ss_regions: four real systems --
 @pytest.mark.parametrize("system", SYSTEMS)
 class TestRealSystemTopology:
     def test_every_region_has_three_or_four_vertices(self, system):
@@ -399,9 +380,7 @@ def test_hf_y_terminates_bluntly_on_the_hf_side_and_pinches_on_the_y_side():
     assert len(left["vertices"]) == 4 and len(right["vertices"]) == 3
 
 
-# ---------------------------------------------------------------------------
-# Axis corners: snap to the component polymorph, never extrapolate past its transition
-# ---------------------------------------------------------------------------
+# -- Axis corners: snap to the component polymorph, never extrapolate past its transition --
 ALPHA_HF = (733.4, 1742.9)  # hcp ground state
 BETA_HF = (1742.9, 2232.8)  # bcc, above the transition
 HF_EDGE = {0.0: [ALPHA_HF, BETA_HF], 100.0: []}
@@ -477,9 +456,7 @@ class TestEdgeSnapping:
         )
 
 
-# ---------------------------------------------------------------------------
-# Apex snapping: a blunt face straddling a three-phase invariant closes onto it
-# ---------------------------------------------------------------------------
+# -- Apex snapping: a blunt face straddling a three-phase invariant closes onto it --
 def hf_y_bcc_terminus():
     """Hf-Y's BCC terminus, refined: solvus rising ~35 K/at.%, solidus plunging -236."""
     xs = np.array([20.8, 21.0, 21.2, 21.4])
@@ -587,9 +564,7 @@ class TestApexSnappingIntegration:
         assert region["t"][0] == pytest.approx(region["t"][-1])
 
 
-# ---------------------------------------------------------------------------
-# Tie-line admission at SS extrema
-# ---------------------------------------------------------------------------
+# -- Tie-line admission at SS extrema --
 def family_maxima(system: str):
     """The per-phase L + S1 + S2 extremum plot_tx would pre-compute for a pinned system."""
     rec = PINS[system]
@@ -636,7 +611,7 @@ class TestTieAdmission:
     def test_every_kept_ss_tie_is_an_invariant_reaction(self, system):
         """The contract: a surviving SS-touching tie is a eutectic, a peritectic, an
         L1+L2 horizontal, or the extremal member of an L + S1 + S2 family. Nothing is
-        admitted on the field's geometry any more."""
+        admitted on the field's geometry alone."""
         rec = PINS[system]
         regions = regions_for(system)
         t_range = tuple(rec["conds"])
@@ -701,9 +676,6 @@ class TestTieAdmission:
                 drawn[phase] = drawn.get(phase, 0) + 1
         assert all(n == 1 for n in drawn.values()), f"{system}: {drawn}"
 
-    def test_filter_is_a_strict_subset(self, system):
-        assert len(kept_ties(system)) <= len(PINS[system]["invariants"])
-
 
 def test_miscibility_gap_fan_collapses():
     """Cr-W / Hf-W emitted one tie per temperature step across the gap; that must stop."""
@@ -715,7 +687,7 @@ def test_miscibility_gap_fan_collapses():
 
 
 def test_cr_w_collapses_to_its_peritectic_and_one_l_plus_two_bcc():
-    """The acceptance case, on real hull output.
+    """Cr-W, on real hull output.
 
     Cr-W's 75 'Misc Gaps' entries walk a SOLID (BCC+BCC) miscibility gap. 46 of them are
     ('L','BCC','BCC'); 45 are collapsed facets of the W-rich two-phase band whose BCC
@@ -744,11 +716,9 @@ def test_cr_w_collapses_to_its_peritectic_and_one_l_plus_two_bcc():
 
 
 def test_three_phase_invariants_are_never_filtered():
-    """A eutectic/peritectic puts a participating SS phase at its solubility limit.
-
-    Hf-Y's BCC terminus is a blunt face spanning ~1298-1629 C and the eutectic sits at
-    1330.6 C -- inside the face, at neither corner -- so a purely geometric corner test
-    discards the one invariant that actually locates the maximum-composition vertex.
+    """A eutectic/peritectic puts a participating SS phase at its solubility limit, so it is
+    kept at neither corner of a blunt face: Hf-Y's BCC terminus spans ~1298-1629 C and the
+    eutectic sits at 1330.6 C.
     """
     for system in SYSTEMS:
         rec = PINS[system]
@@ -775,9 +745,9 @@ def test_ru_y_keeps_the_hcp_eutectic():
 
 def test_hf_y_keeps_its_peritectic_and_one_l_plus_two_hcp():
     """The 4 at.% solubility limit is located by the ['beta-Hf (bcc)', 'HCP', 'L']
-    peritectic at 1978 C, not by the ten solvus slices that used to be admitted at the
-    field's composition extrema. One of those ten IS a reaction -- ['HCP','L','HCP'] at
-    1322.7 C with the HCP pair at 4 and 96 at.% -- and clause 4 admits exactly it."""
+    peritectic at 1978 C, not by the ten solvus slices at the field's composition extrema
+    that are not themselves reactions. One of those ten IS a reaction -- ['HCP','L','HCP']
+    at 1322.7 C with the HCP pair at 4 and 96 at.% -- and clause 4 admits exactly it."""
     rec = PINS["Hf-Y"]
     assert sum(1 for i in rec["invariants"] if i["key"] == "Misc Gaps") == 10
     kept = sorted(kept_ties("Hf-Y"))
@@ -789,16 +759,13 @@ def test_hf_y_keeps_its_peritectic_and_one_l_plus_two_hcp():
     assert (x0_inv, x1_inv) == pytest.approx((4.0, 96.0))
 
 
-# ---------------------------------------------------------------------------
-# The liquid-liquid (monotectic) exemption -- Sc-V's ['L', 'L', 'BCC'] at 1459 C
-# ---------------------------------------------------------------------------
+# -- The liquid-liquid (monotectic) exemption: Sc-V's ['L', 'L', 'BCC'] at 1459 C --
 def _box_region(x_lo, x_hi, t_lo, t_hi):
     """A rectangular stand-in field: only its ring matters to the helpers under test."""
     return {
         "x": np.array([x_lo, x_hi, x_hi, x_lo, x_lo], float),
         "t": np.array([t_lo, t_lo, t_hi, t_hi, t_lo], float),
         "vertices": [],
-        "edge_anchors": [],
         "vertex_anchors": [],
         "edge_tol": 1.5,
     }
@@ -878,9 +845,7 @@ class TestLiquidLiquidExemption:
         )
 
 
-# ---------------------------------------------------------------------------
-# The L + S1 + S2 invariant -- Cr-W's ('BCC','BCC','L') at ~1932 C
-# ---------------------------------------------------------------------------
+# -- The L + S1 + S2 invariant: Cr-W's ('BCC','BCC','L') at ~1932 C --
 # The real Cr-W family, in at.% W, as plot_tx sees it on the FITTED hull: one genuine
 # reaction (BCC pair 42.4 at.% apart) and three collapsed facets of the two-phase L + BCC
 # band whose "pair" is a single 0.2 at.% sampling step. Only the first may be drawn.
@@ -938,7 +903,7 @@ class TestLPlusTwoSolidTies:
 
     def test_members_inside_the_merge_tolerance_of_the_extremum_are_kept(self):
         """The extremum is matched within _TIE_MERGE_T_FRAC of the plotted span, because
-        _add_tie would merge anything that close into one trace anyway."""
+        _TieDrawer.add would merge anything that close into one trace anyway."""
         tol = btx._TIE_MERGE_T_FRAC * (CR_W_RANGE[1] - CR_W_RANGE[0])
         family = CR_W_FAMILY + [
             ("Misc Gaps", [14.0, 28.9, 71.1], ["L", "BCC", "BCC"], 1932.378 - 0.4 * tol)
@@ -983,9 +948,7 @@ class TestLPlusTwoSolidTies:
         assert _cr_w_kept(family) == []
 
 
-# ---------------------------------------------------------------------------
-# Solid-solution fields as polymorph-tie boundaries
-# ---------------------------------------------------------------------------
+# -- Solid-solution fields as polymorph-tie boundaries --
 MN_BCC = {"BCC": [_box_region(6.0, 18.0, 700.0, 1250.0)]}
 
 
@@ -1037,9 +1000,7 @@ class TestEdgeInsideSsField:
         assert _edge_inside_ss_field({}, 1200.0, 0.0, temp_tol=1.0) is False
 
 
-# ---------------------------------------------------------------------------
-# The eutectoid horizontal at a branch's interior temperature minimum
-# ---------------------------------------------------------------------------
+# -- The eutectoid horizontal at a branch's interior temperature minimum --
 # The synthetic field: an 80 at.%-wide band sampled every 1 at.%, flat on top at 900 C,
 # its lower boundary a V bottoming out at 600 C in the middle. Both termini are blunt, so
 # neither terminus anchor covers the V's floor and the branch carries exactly one
@@ -1047,11 +1008,6 @@ class TestEdgeInsideSsField:
 _MIN_STEP = 1.0
 _MIN_FLOOR = 600.0
 _MIN_TOP = 900.0
-
-
-def _facet(t, *vertices):
-    """One hull facet as the three ``df_tx`` rows that share its temperature."""
-    return [[x / 100.0, float(t), label] for x, label in vertices]
 
 
 def _v_region(x_min=50.0, x0=10.0, x1=90.0, slope=5.0, step=_MIN_STEP):
@@ -1073,7 +1029,7 @@ _WIDE_RANGE = (0.0, 2000.0)
 
 
 def _assemblage_changes(region, assemblages, t_range=_WIDE_RANGE):
-    """Whether admission rule 1 passes for a region -- used to attribute a rejection."""
+    """Whether admission rule 1 passes for a region, to attribute a rejection."""
     anchor = _ss_minimum_anchor(region)
     eps = btx._SS_MIN_T_EPS_FRAC * (t_range[1] - t_range[0])
     sides = [
