@@ -1,26 +1,22 @@
 """Figure-level pins for the solid-solution envelope and the tie-line stack.
 
-Split out of ``tests/test_ss_envelope.py``: everything here drives ``plot_tx`` /
-``BLPlotter`` and asserts on the resulting FIGURE -- hatch-filled closed shapes, merged tie
-horizontals, the recorder hook, the eutectoid horizontal. The topology / predicate contract
-and the pinned ``fixtures/ss_envelope_pins.json`` it reads stay in ``tests/``.
-
-``_facet``, ``_MIN_FLOOR`` and ``_MIN_TOP`` exist on both sides of that split and are
-duplicated here rather than imported: neither half may depend on the other.
+Everything here drives ``plot_tx`` / ``BLPlotter`` and asserts on the resulting FIGURE --
+hatch-filled closed shapes, merged tie horizontals, the recorder hook, the eutectoid
+horizontal. ``tests/test_ss_envelope.py`` holds the topology / predicate contract and the
+pinned ``fixtures/ss_envelope_pins.json``.
 """
 
-import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
 import gliquid.plotting.binary_tx as btx
 from gliquid.binary import BinaryLiquid, BLPlotter, plot_tx, record_tie_lines
 from gliquid.hsx import HSX
+from tests._mpds_builders import FakeHsx
+from tests._mpds_builders import facet_rows as _facet
 
 
-# ---------------------------------------------------------------------------
-# plot_tx rendering: hatch-filled closed shapes, uniform outline
-# ---------------------------------------------------------------------------
+# -- plot_tx rendering: hatch-filled closed shapes, uniform outline --
 def _synthetic_hsx(with_ss: bool):
     """A minimal two-element hull; ``SS`` spans the whole composition axis."""
     data = [
@@ -97,28 +93,27 @@ class TestFigureRendering:
             assert tr.fillpattern.shape == "/"
 
 
-# ---------------------------------------------------------------------------
-# _add_tie: coincident horizontals are merged, not drawn twice
-# ---------------------------------------------------------------------------
+# -- _TieDrawer.add: coincident horizontals are merged, not drawn twice --
 def _tie_traces(fig):
     """The silver horizontals plot_tx draws for tie lines."""
     return [tr for tr in fig.data if getattr(getattr(tr, "line", None), "color", None) == "Silver"]
 
 
-def _render_with_invariants(monkeypatch, entries):
-    """Render the synthetic non-SS hull against a hand-built invariant list.
+def _render_with_invariants(monkeypatch, entries, key="Eutectics", with_ss=False, sink=None):
+    """Render a synthetic hull against a hand-built ``key`` invariant list.
 
     ``liquidus_invariants`` is called once for real so ``df_tx`` is populated (and its
     temperatures converted to Celsius exactly once), then replaced -- plot_tx reads the
-    invariants only through that call.
+    invariants only through that call. ``with_ss`` renders the hull with the ``SS`` field as a
+    solid solution; ``sink`` is handed to ``record_tie_lines``. Returns ``(fig, ties)``.
     """
-    hsx = _synthetic_hsx(with_ss=False)
+    hsx = _synthetic_hsx(with_ss=with_ss)
     real_inv, combined, _counts = hsx.liquidus_invariants()
-    inv_points = {key: [] for key in real_inv}
-    inv_points["Eutectics"] = [list(e) for e in entries]
+    inv_points = {k: [] for k in real_inv}
+    inv_points[key] = [list(e) for e in entries]
     monkeypatch.setattr(hsx, "liquidus_invariants", lambda: (inv_points, combined, {}))
-    with record_tie_lines() as ties:
-        fig = plot_tx(hsx)
+    with record_tie_lines(sink) as ties:
+        fig = plot_tx(hsx, ss_phases={"SS"} if with_ss else None)
     return fig, ties
 
 
@@ -136,10 +131,6 @@ def _merge_tolerance():
     labels, so nothing lowers conds after the tie stage and the final range is the one the
     merge used. Deriving it here keeps the tests pinned to the CONTRACT (inside the
     tolerance merges, outside does not) rather than to the constant's current value.
-
-    This is the one import-time render in the suite, and it is why the tie-merge tests live
-    on this side of the split: leaving it in the geometry file made every
-    ``pytest --collect-only`` draw a figure.
     """
     hsx = _synthetic_hsx(with_ss=False)
     plot_tx(hsx)
@@ -220,8 +211,8 @@ class TestTieMerge:
         assert len(ties2) == 3
 
     def test_the_merge_tolerance_stays_in_the_measured_safe_band(self):
-        """Measured on the acceptance corpus: 0.0-0.01 all give the same 30 ties, while
-        0.02 falsely merges Mn-Si's two distinct eutectics (1045.8 and 1070.0 C)."""
+        """On the acceptance corpus, 0.0-0.01 all give the same 30 ties, while 0.02 falsely
+        merges Mn-Si's two distinct eutectics (1045.8 and 1070.0 C)."""
         assert 0.0 < btx._TIE_MERGE_T_FRAC <= 0.01
 
 
@@ -242,13 +233,7 @@ class TestTieRecorder:
 
     def test_a_caller_supplied_sink_is_filled_and_yielded(self, monkeypatch):
         sink = []
-        hsx = _synthetic_hsx(with_ss=False)
-        real_inv, combined, _c = hsx.liquidus_invariants()
-        inv_points = {key: [] for key in real_inv}
-        inv_points["Eutectics"] = [_eut(T0, 0.10, 0.60)]
-        monkeypatch.setattr(hsx, "liquidus_invariants", lambda: (inv_points, combined, {}))
-        with record_tie_lines(sink) as yielded:
-            plot_tx(hsx)
+        _fig, yielded = _render_with_invariants(monkeypatch, [_eut(T0, 0.10, 0.60)], sink=sink)
         assert yielded is sink
         assert [r["sources"] for r in sink] == [["invariant:Eutectics"]]
 
@@ -260,21 +245,7 @@ class TestTieRecorder:
         assert [((r["x0"], r["x1"]), r["temp"]) for r in ties] == pytest.approx(drawn)
 
 
-# ---------------------------------------------------------------------------
-# plot_tx wiring: the family maximum is resolved once, before the invariant loop
-# ---------------------------------------------------------------------------
-def _render_ss_with_misc_gaps(monkeypatch, entries):
-    """Render the synthetic SS hull against a hand-built 'Misc Gaps' list."""
-    hsx = _synthetic_hsx(with_ss=True)
-    real_inv, combined, _counts = hsx.liquidus_invariants()
-    inv_points = {key: [] for key in real_inv}
-    inv_points["Misc Gaps"] = [list(e) for e in entries]
-    monkeypatch.setattr(hsx, "liquidus_invariants", lambda: (inv_points, combined, {}))
-    with record_tie_lines() as ties:
-        fig = plot_tx(hsx, ss_phases={"SS"})
-    return fig, ties
-
-
+# -- plot_tx wiring: the family maximum is resolved once, before the invariant loop --
 def _lss(temp, x_liq, x_s1, x_s2):
     """One L + SS1 + SS2 entry: ``[temp, comp_mid, comps (fractions), phases]``."""
     comps = sorted([x_liq, x_s1, x_s2])
@@ -286,61 +257,43 @@ class TestPlotTxAdmitsOneLPlusTwoSolid:
     """End-to-end: the pre-computed per-phase maximum reaches every per-invariant call."""
 
     def test_only_the_extremal_genuine_member_is_drawn(self, monkeypatch):
-        _fig, ties = _render_ss_with_misc_gaps(
+        _fig, ties = _render_with_invariants(
             monkeypatch,
             [
                 _lss(T0 + 6.0 * FAR, 0.98, 0.994, 0.996),  # collapsed facet, hottest
                 _lss(T0 + 2.0 * FAR, 0.14, 0.288, 0.712),  # the reaction
                 _lss(T0, 0.12, 0.30, 0.69),  # genuine width, colder
             ],
+            key="Misc Gaps",
+            with_ss=True,
         )
         assert len(ties) == 1
         assert ties[0]["temp"] == pytest.approx(T0 + 2.0 * FAR)
         assert (ties[0]["x0"], ties[0]["x1"]) == pytest.approx((14.0, 71.2))
 
     def test_a_family_of_collapsed_facets_alone_draws_nothing(self, monkeypatch):
-        _fig, ties = _render_ss_with_misc_gaps(
+        _fig, ties = _render_with_invariants(
             monkeypatch,
             [
                 _lss(T0 + 2.0 * FAR, 0.98, 0.994, 0.996),
                 _lss(T0, 0.14, 0.286, 0.288),
             ],
+            key="Misc Gaps",
+            with_ss=True,
         )
         assert ties == []
 
 
-# ---------------------------------------------------------------------------
-# The eutectoid horizontal at a branch's interior temperature minimum
-# ---------------------------------------------------------------------------
+# -- The eutectoid horizontal at a branch's interior temperature minimum --
 # The synthetic field: an 80 at.%-wide band sampled every 1 at.%, flat on top at 900 C,
-# its lower boundary a V bottoming out at 600 C in the middle. Duplicated from the geometry
-# half of the split, which builds the same band to test the ADMISSION predicate.
+# its lower boundary a V bottoming out at 600 C in the middle. tests/test_ss_envelope.py
+# builds the same band to test the ADMISSION predicate.
 _MIN_FLOOR = 600.0
 _MIN_TOP = 900.0
 
 
-def _facet(t, *vertices):
-    """One hull facet as the three ``df_tx`` rows that share its temperature."""
-    return [[x / 100.0, float(t), label] for x, label in vertices]
-
-
-class _FakeHsx:
-    """The four attributes ``plot_tx`` reads, over a hand-built facet table.
-
-    A real hull cannot be steered into a designed eutectoid, and the presentation hulls
-    that have one are all workspace-cache systems. This carries a ``df_tx`` written
-    directly in ``compute_tx``'s layout -- three rows per facet, one temperature each.
-    """
-
-    def __init__(self, rows, inv_points, conds=(0.0, 1500.0)):
-        self.df_tx = pd.DataFrame(rows, columns=["x", "t", "label"])
-        self.phases = ["A", "B", "L", "CA", "SS", "CB"]
-        self.comps = ["A", "B"]
-        self.conds = list(conds)
-        self._inv = inv_points
-
-    def liquidus_invariants(self):
-        return self._inv, [], {}
+def _FakeHsx(rows, inv_points, conds=(0.0, 1500.0)):
+    return FakeHsx(rows, ["A", "B", "L", "CA", "SS", "CB"], inv_points, conds)
 
 
 def _eutectoid_hull(inv_points=None, x_min=50.0, t_min=_MIN_FLOOR, changing=True):

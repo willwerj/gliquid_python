@@ -1,13 +1,13 @@
-"""Diagnostic/analysis figure builders over a BinaryLiquid-like model (ex-BLPlotter bodies).
+"""Diagnostic/analysis figure builders over a BinaryLiquid-like model.
 
-Extracted verbatim from BLPlotter: raw TX scatter, HSX hull debug, MPDS-vs-MP low-T
-phase comparison, T=0K DFT convex hull (+ Gibbs overlays), and the Nelder-Mead path
-figure. Each function takes the model object (duck-typed ``bl``) and,
+Raw TX scatter, HSX hull debug, MPDS-vs-MP low-T phase comparison, T=0K DFT convex hull
+(+ Gibbs overlays), and the Nelder-Mead path figure. Each function takes the model object
+(duck-typed ``bl``) and,
 where colors are drawn, an explicit phase->color map (BLPlotter passes its cached
 build_phase_color_map result). No gliquid.binary import -- import order:
 {api, mpds, solution, phase, plotting.style, plotting.binary_tx} <- plotting.binary_figs
 <- binary. (binary_tx is presentation-only and imports nothing from here, so the assessed-
-liquidus segment splitter is shared from there rather than duplicated.)
+liquidus segment splitter is shared from there.)
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import logging
 import math
 from itertools import combinations
 
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.express as px
@@ -24,20 +25,42 @@ import sympy as sp
 from matplotlib import cm
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import ScalarFormatter
+from matplotlib.transforms import Bbox
 from pymatgen.analysis.phase_diagram import (
-    PDEntry,
-    PDPlotter,
-    PhaseDiagram,
-)  # The PMG PDPlotter source code is modified here
+    PDPlotter,  # The PMG PDPlotter source code is modified here
+)
 from pymatgen.core import Composition
+from pymatgen.util.string import htmlify
 
-import gliquid.api as api
 import gliquid.mpds as mpds
 import gliquid.solution as solution
+from gliquid.cache import is_imputed_entry_dict, non_dft_entry_kind, non_dft_entry_label
 from gliquid.phase import EV_ATOM_TO_J_MOL
 from gliquid.plotting.binary_tx import _assessed_liquidus_segments
-from gliquid.plotting.style import ASSESSED_LIQUIDUS_COLOR, format_phase_display_name
+from gliquid.plotting.style import (
+    ASSESSED_LIQUIDUS_COLOR,
+    IMPUTED_BORDER_DASHES,
+    IMPUTED_BORDER_WIDTH,
+    IMPUTED_EDGE_COLOR,
+    IMPUTED_LEGEND_HANDLE_SIZE,
+    IMPUTED_LEGEND_HANDLE_TEXT_PAD,
+    IMPUTED_MARKER_COLOR,
+    format_phase_display_name,
+    imputed_band_alphas,
+    non_dft_legend_label,
+    standard_formula,
+)
 from gliquid.solution import comp_symbols, t_sym
+
+#: Fill colour of a thermal-form segment on the phase-comparison MPDS panel, by decomposition
+#: type.
+THERMAL_FORM_COLORS = {"congruent": "blue", "incongruent": "purple", "transition": "purple"}
+
+#: Colour and width of the divider drawn between two stacked thermal-form segments.
+THERMAL_FORM_DIVIDER_COLOR = "white"
+THERMAL_FORM_DIVIDER_WIDTH = 1.2
+# Shared by the MPDS-panel fills and dividers; they paint in call order within it.
+THERMAL_FORM_ZORDER = 2
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +71,99 @@ xb_sym = comp_symbols(2)[0]
 def _display_name(bl, label: str) -> str:
     """Legend name via the shared style rule (SS phases carry their component pair)."""
     return format_phase_display_name(label, bl.ss_models, bl.components)
+
+
+def imputed_hull_entries(dft_ch) -> list:
+    """Stable entries on ``dft_ch`` that phase-energy imputation synthesized.
+
+    Identified from the entry TAG, never by matching names against ``bl.phases``: an imputed
+    entry is built at a FRACTIONAL composition, which pymatgen reduces to a formula that need
+    not equal the MPDS label the phase carries. ``get_low_temp_phase_data`` keys its MP panel
+    on ``entry.name``, so reading the names off the entries here is what makes the two agree.
+
+    Args:
+        dft_ch: a pymatgen ``PhaseDiagram``.
+
+    Returns:
+        list: the tagged entries, in hull order. Empty for a hull with none.
+    """
+    return [e for e in dft_ch.stable_entries if is_imputed_entry_dict(e.as_dict())]
+
+
+def non_dft_hull_entries(dft_ch) -> list:
+    """Stable entries on ``dft_ch`` that stand in for DFT compounds, imputed or user-defined.
+
+    Identified by :func:`gliquid.cache.non_dft_entry_kind`, so every elemental entry is left
+    out.
+
+    Args:
+        dft_ch: a pymatgen ``PhaseDiagram``.
+
+    Returns:
+        list: the entries, in hull order. Empty for a hull with none.
+    """
+    return [e for e in dft_ch.stable_entries if non_dft_entry_kind(e) is not None]
+
+
+def standardized_vertex_label(entry, components) -> str:
+    """Compound label for one hull vertex, in the system's own component order.
+
+    An imputed entry sits at a digitized FRACTIONAL composition, whose reduced formula has no
+    small integer ratio, so its MPDS label supplies the stoichiometry; a user-defined entry's
+    label is read the same way. Every other vertex -- and any non-DFT one whose label will
+    not parse -- is written from the entry composition.
+
+    Args:
+        entry: a hull entry; its ``composition``, ``entry_id`` and ``data`` are read.
+        components: the system's ordered component list.
+
+    Returns:
+        str: the label, with no HTML markup.
+    """
+    data = getattr(entry, "data", None) or {}
+    label = data.get("label") if non_dft_entry_kind(entry) is not None else None
+    if label:
+        try:
+            return standard_formula(label, components)
+        except ValueError:
+            pass
+    return standard_formula(entry.composition, components)
+
+
+def _standardize_vertex_labels(fig: go.Figure, entries: list, components) -> go.Figure:
+    """Write every stable vertex under the one compound rule instead of pymatgen's formula.
+
+    Rewrites the ``"Labels (stable)"`` text entries and the ``"Stable"`` hovertext strings of a
+    ``PDPlotter`` figure in place, matched on the reduced formula the traces already carry;
+    vertex positions are untouched. Pure endpoints keep their element symbol.
+
+    Args:
+        fig: the figure ``PDPlotter.get_plot`` returned, or one built from its traces.
+        entries: the hull's stable entries.
+        components: the system's ordered component list.
+
+    Returns:
+        go.Figure: ``fig``.
+    """
+    swaps = {}
+    for entry in entries:
+        formula = htmlify(entry.composition.reduced_formula)
+        label = htmlify(standardized_vertex_label(entry, components))
+        if label != formula:
+            swaps[formula] = label
+    if not swaps:
+        return fig
+    # Longest first, so a shorter formula is not replaced inside a longer one.
+    ordered = sorted(swaps, key=len, reverse=True)
+    for trace in fig.data:
+        if trace.name == "Labels (stable)" and isinstance(trace.text, (list, tuple)):
+            trace.text = [swaps.get(text, text) for text in trace.text]
+        elif trace.name == "Stable" and isinstance(trace.hovertext, (list, tuple)):
+            hover = list(trace.hovertext)
+            for formula in ordered:
+                hover = [text.replace(formula, swaps[formula]) for text in hover]
+            trace.hovertext = hover
+    return fig
 
 
 def render_tx_scatter(bl, color_map, **kwargs) -> go.Figure:
@@ -80,8 +196,7 @@ def render_tx_scatter(bl, color_map, **kwargs) -> go.Figure:
     fig.update_traces(marker={"size": 7, "opacity": 0.85})
 
     if include_digitized_liquidus and bl.digitized_liq:
-        # Split at undigitized holes so no dashed line crosses a gap between disjoint
-        # 'L' regions; one legend entry for the whole (possibly multi-segment) curve.
+        # Split at undigitized holes; one legend entry for the whole curve.
         assessed = [
             [float(point[0] * 100.0), float(point[1] - 273.15)] for point in bl.digitized_liq
         ]
@@ -234,18 +349,74 @@ def render_hsx_diagnostic(bl, color_map, **kwargs) -> go.Figure:
     return fig
 
 
+# Panel labels and the imputed legend entry of the phase-comparison figure share one size.
+PHASE_COMPARISON_FONTSIZE = 11
+
+# Bottom corners the imputed key may occupy, in the order they are tried.
+_IMPUTED_LEGEND_CORNERS = ("lower left", "lower right")
+
+
+def _band_pixel_boxes(ax, bands) -> list[Bbox]:
+    """Pixel bounding boxes of data-space rectangles ``(lb, ub, bottom, top)`` on ``ax``."""
+    boxes = []
+    for lb, ub, bottom, top in bands:
+        (x0, y0), (x1, y1) = ax.transData.transform([(lb, bottom), (ub, top)])
+        boxes.append(Bbox.from_extents(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+    return boxes
+
+
+def _overlap_area(box: Bbox, boxes) -> float:
+    """Total area, in square pixels, by which ``box`` overlaps each of ``boxes``."""
+    total = 0.0
+    for other in boxes:
+        intersection = Bbox.intersection(box, other)
+        if intersection is not None:
+            total += intersection.width * intersection.height
+    return total
+
+
+def _place_legend_clear_of(fig, ax, bands) -> None:
+    """Move ``ax``'s legend to whichever bottom corner it overlaps ``bands`` least.
+
+    The first corner is kept unless it overlaps; otherwise the corner with the smaller total
+    overlap area wins and a tie goes to the later one. Call once ``ax``'s limits and ticks are
+    final: the decision is read in pixels off the current data transform.
+
+    Args:
+        fig: the figure ``ax`` belongs to.
+        ax: the axes carrying the legend; a no-op when it carries none.
+        bands: data-space rectangles ``(lb, ub, bottom, top)`` drawn on ``ax``.
+    """
+    legend = ax.get_legend()
+    if legend is None or not bands:
+        return
+    boxes = _band_pixel_boxes(ax, bands)
+    areas = []
+    for corner in _IMPUTED_LEGEND_CORNERS:
+        legend.set_loc(corner)
+        fig.draw_without_rendering()
+        areas.append(_overlap_area(legend.get_window_extent(), boxes))
+        if areas[0] == 0.0:
+            break
+    best = min(range(len(areas)), key=lambda i: (areas[i], -i))
+    legend.set_loc(_IMPUTED_LEGEND_CORNERS[best])
+
+
 def render_phase_comparison(bl) -> plt.Figure:
     """
     Generates a phase comparison plot showing congruent and incongruent phases
     from MPDS and MP data. The plot consists of two subplots displaying phases
-    in different temperature and magnitude ranges.
+    in different temperature and magnitude ranges. On the MPDS panel a compound is a
+    stack of one fill per thermal form, coloured by its own decomposition type
+    (:data:`THERMAL_FORM_COLORS`) and all sharing the compound's own composition range;
+    a thin divider (:data:`THERMAL_FORM_DIVIDER_COLOR`) marks each internal transition.
 
     Returns:
         plt.Figure: The generated phase comparison plot.
     """
     # Extract low-temperature phase data from MPDS and MP
     (
-        [mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp],
+        [mpds_congruent_phases, mpds_incongruent_phases, max_phase_temp, mpds_forms],
         [mp_phases, mp_phases_ebelow, min_form_e],
     ) = mpds.get_low_temp_phase_data(bl.mpds_json, bl.dft_ch)
 
@@ -256,6 +427,7 @@ def render_phase_comparison(bl) -> plt.Figure:
     mpds_incongruent_phases = {
         key: value for key, value in mpds_incongruent_phases.items() if "(" not in key
     }
+    mpds_forms = {key: value for key, value in mpds_forms.items() if "(" not in key}
 
     # Create subplots with specific layout
     fig, (ax1, ax2) = plt.subplots(
@@ -265,29 +437,148 @@ def render_phase_comparison(bl) -> plt.Figure:
         gridspec_kw={"hspace": 0, "left": 0.117, "bottom": 0.13, "right": 0.909},
     )
 
-    def plot_phases(ax, source, color, alpha=0.5):
+    # Data-space rectangles (lb, ub, bottom, top) plot_phases has drawn, per axes.
+    drawn_bands = {}
+
+    def plot_phases(
+        ax,
+        source,
+        color,
+        alpha=0.5,
+        imputed_names=(),
+        imputed_alpha=None,
+        imputed_outline=False,
+    ):
         """
         Args:
             ax (matplotlib.axes.Axes): The axis to plot on.
             source (dict): Phase data with keys as phase names and values as bounds/magnitudes.
             color (str): Color for the phase fill.
             alpha (float): Transparency for the fill.
+            imputed_names (set): Names in ``source`` whose energy was imputed rather than
+                computed. Marked so the MP panel does not present them as DFT data.
+            imputed_alpha (float | None): Fill transparency for an imputed band; ``alpha`` when
+                None.
+            imputed_outline (bool): Draw a dotted border inside an imputed band's own bounds.
         """
-        for _, ((lb, ub), mag) in source.items():
+        for name, ((lb, ub), mag) in source.items():
             # Ensure a minimum width for labeling
             if ub - lb < 0.026:
                 ave = (ub + lb) / 2
                 lb = ave - 0.013
                 ub = ave + 0.013
-            ax.fill_betweenx([min(0, mag), max(0, mag)], lb, ub, color=color, alpha=alpha)
+            is_imputed = name in imputed_names
+            bottom, top = min(0, mag), max(0, mag)
+            drawn_bands.setdefault(ax, []).append((lb, ub, bottom, top))
+            fill_alpha = imputed_alpha if is_imputed and imputed_alpha is not None else alpha
+            ax.fill_betweenx(
+                [bottom, top],
+                lb,
+                ub,
+                color=color,
+                alpha=fill_alpha,
+                linewidth=0.0,
+            )
+            if is_imputed and imputed_outline:
+                border = mpatches.Rectangle(
+                    (lb, bottom),
+                    ub - lb,
+                    top - bottom,
+                    facecolor="none",
+                    edgecolor=IMPUTED_EDGE_COLOR,
+                    linestyle=IMPUTED_BORDER_DASHES,
+                    linewidth=IMPUTED_BORDER_WIDTH,
+                )
+                ax.add_patch(border)
+                # Clipped to its own path so the stroke stays inside the band.
+                border.set_clip_path(border)
             ax.set_xlim(0, 1)
             ax.margins(x=0, y=0)
 
+    def plot_form_segments(ax, forms, alpha=0.5):
+        """One fill per thermal-form record, coloured by the record's decomposition type.
+
+        Every record of one compound shares one ``comp_range`` (``get_low_temp_phase_data``'s
+        contract), so the width is read once per compound. A thin divider is drawn at each
+        internal boundary -- the lower record's own ``t_hi`` -- so two same-coloured stacked
+        forms stay visually distinct. Compounds are painted widest first, each compound's
+        dividers directly over its own fills, so a narrower compound sits in front of any
+        wider one it overlaps.
+
+        Args:
+            ax (matplotlib.axes.Axes): The axis to plot on.
+            forms (dict): Compound name -> list of form records, as ``get_low_temp_phase_data``
+                returns them.
+            alpha (float): Transparency for the fill.
+        """
+        spans = []
+        for records in forms.values():
+            lb, ub = records[0]["comp_range"]
+            # Ensure a minimum width for labeling
+            if ub - lb < 0.026:
+                ave = (ub + lb) / 2
+                lb = ave - 0.013
+                ub = ave + 0.013
+            spans.append((lb, ub, records))
+        for lb, ub, records in sorted(spans, key=lambda span: span[0] - span[1]):
+            for record in records:
+                bottom, top = record["t_lo"], record["t_hi"]
+                drawn_bands.setdefault(ax, []).append((lb, ub, bottom, top))
+                ax.fill_betweenx(
+                    [bottom, top],
+                    lb,
+                    ub,
+                    color=THERMAL_FORM_COLORS[record["decomp"]],
+                    alpha=alpha,
+                    linewidth=0.0,
+                    zorder=THERMAL_FORM_ZORDER,
+                )
+            for record in records[:-1]:
+                ax.plot(
+                    [lb, ub],
+                    [record["t_hi"], record["t_hi"]],
+                    color=THERMAL_FORM_DIVIDER_COLOR,
+                    linewidth=THERMAL_FORM_DIVIDER_WIDTH,
+                    zorder=THERMAL_FORM_ZORDER,
+                )
+            ax.set_xlim(0, 1)
+            ax.margins(x=0, y=0)
+
+    # Imputed and user-defined entries in bl.dft_ch are marked on the MP panel.
+    non_dft_entries = non_dft_hull_entries(bl.dft_ch)
+    imputed_names = {e.name for e in non_dft_entries}
+
     # Plot phases for both subplots
-    plot_phases(ax1, mpds_congruent_phases, "blue")
-    plot_phases(ax1, mpds_incongruent_phases, "purple")
-    plot_phases(ax2, mp_phases, "orange")
-    plot_phases(ax2, mp_phases_ebelow, "red")
+    plot_form_segments(ax1, mpds_forms)
+    # Every MP band is drawn twice; these two alphas hold the overlap's hue.
+    under, over = imputed_band_alphas(0.5)
+    plot_phases(
+        ax2,
+        mp_phases,
+        "orange",
+        imputed_names=imputed_names,
+        imputed_alpha=under,
+        imputed_outline=True,
+    )
+    plot_phases(ax2, mp_phases_ebelow, "red", imputed_names=imputed_names, imputed_alpha=over)
+    if imputed_names:
+        ax2.legend(
+            handles=[
+                mpatches.Patch(
+                    facecolor="white",
+                    edgecolor=IMPUTED_EDGE_COLOR,
+                    linestyle=IMPUTED_BORDER_DASHES,
+                    linewidth=IMPUTED_BORDER_WIDTH,
+                    label=non_dft_legend_label(non_dft_entry_kind(e) for e in non_dft_entries),
+                )
+            ],
+            loc=_IMPUTED_LEGEND_CORNERS[0],
+            fontsize=PHASE_COMPARISON_FONTSIZE,
+            frameon=False,
+            handlelength=IMPUTED_LEGEND_HANDLE_SIZE,
+            handleheight=IMPUTED_LEGEND_HANDLE_SIZE,
+            handletextpad=IMPUTED_LEGEND_HANDLE_TEXT_PAD,
+        )
 
     # Check if MPDS phases exist
     mpds_phases = bool(mpds_congruent_phases or mpds_incongruent_phases)
@@ -301,7 +592,13 @@ def render_phase_comparison(bl) -> plt.Figure:
     else:
         ax1.set_yticks([])
 
-    ax1.set_ylabel("MPDS", fontsize=11, rotation=90, labelpad=5, fontweight="semibold")
+    ax1.set_ylabel(
+        "MPDS",
+        fontsize=PHASE_COMPARISON_FONTSIZE,
+        rotation=90,
+        labelpad=5,
+        fontweight="semibold",
+    )
     ax1.yaxis.set_label_position("right")
     ax1.set_xticks([])
 
@@ -318,13 +615,22 @@ def render_phase_comparison(bl) -> plt.Figure:
     else:
         ax2.set_yticks([])
 
-    ax2.set_ylabel("MP", fontsize=11, rotation=90, labelpad=5, fontweight="semibold")
+    ax2.set_ylabel(
+        "MP",
+        fontsize=PHASE_COMPARISON_FONTSIZE,
+        rotation=90,
+        labelpad=5,
+        fontweight="semibold",
+    )
     ax2.yaxis.set_label_position("right")
     ax2.xaxis.set_minor_locator(plt.MultipleLocator(0.05))
-    ax2.set_xticklabels([0, 20, 40, 60, 80, 100])
+    ax2.set_xticks(np.linspace(0, 1, 6), labels=[0, 20, 40, 60, 80, 100])
 
     # Add a title to the figure
     fig.suptitle("Low Temperature Phase Comparison", fontweight="semibold")
+
+    # The corner is decided in pixels from ax2's final limits and ticks.
+    _place_legend_clear_of(fig, ax2, drawn_bands.get(ax2, ()))
 
     return fig
 
@@ -335,8 +641,8 @@ def render_dft_hull(bl, plot_type: str, **kwargs) -> go.Figure:
 
     Args:
         bl: The model to plot (duck-typed ``BinaryLiquid``); its ``dft_ch``, ``components``,
-            ``component_data``, ``eqs``, and ``sys_name`` are read.
-        plot_type (str): The type of plot to generate ('ch', 'vch', 'ch+g').
+            ``component_data`` and ``eqs`` are read.
+        plot_type (str): The type of plot to generate ('ch' or 'ch+g').
         kwargs: Additional arguments for customization, such as 't_vals' or 't_units' for temperature values.
 
     Returns:
@@ -351,24 +657,7 @@ def render_dft_hull(bl, plot_type: str, **kwargs) -> go.Figure:
         )
         plot_type = "ch"  # Override to avoid errors
 
-    if plot_type == "vch":
-        # Generate volume-referenced convex hull
-        ch, atomic_vols = api.get_dft_convexhull(bl.sys_name, bl.dft_type, inc_structure_data=True)
-
-        new_entries = [
-            PDEntry(
-                composition=e.composition,
-                energy=atomic_vols[e.composition.reduced_formula] * e.composition.num_atoms,
-            )
-            for e in ch.stable_entries
-        ]
-
-        vch = PhaseDiagram(new_entries)
-        pdp = PDPlotter(vch)
-        fig = pdp.get_plot()
-        fig.update_yaxes(title={"text": "Referenced Atomic Volume (Å^3/atom)"})
-    else:
-        pdp = PDPlotter(bl.dft_ch)
+    pdp = PDPlotter(bl.dft_ch)
 
     if plot_type == "ch":
         # Use the standard convex hull
@@ -434,8 +723,8 @@ def render_dft_hull(bl, plot_type: str, **kwargs) -> go.Figure:
                 if g.has(xb_sym)
                 else [0] * len(_x_vals[1:-1])
             )
-            ga = np.float64(bl.eqs["ga"].subs({t_sym: T}) / 96485)
-            gb = np.float64(bl.eqs["gb"].subs({t_sym: T}) / 96485)
+            ga = np.float64(bl.eqs["ga"].subs({t_sym: T}) / EV_ATOM_TO_J_MOL)
+            gb = np.float64(bl.eqs["gb"].subs({t_sym: T}) / EV_ATOM_TO_J_MOL)
             if name == "":
                 name += "Ideal " if A == 0 and C == 0 else ""
                 name += (
@@ -445,19 +734,20 @@ def render_dft_hull(bl, plot_type: str, **kwargs) -> go.Figure:
                 )
 
             return go.Scatter(
-                x=_x_vals, y=[ga] + [g / 96485 for g in gliq_vals] + [gb], mode="lines", name=name
+                x=_x_vals,
+                y=[ga] + [g / EV_ATOM_TO_J_MOL for g in gliq_vals] + [gb],
+                mode="lines",
+                name=name,
             )
 
-        # Build the G curves first, then construct a new figure whose data list
-        # starts with the G curves followed by the hull traces — identical
-        # ordering and legend position to passing them via the data= argument.
+        # The G curves first, then the hull traces.
         params = bl.get_params()
         g_curves = [
             get_g_curve(A=params[0], B=params[1], C=params[2], D=params[3], T=temp)
             for temp in reversed(t_vals)
         ]
-        # Solid-solution overlays: one dashed Gibbs curve per stable SS phase per
-        # temperature (show_unstable=True draws them regardless of hull stability).
+        # One dashed Gibbs curve per solid-solution phase per temperature (all of them with
+        # show_unstable=True).
         ss_names = list(bl.ss_models)
         if ss_names:
             if not kwargs.get("show_unstable", False):
@@ -481,6 +771,36 @@ def render_dft_hull(bl, plot_type: str, **kwargs) -> go.Figure:
                     )
         hull_fig = pdp.get_plot()
         fig = go.Figure(data=g_curves + list(hull_fig.data), layout=hull_fig.layout)
+
+    # Imputed and user-defined vertices are overlaid on PDPlotter's hull.
+    _standardize_vertex_labels(fig, bl.dft_ch.stable_entries, bl.components)
+    imputed = non_dft_hull_entries(bl.dft_ch)
+    if imputed:
+        b_element = str(Composition(bl.components[1]).elements[0])
+        fig.add_trace(
+            go.Scatter(
+                x=[
+                    e.composition.fractional_composition.as_dict().get(b_element, 0.0)
+                    for e in imputed
+                ],
+                y=[bl.dft_ch.get_form_energy_per_atom(e) for e in imputed],
+                mode="markers",
+                # an -open symbol strokes in marker.color; marker.line.color is ignored.
+                marker=dict(
+                    symbol="circle-open",
+                    size=14,
+                    color=IMPUTED_MARKER_COLOR,
+                    line=dict(width=3),
+                ),
+                name=non_dft_legend_label(non_dft_entry_kind(e) for e in imputed),
+                hovertext=[non_dft_entry_label(e) for e in imputed],
+            )
+        )
+
+    # PDPlotter's vertex-label trace is kept, without its legend entry.
+    for trace in fig.data:
+        if trace.name == "Labels (stable)":
+            trace.showlegend = False
 
     fig.update_layout(
         plot_bgcolor="white",
@@ -513,8 +833,7 @@ def render_nelder_mead_path(bl, **kwargs) -> plt.Figure:
             "Underlying BinaryLiquid object has no Nelder-Mead path! Generate using `fit_parameters`"
         )
     plot_a_params = kwargs.get("plot_a_params", False)
-    # nmpath columns to plot: the constant (a) subterm of each order, or the
-    # format's Nelder-Mead guess parameters (one home for the former 3 branches).
+    # nmpath columns: the constant (a) subterm of each order, or the format's guess parameters.
     fmt = bl.xs_mix.format
     if plot_a_params:
         axes_labels = [f"L{k}_a" for k in fmt.orders[:2]]
@@ -576,7 +895,10 @@ def render_nelder_mead_path(bl, **kwargs) -> plt.Figure:
 
     # Marker color mapping (temperature deviation-based)
     sm2 = cm.ScalarMappable(cmap="autumn", norm=plt.Normalize(tdev_range[0], tdev_range[1]))
-    cbar2 = fig.colorbar(sm2, ax=ax, aspect=14)
+    # Plain 5+ digit tick labels push this colorbar's label onto the iteration colorbar.
+    obj_formatter = ScalarFormatter(useMathText=True)
+    obj_formatter.set_powerlimits((-2, 4))
+    cbar2 = fig.colorbar(sm2, ax=ax, aspect=14, format=obj_formatter)
     cbar2.set_label("Objective Function Value", style="italic", labelpad=10, fontsize=12)
 
     plotted_points = []
@@ -659,7 +981,6 @@ def render_nelder_mead_path(bl, **kwargs) -> plt.Figure:
 
     # Use scientific notation for tick labels
     def set_sci_notation(axis, which="both"):
-        # ticks = axis.get_majorticklocs()
         formatter = ScalarFormatter(useMathText=True)
         formatter.set_scientific(True)
         formatter.set_powerlimits((-3, 3))
