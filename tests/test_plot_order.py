@@ -1,4 +1,4 @@
-"""Plotter presentation ordering (S9b): resolve_component_order + order= APIs.
+"""Plotter presentation ordering: resolve_component_order + order= APIs.
 
 Plotting classes default to ALPHABETICAL presentation regardless of construction order
 (pass order='given' or a permutation spec to override); computation classes preserve
@@ -111,6 +111,27 @@ class TestWithComponentOrder:
         np.testing.assert_allclose(h_r, h_a[::-1], rtol=1e-9)
         np.testing.assert_allclose(s_r, s_a[::-1], rtol=1e-9)
 
+    def test_unsupported_ranges_reframe_with_the_liquidus(self):
+        """The mask is positions on the composition axis, so it mirrors with the liquidus."""
+        ch, _ = api.get_dft_convexhull(["Hf", "Zr"], "GGA")
+        mask = [[0.2, 0.4], [0.7, 0.9]]
+        bl = BinaryLiquid(
+            "Hf-Zr",
+            ["Hf", "Zr"],
+            component_data=UNARY.component_data(["Hf", "Zr"]),
+            dft_ch=ch,
+            phases=[Phase(phase_type="liquid", name="L")],
+            temp_range=[300, 3000],
+            unsupported_comp_ranges=[list(r) for r in mask],
+        )
+        assert bl.with_component_order(["Hf", "Zr"]) is bl
+        assert bl.unsupported_comp_ranges == mask
+        bl.fit_unsupported_range_mode = "score"
+        clone = bl.with_component_order(["Zr", "Hf"])
+        np.testing.assert_allclose(clone.unsupported_comp_ranges, [[0.1, 0.3], [0.6, 0.8]])
+        assert clone.fit_unsupported_range_mode == "score"
+        assert bl.unsupported_comp_ranges == mask
+
 
 class TestBLPlotterOrder:
     def test_default_is_noop_for_alphabetical_bl(self, bl_alpha):
@@ -143,13 +164,19 @@ class TestBLPlotterOrder:
         with pytest.raises(Exception, match="nmpath|Nelder|fit"):
             BLPlotter(bl_rev, order="given").get_plot("nmp")
 
+    def test_vch_is_not_a_plot_type(self, bl_alpha):
+        with pytest.raises(ValueError, match=r"Invalid plot type 'vch'\. Supported types: \["):
+            BLPlotter(bl_alpha).get_plot("vch")
+
 
 class TestTernaryPlotterOrder:
     ZERO = {"Hf-Ti": [0.0] * 4, "Ti-Zr": [0.0] * 4, "Zr-Hf": [0.0] * 4}
 
     def test_gtx_plotter_defaults_alphabetical(self):
         tgp = TLIPlotter.from_components(
-            ["Ti", "Hf", "Zr"], xs_mix={k: list(v) for k, v in self.ZERO.items()}
+            ["Ti", "Hf", "Zr"],
+            xs_mix={k: list(v) for k, v in self.ZERO.items()},
+            param_format="linear",
         )
         assert tgp.components == ["Hf", "Ti", "Zr"]
         assert tgp.binary_systems == ["Hf-Ti", "Ti-Zr", "Zr-Hf"]
@@ -159,6 +186,7 @@ class TestTernaryPlotterOrder:
             ["Ti", "Hf", "Zr"],
             order="given",
             xs_mix={"Ti-Hf": [0.0] * 4, "Hf-Zr": [0.0] * 4, "Zr-Ti": [0.0] * 4},
+            param_format="linear",
         )
         assert tgp.components == ["Ti", "Hf", "Zr"]
 

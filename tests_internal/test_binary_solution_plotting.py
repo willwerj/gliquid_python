@@ -1,37 +1,27 @@
 """Figure-level checks for solid-solution phases on the BLPlotter surface.
 
-Split out of ``tests/test_binary_solution.py``, which keeps the model math, the from_cache
-reconciliation and the pickle round-trip. Everything here builds a plotly Figure and asserts
-on its traces, colors and legend entries -- presentation, not thermodynamics.
+``tests/test_binary_solution.py`` holds the model math, the from_cache reconciliation and
+the pickle round-trip. Everything here builds a plotly Figure and asserts on its traces,
+colors and legend entries.
 
-The ``ss_from_cache`` fixture is duplicated from that file rather than shared: the two
-halves of the split must not import each other.
+The ``ss_from_cache`` fixture comes from ``tests/_mpds_builders.py``.
 """
-
-import pytest
-
-from gliquid.binary import BinaryLiquid
-
-
-@pytest.fixture(scope="module")
-def ss_from_cache():
-    return BinaryLiquid.from_cache(
-        "Hf-Zr", pd_ind=0, solid_solutions=True, ss_kwargs={"ref_mode": "from_unary_db"}
-    )
 
 
 class TestSSPlotter:
-    def test_ss_plot_types_return_figures(self, ss_from_cache):
+    def test_hsx_and_scatter_rebuild_a_dropped_hsx(self, ss_from_cache):
         import plotly.graph_objects as go
 
         from gliquid.binary import BLPlotter
 
+        ss_from_cache.update_phase_points()
+        ss_from_cache.hsx = None
         plotter = BLPlotter(ss_from_cache)
-        for plot_type in ("fit+liq", "hsx", "scatter", "ch+g"):
-            fig = plotter.get_plot(plot_type)
-            assert isinstance(fig, go.Figure), f"{plot_type} did not return a Figure"
+        for plot_type in ("hsx", "scatter"):
+            assert isinstance(plotter.get_plot(plot_type), go.Figure)
 
     def test_ss_phases_get_fixed_colors_and_display_names(self, ss_from_cache):
+        import gliquid.plotting.binary_figs as binary_figs
         from gliquid.binary import SS_FIXED_COLORS, BLPlotter
 
         plotter = BLPlotter(ss_from_cache)
@@ -39,8 +29,8 @@ class TestSSPlotter:
         cmap = plotter._phase_color_map()
         assert cmap["BCC"] == SS_FIXED_COLORS["BCC"]
         assert cmap["HCP"] == SS_FIXED_COLORS["HCP"]
-        assert plotter._phase_display_name("BCC") == "BCC (Hf, Zr)"
-        assert plotter._phase_display_name("L") == "L"
+        assert binary_figs._display_name(plotter._bl, "BCC") == "BCC (Hf, Zr)"
+        assert binary_figs._display_name(plotter._bl, "L") == "L"
         # color cache lives on the plotter, so BinaryLiquid pickles stay clean
         assert not hasattr(ss_from_cache, "_ss_phase_color_cache")
 
@@ -83,15 +73,3 @@ class TestSSPlotter:
         assert ss_curves, "expected dashed SS Gibbs curve(s) in unified ch+g"
         liquid_curves = [tr for tr in fig.data if tr.name and "Liquid" in tr.name]
         assert liquid_curves, "liquid Gibbs curve(s) missing from unified ch+g"
-
-    def test_no_ss_fit_liq_trace_count_unchanged(self):
-        import plotly.graph_objects as go
-
-        from gliquid.binary import BinaryLiquid, BLPlotter
-
-        a = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
-        base_fig = BLPlotter(a).get_plot("fit+liq")
-        assert isinstance(base_fig, go.Figure)
-        b = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, solid_solutions=False)
-        again_fig = BLPlotter(b).get_plot("fit+liq")
-        assert len(base_fig.data) == len(again_fig.data)

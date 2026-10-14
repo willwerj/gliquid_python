@@ -1,8 +1,7 @@
 """Characterization tests for the shared Plotly static-image export helpers.
 
-Written (secondary-track S1) just before the module moved to gliquid/plotting/export.py,
-gating the move. The kaleido/subprocess boundary is monkeypatched — no static-image
-engine is required to run these.
+The kaleido/subprocess boundary is monkeypatched; no static-image engine is required to run
+these.
 """
 
 import subprocess
