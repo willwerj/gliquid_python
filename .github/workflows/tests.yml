@@ -13,6 +13,10 @@ jobs:
   test-cached:
     name: Cached Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      # The corpus lookup walks up to a directory named gliquid_python, which a checkout
+      # under another repository name does not have.
+      GLIQUID_CACHE_DIR: ${{ github.workspace }}/cache
 
     strategy:
       # One version failing must not hide the state of the other three.
@@ -52,16 +56,17 @@ jobs:
           pip install -e '.[test]'
 
       - name: Run cached tests
-        # CI is where the maintainer tier belongs, so both tiers run. The live Materials
-        # Project fetch is deselected by MARKER, not by path: test_dft_data_loading.py moved
-        # to tests_internal/ and carries `needs_network`, and the API job below runs it.
-        run: pytest tests tests_internal -v --tb=short -m "not needs_network"
+        # Both tiers, in parallel. The live Materials Project fetches are deselected by marker;
+        # the API job below runs the one in tests_internal.
+        run: pytest tests tests_internal -n auto --dist worksteal -m "not needs_network" --tb=short --durations=25
 
   test-api:
     name: API Tests
     runs-on: ubuntu-latest
     needs: test-cached
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      GLIQUID_CACHE_DIR: ${{ github.workspace }}/cache  # see the cached job
 
     steps:
       - uses: actions/checkout@v4
@@ -95,13 +100,6 @@ jobs:
   lint:
     name: Lint and Format
     runs-on: ubuntu-latest
-
-    # NON-BLOCKING ON PURPOSE, for one cycle. `ruff format` landed in spec 04 but
-    # `ruff check` still has a backlog of findings; failing every push on it would
-    # red-wall the repo before anyone could read the list. The job exists so the backlog
-    # is VISIBLE in the checks tab. Flip this to false (or just delete the line) once the
-    # backlog is burned down -- leaving it here permanently makes the job decorative.
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
