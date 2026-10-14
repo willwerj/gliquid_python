@@ -1,12 +1,12 @@
 {
  "pd_ind": 0,
  "thresholds": {
-  "skip_frac": 0.45,
-  "min_missing": 2,
-  "missing_frac": 0.6,
   "ss_narrow_tol": 0.1,
   "dft_cover_tol": 0.1,
-  "ss_rescue_max_width": 0.25
+  "ss_rescue_max_width": 0.25,
+  "subliquidus_margin": 0.0,
+  "low_temp_axis_fraction": 0.05,
+  "polymorph_pair_tol": 0.04
  },
  "arms": {
   "from_unary_db": {
@@ -15,52 +15,66 @@
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Th-Tm": {
-    "unsupported_fraction": 0.8285082816381208,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
-    "ss_models": [],
-    "skipped": true
-   },
-   "Ho-Pr": {
     "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
+   },
+   "Ho-Pr": {
+    "unsupported_fraction": 1.0,
+    "n_compounds": 1,
+    "n_missing_compounds": 1,
+    "ss_models": [],
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Er-Th": {
-    "unsupported_fraction": 0.9878171297642279,
+    "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Mn-Y": {
-    "unsupported_fraction": 0.526594431360537,
+    "unsupported_fraction": 0.41306865807792104,
     "n_compounds": 3,
     "n_missing_compounds": 2,
     "ss_models": [
      "BCC",
      "FCC"
     ],
-    "skipped": true
+    "skipped": false,
+    "largest_supported_segment": 0.353067,
+    "n_supported_segments": 2
    },
    "Rb-Sn": {
-    "unsupported_fraction": 0.35493699999999995,
-    "n_compounds": 3,
-    "n_missing_compounds": 2,
+    "unsupported_fraction": 0.5899730000000001,
+    "n_compounds": 4,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": true
+    "skipped": false,
+    "largest_supported_segment": 0.024971399999999998,
+    "n_supported_segments": 1
    },
    "Ho-Zr": {
-    "unsupported_fraction": 0.7791856697029853,
+    "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Ag-Au": {
     "unsupported_fraction": 0.0,
@@ -71,7 +85,9 @@
      "BCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Ag-Pd": {
     "unsupported_fraction": 0.0,
@@ -82,7 +98,9 @@
      "BCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Ta-W": {
     "unsupported_fraction": 0.0,
@@ -93,14 +111,18 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Se-Te": {
     "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Bi-Sb": {
     "unsupported_fraction": 0.0,
@@ -111,7 +133,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "As-Sb": {
     "unsupported_fraction": 0.0,
@@ -122,7 +146,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9992377570000001,
+    "n_supported_segments": 1
    },
    "Os-Re": {
     "unsupported_fraction": 0.0,
@@ -133,7 +159,9 @@
      "BCC",
      "FCC"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9998090000000001,
+    "n_supported_segments": 1
    },
    "Sc-Zr": {
     "unsupported_fraction": 0.0,
@@ -144,7 +172,9 @@
      "HCP",
      "FCC"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Hf-Zr": {
     "unsupported_fraction": 0.0,
@@ -155,89 +185,111 @@
      "HCP",
      "FCC"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Al-Cu": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.3984127436552477,
+    "n_compounds": 7,
+    "n_missing_compounds": 3,
     "ss_models": [
      "FCC",
      "BCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.36212567345408186,
+    "n_supported_segments": 3
    },
    "Cu-Mg": {
     "unsupported_fraction": 0.0,
-    "n_compounds": 1,
+    "n_compounds": 2,
     "n_missing_compounds": 0,
     "ss_models": [
      "FCC",
      "BCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.999618757,
+    "n_supported_segments": 1
    },
    "Ce-Sn": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 7,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.16251180848940386,
+    "n_compounds": 8,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.526305757,
+    "n_supported_segments": 3
    },
    "Hf-Rh": {
     "unsupported_fraction": 0.0,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
+    "n_compounds": 5,
+    "n_missing_compounds": 1,
     "ss_models": [
      "BCC",
      "HCP",
      "FCC"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9992377570000001,
+    "n_supported_segments": 1
    },
    "Ho-In": {
-    "unsupported_fraction": 0.18641460148091243,
-    "n_compounds": 4,
+    "unsupported_fraction": 0.2058956885850339,
+    "n_compounds": 5,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.77817,
+    "n_supported_segments": 2
    },
    "B-Nb": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 4,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.019521911020497367,
+    "n_compounds": 6,
+    "n_missing_compounds": 1,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.49027093641952463,
+    "n_supported_segments": 2
    },
    "Er-Ga": {
+    "unsupported_fraction": 0.25409899999999996,
+    "n_compounds": 5,
+    "n_missing_compounds": 1,
+    "ss_models": [],
+    "skipped": false,
+    "largest_supported_segment": 0.54613,
+    "n_supported_segments": 2
+   },
+   "Ga-Lu": {
     "unsupported_fraction": 0.0,
     "n_compounds": 5,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": false
-   },
-   "Ga-Lu": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 4,
-    "n_missing_compounds": 0,
-    "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.99847465,
+    "n_supported_segments": 1
    },
    "Au-Ca": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 7,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.2621039999999999,
+    "n_compounds": 8,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.45387,
+    "n_supported_segments": 3
    },
    "Gd-Re": {
-    "unsupported_fraction": 0.4251584992484419,
+    "unsupported_fraction": 0.5613544485747173,
     "n_compounds": 1,
     "n_missing_compounds": 1,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.42736440127867625,
+    "n_supported_segments": 2
    }
   },
   "from_omegas_file": {
@@ -246,31 +298,39 @@
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Th-Tm": {
-    "unsupported_fraction": 0.8285082816381208,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
-    "ss_models": [],
-    "skipped": true
-   },
-   "Ho-Pr": {
     "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
+   },
+   "Ho-Pr": {
+    "unsupported_fraction": 1.0,
+    "n_compounds": 1,
+    "n_missing_compounds": 1,
+    "ss_models": [],
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Er-Th": {
-    "unsupported_fraction": 0.9878171297642279,
+    "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Mn-Y": {
-    "unsupported_fraction": 0.526594431360537,
+    "unsupported_fraction": 0.41306865807792104,
     "n_compounds": 3,
     "n_missing_compounds": 2,
     "ss_models": [
@@ -278,21 +338,27 @@
      "FCC",
      "HCP"
     ],
-    "skipped": true
+    "skipped": false,
+    "largest_supported_segment": 0.353067,
+    "n_supported_segments": 2
    },
    "Rb-Sn": {
-    "unsupported_fraction": 0.35493699999999995,
-    "n_compounds": 3,
-    "n_missing_compounds": 2,
+    "unsupported_fraction": 0.5899730000000001,
+    "n_compounds": 4,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": true
+    "skipped": false,
+    "largest_supported_segment": 0.024971399999999998,
+    "n_supported_segments": 1
    },
    "Ho-Zr": {
-    "unsupported_fraction": 0.7791856697029853,
+    "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Ag-Au": {
     "unsupported_fraction": 0.0,
@@ -303,7 +369,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Ag-Pd": {
     "unsupported_fraction": 0.0,
@@ -314,7 +382,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Ta-W": {
     "unsupported_fraction": 0.0,
@@ -325,14 +395,18 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Se-Te": {
     "unsupported_fraction": 1.0,
     "n_compounds": 0,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": true
+    "skipped": true,
+    "largest_supported_segment": 0.0,
+    "n_supported_segments": 0
    },
    "Bi-Sb": {
     "unsupported_fraction": 0.0,
@@ -343,7 +417,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "As-Sb": {
     "unsupported_fraction": 0.0,
@@ -354,7 +430,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9992377570000001,
+    "n_supported_segments": 1
    },
    "Os-Re": {
     "unsupported_fraction": 0.0,
@@ -365,7 +443,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9998090000000001,
+    "n_supported_segments": 1
    },
    "Sc-Zr": {
     "unsupported_fraction": 0.0,
@@ -376,7 +456,9 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Hf-Zr": {
     "unsupported_fraction": 0.0,
@@ -387,89 +469,111 @@
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 1.0,
+    "n_supported_segments": 1
    },
    "Al-Cu": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.3984127436552477,
+    "n_compounds": 7,
+    "n_missing_compounds": 3,
     "ss_models": [
      "BCC",
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.36212567345408186,
+    "n_supported_segments": 3
    },
    "Cu-Mg": {
     "unsupported_fraction": 0.0,
-    "n_compounds": 1,
+    "n_compounds": 2,
     "n_missing_compounds": 0,
     "ss_models": [
      "BCC",
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.999618757,
+    "n_supported_segments": 1
    },
    "Ce-Sn": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 7,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.16251180848940386,
+    "n_compounds": 8,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.526305757,
+    "n_supported_segments": 3
    },
    "Hf-Rh": {
     "unsupported_fraction": 0.0,
-    "n_compounds": 0,
-    "n_missing_compounds": 0,
+    "n_compounds": 5,
+    "n_missing_compounds": 1,
     "ss_models": [
      "BCC",
      "FCC",
      "HCP"
     ],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.9992377570000001,
+    "n_supported_segments": 1
    },
    "Ho-In": {
-    "unsupported_fraction": 0.18641460148091243,
-    "n_compounds": 4,
+    "unsupported_fraction": 0.2058956885850339,
+    "n_compounds": 5,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.77817,
+    "n_supported_segments": 2
    },
    "B-Nb": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 4,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.019521911020497367,
+    "n_compounds": 6,
+    "n_missing_compounds": 1,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.49027093641952463,
+    "n_supported_segments": 2
    },
    "Er-Ga": {
+    "unsupported_fraction": 0.25409899999999996,
+    "n_compounds": 5,
+    "n_missing_compounds": 1,
+    "ss_models": [],
+    "skipped": false,
+    "largest_supported_segment": 0.54613,
+    "n_supported_segments": 2
+   },
+   "Ga-Lu": {
     "unsupported_fraction": 0.0,
     "n_compounds": 5,
     "n_missing_compounds": 0,
     "ss_models": [],
-    "skipped": false
-   },
-   "Ga-Lu": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 4,
-    "n_missing_compounds": 0,
-    "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.99847465,
+    "n_supported_segments": 1
    },
    "Au-Ca": {
-    "unsupported_fraction": 0.0,
-    "n_compounds": 7,
-    "n_missing_compounds": 0,
+    "unsupported_fraction": 0.2621039999999999,
+    "n_compounds": 8,
+    "n_missing_compounds": 3,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.45387,
+    "n_supported_segments": 3
    },
    "Gd-Re": {
-    "unsupported_fraction": 0.4251584992484419,
+    "unsupported_fraction": 0.5613544485747173,
     "n_compounds": 1,
     "n_missing_compounds": 1,
     "ss_models": [],
-    "skipped": false
+    "skipped": false,
+    "largest_supported_segment": 0.42736440127867625,
+    "n_supported_segments": 2
    }
   }
  }
