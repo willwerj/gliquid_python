@@ -204,7 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     for path in selected:
         print(f"==> {path.name}", flush=True)
         if colab_only(path):
-            results.append((path.name, WARN, "Colab-only (clones into /content/)", 0.0))
+            note = f"Colab-only; run scripts/run_colab_notebook.py --notebook {path.stem}"
+            results.append((path.name, WARN, note, 0.0))
             continue
         status, note, seconds = run_one(path, args.timeout)
         results.append((path.name, status, note, seconds))
