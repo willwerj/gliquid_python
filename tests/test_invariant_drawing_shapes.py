@@ -1,10 +1,9 @@
 """Native 'drawing' shapes (tie/construction lines) carry no ``nphases`` key.
 
-``identify_invariant_points``'s miscibility-gap loop indexed ``shape['nphases']``
-directly and crashed with KeyError on such shapes (Mn-Pb, Be-Li, Lu-V). The
-path was latent until multi-L extraction started returning a liquidus for
-disjoint-L diagrams, which made the misc-gap branch reachable for exactly the
-systems that draw tie lines without phase counts.
+``identify_invariant_points``'s miscibility-gap loop must not assume every shape has an
+``nphases`` key: native drawing shapes (tie/construction lines) omit it, and the
+misc-gap branch is reachable for systems that draw tie lines without phase counts
+(e.g. Mn-Pb, Be-Li, Lu-V).
 """
 
 from types import SimpleNamespace
@@ -30,7 +29,7 @@ def _misc_gap_json():
                 "is_solid": False,
                 "svgpath": "M 0,700 L 50,900 L 100,700 L 100,1300 L 0,1300 Z",
             },
-            # the regression: native construction line with NO nphases key
+            # a native construction line, which carries NO nphases key
             {"kind": "drawing", "svgpath": "M 0,600 L 100,600"},
         ],
     }

@@ -1,29 +1,25 @@
 """End-to-end tests for the uniform, config-level solid-solution (SS) switch.
 
-`BinaryLiquid.from_cache(solid_solutions=None)` (the new default) defers to the
-package-wide `config.solid_solutions` flag; an explicit True/False overrides it. These
+`BinaryLiquid.from_cache(solid_solutions=None)` and `TernaryLiquidInterpolation(solid_solutions=None)`
+(the defaults) defer to the package-wide `config.solid_solutions` flag; an explicit True/False
+overrides it. Both load their models with `config.ss_ref_mode` unless `ss_kwargs` names one. These
 tests pin the four contract corners through from_cache, entirely offline:
 
-  * config default OFF  == today's explicit solid_solutions=False
-  * config ON + covered == today's explicit solid_solutions=True + ss_kwargs
+  * config default OFF  == explicit solid_solutions=False
+  * config ON + covered == explicit solid_solutions=True + ss_kwargs
   * config ON + UNcovered == OFF (no SS phases, no altered liquid references)
   * an explicit solid_solutions= kwarg always wins over the config default
 
 Covered fixture: Hf-Zr (pd_ind=0). Uncovered fixture: Cr-Eu (Eu absent from the shipped
 3-element omegas file). Both have full offline cache in the package data/ dir.
-
-Run with: python -m pytest tests/test_ss_config_toggle.py -v
 """
-
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-import gliquid.config as config  # noqa: E402
-from gliquid.binary import BinaryLiquid  # noqa: E402
+import gliquid.config as config
+import gliquid.solution as solution
+from gliquid.binary import BinaryLiquid
+from gliquid.ternary import TernaryLiquidInterpolation
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +42,8 @@ def test_config_default_off_matches_explicit_off():
     explicit = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, solid_solutions=False)
     assert implicit.ss_models == {} == explicit.ss_models
     assert _refs(implicit) == _refs(explicit)
+    assert implicit.to_hsx() == explicit.to_hsx()
+    assert [p.name for p in implicit.phases] == [p.name for p in explicit.phases]
 
 
 def test_config_on_covered_matches_explicit_ss_kwargs():
@@ -84,3 +82,28 @@ def test_explicit_override_wins_over_config():
         "Hf-Zr", pd_ind=0, solid_solutions=True, ss_kwargs={"ref_mode": "from_unary_db"}
     )
     assert set(forced_on.ss_models) == {"BCC", "HCP", "FCC"}
+
+
+def test_a_ternary_defers_to_the_config_switch():
+    config.set_solid_solutions(True)
+    assert TernaryLiquidInterpolation(["Hf", "Ti", "Zr"]).solid_solutions is True
+    assert (
+        TernaryLiquidInterpolation(["Hf", "Ti", "Zr"], solid_solutions=False).solid_solutions
+        is False
+    )
+
+
+def test_a_ternary_loads_with_the_config_ss_ref_mode(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        solution, "load_solid_solution_models", lambda *a, **kw: seen.append(kw["ref_mode"]) or {}
+    )
+    config.set_ss_ref_mode("from_omegas_file")
+    for ss_kwargs in (None, {"ref_mode": "from_unary_db"}):
+        ti = TernaryLiquidInterpolation(
+            ["Hf", "Ti", "Zr"], solid_solutions=True, ss_kwargs=ss_kwargs
+        )
+        ti.init_ref_data()
+        ti.append_solid_solution_surfaces()
+        assert ti.ss_kwargs == ss_kwargs
+    assert seen == ["from_omegas_file", "from_unary_db"]
