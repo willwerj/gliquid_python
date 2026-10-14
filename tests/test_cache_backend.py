@@ -1,43 +1,33 @@
 """The record-level cache seam: ``CacheKey``, ``CacheBackend``, ``DirectoryBackend``.
 
-Every cache read and write used to funnel through ``api._resolve_sys_dir(sys_name)``, which
-answers *"which directory"*. A single-file store cannot answer that, so the seam sits one
-level down — at RECORDS, not directories.
-
-The first class here is a CHARACTERIZATION suite written against the pre-refactor code and
-kept green through it. Two behaviours in it are load-bearing and easy to lose:
-
-* ``_resolve_sys_dir`` calls ``os.makedirs(..., exist_ok=True)` in nested mode on the READ
-  path, not just on write. ``dev/scripts/Fit_Binary_Systems.py`` relies on it for cold
-  fetches into the workspace ``matrix_data`` store.
-* the three on-disk filename conventions, INCLUDING the indexless ``<sys>.json`` MPDS
-  naming, which is the legitimate convention for a single-diagram store.
-
-Both are asserted on the actual strings, so a backend that "reproduces today's filenames"
-has to actually do so.
+The seam sits at RECORDS, not directories, so a single-file store answers it too. The three
+on-disk filename conventions, INCLUDING the indexless ``<sys>.json`` MPDS naming (the
+convention for a single-diagram store), are asserted on the actual strings.
 """
 
 import json
 import os
-import warnings
-from pathlib import Path
 
 import pytest
 
 import gliquid.api as api
 import gliquid.config as config
-from gliquid.cache import CacheKey, DirectoryBackend, resolve_backend
+from gliquid.cache import (
+    KIND_DFT_ENTRIES,
+    KIND_IMPUTED_ENTRIES,
+    CacheKey,
+    DirectoryBackend,
+    resolve_backend,
+)
+
+from ._mpds_builders import cu_mg_entry_pool
 
 
 @pytest.fixture(autouse=True)
 def _directory_mode(monkeypatch):
-    """Pin ``cache_mode`` for the whole module rather than inheriting the session's.
-
-    Every test here is about the DIRECTORY backend, and a test that installs a temp corpus
-    but leaves the mode ambient is only testing what it means to test by coincidence -- the
-    root ``conftest.py``'s ``GLIQUID_TEST_SQLITE_STORE`` swap configures a single-file store
-    process-wide. A test that overrides the mode itself still wins: ``monkeypatch`` inside
-    the test body applies after this fixture.
+    """Pin ``cache_mode`` for the whole module rather than inheriting the session's: the root
+    ``conftest.py``'s ``GLIQUID_TEST_SQLITE_STORE`` swap configures a single-file store
+    process-wide. A test that sets the mode itself still wins.
     """
     monkeypatch.setattr(config, "cache_mode", "directory")
 
@@ -50,80 +40,12 @@ def store(tmp_path, monkeypatch):
     return tmp_path
 
 
-# ---------------------------------------------------------------------------------------
-# Characterization: behaviour that predates the seam and must survive it
-# ---------------------------------------------------------------------------------------
-
-
-class TestResolveSysDirCharacterization:
-    """``api._resolve_sys_dir`` — the deprecated shim — keeps its exact old semantics."""
-
-    def test_nested_mode_creates_the_system_dir_as_a_side_effect_of_a_READ(
-        self, tmp_path, monkeypatch
-    ):
-        """The side effect ``dev/scripts/Fit_Binary_Systems.py`` depends on.
-
-        Nothing here writes. A bare resolve — the read path — must still leave the system
-        directory on disk, because the cold-fetch write that follows it in a campaign
-        assumes the directory is already there.
-        """
-        monkeypatch.setattr(config, "cache_dir", tmp_path)
-        monkeypatch.setattr(config, "dir_structure", "nested")
-        assert not (tmp_path / "Cu-Mg").exists()
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            resolved = api._resolve_sys_dir("Cu-Mg")
-
-        assert Path(resolved) == tmp_path / "Cu-Mg"
-        assert (tmp_path / "Cu-Mg").is_dir(), "nested read path stopped creating the system dir"
-
-    def test_flat_mode_does_not_create_anything(self, tmp_path, monkeypatch):
-        """POSITIVE CONTROL for the test above: flat mode never made directories."""
-        monkeypatch.setattr(config, "cache_dir", tmp_path)
-        monkeypatch.setattr(config, "dir_structure", "flat")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            resolved = api._resolve_sys_dir("Cu-Mg")
-        assert Path(resolved) == tmp_path
-        assert list(tmp_path.iterdir()) == [], "flat mode created something it never used to"
-
-    def test_explicit_data_dir_wins_and_is_flat(self, tmp_path, monkeypatch):
-        """An explicit ``data_dir`` implies a FLAT layout inside it, in either mode."""
-        other = tmp_path / "explicit"
-        other.mkdir()
-        monkeypatch.setattr(config, "cache_dir", tmp_path)
-        monkeypatch.setattr(config, "dir_structure", "nested")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            resolved = api._resolve_sys_dir("Cu-Mg", data_dir=other)
-        assert Path(resolved) == other
-        assert list(other.iterdir()) == []
-
-    def test_unconfigured_corpus_raises_config_error_naming_the_system(self, monkeypatch):
-        monkeypatch.setattr(config, "cache_dir", None)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(config.ConfigError) as exc:
-                api._resolve_sys_dir("Cu-Mg")
-        assert "Cu-Mg" in str(exc.value)
-
-    def test_invalid_dir_structure_still_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(config, "cache_dir", tmp_path)
-        monkeypatch.setattr(config, "dir_structure", "sideways")
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            with pytest.raises(ValueError, match="dir_structure"):
-                api._resolve_sys_dir("Cu-Mg")
+# -- Characterization: the on-disk behaviour every backend keeps --
 
 
 class TestFilenamesAreByteIdentical:
-    """``DirectoryBackend`` reproduces today's filenames — asserted on the STRINGS.
-
-    These three conventions are the on-disk contract with ~30k cached files in the
-    workspace stores. A backend that "reproduces the naming" is only useful if the
-    reproduction is checked against the literals, not against itself.
-    """
+    """``DirectoryBackend`` reproduces the on-disk filenames, asserted against the literal
+    strings rather than against the backend itself."""
 
     def test_dft_entries_filename(self, tmp_path):
         backend = DirectoryBackend(tmp_path)
@@ -154,9 +76,7 @@ class TestFilenamesAreByteIdentical:
             backend.path_for(CacheKey("Cu-Mg", "not_a_kind", "0"))
 
 
-# ---------------------------------------------------------------------------------------
-# The record-level protocol
-# ---------------------------------------------------------------------------------------
+# -- The record-level protocol --
 
 
 class TestCacheKey:
@@ -181,7 +101,7 @@ class TestDirectoryBackendRoundTrip:
         backend.write_json(key, payload)
         assert backend.exists(key) is True
         assert backend.read_json(key) == payload
-        # ...and it really is the historical file on disk, not an opaque blob
+        # ...and it really is the plain file on disk, not an opaque blob
         assert json.loads((tmp_path / "Cu-Mg_ENTRIES_MP_GGA.json").read_text()) == payload
 
     def test_read_json_of_a_missing_record_raises(self, tmp_path):
@@ -250,13 +170,113 @@ class TestDirectoryBackendVariants:
         assert backend.variants("Cu-Mg", "dft_entries") == ["GGA"]  # control
 
 
+class TestFlatRootIsCreatedOnWrite:
+    """A flat store's missing root is created by the first write and by nothing else."""
+
+    PAYLOAD = [{"entry_id": "mp-1"}]
+
+    def _reads_leave_root_absent_then_write_creates_it(self, backend, root, tmp_path):
+        key = CacheKey("Cu-Mg", KIND_DFT_ENTRIES, "GGA")
+        assert backend.exists(key) is False
+        with pytest.raises(FileNotFoundError):
+            backend.read_json(key)
+        assert backend.variants("Cu-Mg", KIND_DFT_ENTRIES) == []
+        assert not (tmp_path / "a").exists(), "a read created the store root"
+
+        backend.write_json(key, self.PAYLOAD)
+        assert json.loads((root / "Cu-Mg_ENTRIES_MP_GGA.json").read_text()) == self.PAYLOAD
+
+    def test_an_explicit_missing_root(self, tmp_path):
+        root = tmp_path / "a" / "b"
+        self._reads_leave_root_absent_then_write_creates_it(DirectoryBackend(root), root, tmp_path)
+
+    def test_the_global_backend_after_set_cache_dir_to_a_missing_directory(
+        self, tmp_path, monkeypatch
+    ):
+        for name in (
+            "cache_dir",
+            "cache_mode",
+            "phase_transitions_file",
+            "omegas_file",
+            "spurious_structures_file",
+        ):
+            monkeypatch.setattr(config, name, getattr(config, name))
+        monkeypatch.setattr(config, "dir_structure", "flat")
+        root = tmp_path / "a" / "b"
+        config.set_cache_dir(root)
+        self._reads_leave_root_absent_then_write_creates_it(resolve_backend(None), root, tmp_path)
+
+    def test_an_explicit_root_that_cannot_be_created_raises_the_os_error(self, tmp_path):
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a directory")
+        with pytest.raises(OSError):
+            DirectoryBackend(blocker).write_json(CacheKey("Cu-Mg", KIND_DFT_ENTRIES, "GGA"), [])
+        assert blocker.read_text() == "not a directory"
+
+
+REAL_ENTRY = {"composition": {"Cu": 1.0}, "energy": -3.7, "entry_id": "mp-30"}
+TAGGED_ENTRY = {
+    "composition": {"Cu": 1.0, "Mg": 2.0},
+    "energy": -13.4,
+    "entry_id": "imputed:Mg2Cu",
+    "data": {"imputed": True},
+}
+
+
+class TestDirectoryBackendImputedKind:
+    """``KIND_IMPUTED_ENTRIES`` over a directory store, where the set lives INSIDE the
+    DFT-entries record. The same seam a single-file store answers from its own table, so
+    no caller has to ask which backend it holds."""
+
+    def _record(self, tmp_path, entries):
+        (tmp_path / "Cu-Mg_ENTRIES_MP_GGA.json").write_text(json.dumps(entries))
+        return DirectoryBackend(tmp_path)
+
+    def test_reading_returns_only_the_tagged_entries(self, tmp_path):
+        backend = self._record(tmp_path, [REAL_ENTRY, TAGGED_ENTRY])
+        assert backend.read_json(CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA")) == [TAGGED_ENTRY]
+
+    def test_the_two_kinds_name_the_same_file(self, tmp_path):
+        backend = DirectoryBackend(tmp_path)
+        assert backend.path_for(CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA")) == backend.path_for(
+            CacheKey("Cu-Mg", KIND_DFT_ENTRIES, "GGA")
+        )
+
+    def test_exists_follows_the_dft_record(self, tmp_path):
+        key = CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA")
+        assert DirectoryBackend(tmp_path).exists(key) is False
+        assert self._record(tmp_path, [REAL_ENTRY]).exists(key) is True
+
+    def test_writing_replaces_the_tagged_entries_and_keeps_the_real_ones(self, tmp_path):
+        backend = self._record(tmp_path, [REAL_ENTRY, TAGGED_ENTRY])
+        replacement = dict(TAGGED_ENTRY, entry_id="imputed:CuMg")
+        backend.write_json(CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA"), [replacement])
+        on_disk = json.loads((tmp_path / "Cu-Mg_ENTRIES_MP_GGA.json").read_text())
+        assert on_disk == [REAL_ENTRY, replacement]
+
+    def test_writing_an_empty_set_clears_the_tagged_entries(self, tmp_path):
+        backend = self._record(tmp_path, [REAL_ENTRY, TAGGED_ENTRY])
+        key = CacheKey("Cu-Mg", KIND_IMPUTED_ENTRIES, "GGA")
+        backend.write_json(key, [])
+        assert backend.read_json(key) == []
+        assert backend.read_json(CacheKey("Cu-Mg", KIND_DFT_ENTRIES, "GGA")) == [REAL_ENTRY]
+
+    def test_variants_reports_only_a_record_that_carries_a_tagged_entry(self, tmp_path):
+        (tmp_path / "Cu-Mg_ENTRIES_MP_GGA.json").write_text(json.dumps([REAL_ENTRY, TAGGED_ENTRY]))
+        (tmp_path / "Cu-Mg_ENTRIES_MP_R2SCAN.json").write_text(json.dumps([REAL_ENTRY]))
+        backend = DirectoryBackend(tmp_path)
+        assert backend.variants("Cu-Mg", KIND_IMPUTED_ENTRIES) == ["GGA"]
+        # control: both records exist for the DFT kind
+        assert backend.variants("Cu-Mg", KIND_DFT_ENTRIES) == ["GGA", "R2SCAN"]
+
+
 class TestResolveBackend:
     def test_none_means_the_configured_global_store(self, store):
         backend = resolve_backend(None)
         assert backend.path_for(CacheKey("Cu-Mg", "mpds", "0")) == store / "Cu-Mg_MPDS_PD_0.json"
 
     def test_the_global_backend_tracks_later_config_changes(self, store, monkeypatch, tmp_path):
-        """``set_cache_dir`` mid-session must be observed, as ``config.data_dir`` was."""
+        """``set_cache_dir`` mid-session must be observed."""
         backend = resolve_backend(None)
         moved = tmp_path / "moved"
         moved.mkdir()
@@ -264,7 +284,7 @@ class TestResolveBackend:
         assert backend.path_for(CacheKey("Cu-Mg", "mpds", "0")) == moved / "Cu-Mg_MPDS_PD_0.json"
 
     def test_a_path_means_a_FLAT_directory_backend(self, store, monkeypatch, tmp_path):
-        """Today's explicit-``data_dir`` semantics: flat inside it, whatever the global mode."""
+        """An explicit ``data_dir`` is flat inside it, whatever the global mode."""
         monkeypatch.setattr(config, "dir_structure", "nested")
         explicit = tmp_path / "explicit"
         backend = resolve_backend(explicit)
@@ -301,7 +321,7 @@ class TestResolveBackend:
 
 
 class TestResolveCachePath:
-    """``api.resolve_cache_path`` — the supported replacement for ``_resolve_sys_dir``."""
+    """``api.resolve_cache_path`` names the path of one record."""
 
     def test_returns_the_record_path_for_a_directory_store(self, store):
         got = api.resolve_cache_path(CacheKey("Cu-Mg", "mpds", "0"))
@@ -325,16 +345,10 @@ class TestResolveCachePath:
 
 
 class TestWriteSitesStillProduceTheHistoricalFiles:
-    """End-to-end: the three api entry points write exactly the filenames they used to."""
+    """End-to-end: the three api entry points write the on-disk filenames."""
 
     def test_cold_fetch_writes_the_entries_file(self, tmp_path, monkeypatch):
-        from pymatgen.core import Composition
-        from pymatgen.entries.computed_entries import ComputedEntry
-
-        pool = [
-            ComputedEntry(Composition(f), e, entry_id=f"s-{f}").as_dict()
-            for f, e in (("Cu", 0.0), ("Mg", 0.0), ("CuMg2", -0.9))
-        ]
+        pool = cu_mg_entry_pool()
         monkeypatch.setattr(api, "_get_dft_entries_from_components", lambda *a, **k: pool)
         api.get_dft_convexhull(["Cu", "Mg"], "GGA", data_dir=tmp_path)
         assert [p.name for p in tmp_path.iterdir()] == ["Cu-Mg_ENTRIES_MP_GGA.json"]

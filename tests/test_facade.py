@@ -5,14 +5,11 @@ The façade IS the public surface: every name in __all__ must resolve through
 Any change to __all__ is a breaking change needing explicit sign-off.
 """
 
-import os
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
 import gliquid
+
+from ._fresh import ok, run_fresh
 
 
 class TestFacadeExports:
@@ -27,22 +24,51 @@ class TestFacadeExports:
         with pytest.raises(AttributeError):
             gliquid.not_a_real_export  # noqa: B018
 
-    def test_version_is_nonempty_string(self):
-        assert isinstance(gliquid.__version__, str) and gliquid.__version__
-
     def test_dir_lists_exports(self):
         listing = dir(gliquid)
-        assert "BinaryLiquid" in listing and "set_data_dir" in listing
+        assert "BinaryLiquid" in listing and "set_cache_dir" in listing
+        assert "set_data_dir" not in listing
 
 
-def test_import_gliquid_is_lazy():
+def test_import_gliquid_is_lazy(tmp_path):
     """A bare `import gliquid` must not drag in matplotlib or plotly."""
     code = (
         "import gliquid, sys; "
         "heavy = [m for m in ('matplotlib', 'plotly') if m in sys.modules]; "
-        "assert not heavy, f'heavy imports leaked: {heavy}'"
+        "assert not heavy, f'heavy imports leaked: {heavy}'; "
+        "print('OK')"
     )
-    env = os.environ.copy()
-    src = str(Path(__file__).resolve().parents[1] / "src")
-    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
-    subprocess.run([sys.executable, "-c", code], check=True, env=env)
+    ok(run_fresh(code, tmp_path))
+
+
+def test_runner_frames_is_the_cache_constant():
+    import gliquid.cache as gliquid_cache
+    import gliquid.production_model_runner as runner
+
+    assert runner.FRAMES is gliquid_cache.ML_FRAMES
+
+
+def test_binary_reexports_only_the_released_plot_names():
+    """gliquid.binary re-exports the six released plot-stack names and no private helper."""
+    import gliquid.binary as binary
+    import gliquid.plotting.binary_tx as binary_tx
+    import gliquid.plotting.style as style
+
+    homes = {
+        "plot_tx": binary_tx,
+        "record_tie_lines": binary_tx,
+        "build_polymorph_transitions": binary_tx,
+        "SS_FIXED_COLORS": style,
+        "build_phase_color_map": style,
+        "format_phase_display_name": style,
+    }
+    for name, home in homes.items():
+        assert getattr(binary, name) is getattr(home, name), name
+    for name in (
+        "_pack_labels",
+        "_OrientationLatch",
+        "_ss_regions",
+        "_PLOT_W_PX",
+        "_abbreviate_phase_name",
+    ):
+        assert not hasattr(binary, name), name

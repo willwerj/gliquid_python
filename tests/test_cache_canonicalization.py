@@ -1,13 +1,15 @@
-"""Canonical (alphabetical) disk-cache keys + reversed-frame mirroring (red->green, S4).
+"""Canonical (alphabetical) disk-cache keys + reversed-frame mirroring.
 
 Construction order is authoritative for every in-memory object, but ON-DISK cache keys
 canonicalize to the alphabetical system name, so 'Zr-Hf' and 'Hf-Zr' hit the SAME cache
-files (matrix_data grew 12 duplicate reversed-order dirs before this). MPDS-derived
+files, avoiding duplicate reversed-order directories in a per-system corpus. MPDS-derived
 artifacts (digitized liquidus, low-T phase data) are stored in the json's own
 alphabetical frame and mirrored into the construction frame at their consumption
-boundaries. Everything runs offline against the shipped Hf-Zr / Al-Mg-Si fixtures.
+boundaries. Everything runs offline against the shipped Hf-Zr fixtures and a synthetic
+Al-Mg-Si entries record.
 """
 
+import json
 import shutil
 from pathlib import Path
 
@@ -29,10 +31,35 @@ def _no_mpds_client(*args, **kwargs):
     raise AssertionError("cache miss: the live MPDS client was constructed")
 
 
+def _entry(composition, energy, entry_id):
+    """A ``ComputedEntry`` dict as a cached entries record stores it."""
+    return {
+        "@module": "pymatgen.entries.computed_entries",
+        "@class": "ComputedEntry",
+        "composition": composition,
+        "energy": energy,
+        "entry_id": entry_id,
+        "correction": 0.0,
+        "energy_adjustments": [],
+    }
+
+
+# An Al-Mg-Si entries record: the three elements, three binaries and one ternary.
+AL_MG_SI_ENTRIES = [
+    _entry({"Al": 1.0}, -3.7, "mp-134-GGA"),
+    _entry({"Mg": 1.0}, -1.5, "mp-153-GGA"),
+    _entry({"Si": 1.0}, -5.4, "mp-149-GGA"),
+    _entry({"Mg": 2.0, "Si": 1.0}, -9.0, "mp-1367-GGA"),
+    _entry({"Al": 3.0, "Mg": 2.0}, -15.0, "mp-1000-GGA"),
+    _entry({"Al": 1.0, "Si": 1.0}, -8.9, "mp-1001-GGA"),
+    _entry({"Al": 1.0, "Mg": 1.0, "Si": 1.0}, -10.4, "mp-1002-GGA"),
+]
+
+
 class TestCanonicalCacheKeys:
     @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_dft_cache_reversed_binary_hits_canonical_file(self, tmp_path, monkeypatch):
-        src = Path(config.data_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
+        src = Path(config.cache_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Hf-Zr_ENTRIES_MP_GGA.json")
         monkeypatch.setattr(api, "_get_dft_entries_from_components", _no_fetch)
         ch, _ = api.get_dft_convexhull(["Zr", "Hf"], "GGA", data_dir=tmp_path)
@@ -40,10 +67,9 @@ class TestCanonicalCacheKeys:
         assert [str(el) for el in ch.elements] == ["Zr", "Hf"]
         assert len(ch.stable_entries) >= 2
 
-    @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
+    @pytest.mark.directory_only  # reads a record FILE from a directory store at tmp_path
     def test_dft_cache_reversed_ternary_hits_canonical_file(self, tmp_path, monkeypatch):
-        src = Path(config.data_dir) / "Al-Mg-Si_ENTRIES_MP_GGA.json"
-        shutil.copy(src, tmp_path / "Al-Mg-Si_ENTRIES_MP_GGA.json")
+        (tmp_path / "Al-Mg-Si_ENTRIES_MP_GGA.json").write_text(json.dumps(AL_MG_SI_ENTRIES))
         monkeypatch.setattr(api, "_get_dft_entries_from_components", _no_fetch)
         ch, _ = api.get_dft_convexhull(["Si", "Al", "Mg"], "GGA", data_dir=tmp_path)
         assert [str(el) for el in ch.elements] == ["Si", "Al", "Mg"]
@@ -139,22 +165,22 @@ class TestLowTempPhaseDataFrame:
                     "is_solid": True,
                     "label": "HfZr3 rt",
                     "kind": "compound",
-                    "svgpath": "30,500 30,1450",
+                    "svgpath": "30,420 30,1450",
                 },
             ],
         }
 
     @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_mpds_side_follows_hull_frame(self, tmp_path, monkeypatch):
-        src = Path(config.data_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
+        src = Path(config.cache_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Hf-Zr_ENTRIES_MP_GGA.json")
         monkeypatch.setattr(api, "_get_dft_entries_from_components", _no_fetch)
         ch_a, _ = api.get_dft_convexhull(["Hf", "Zr"], "GGA", data_dir=tmp_path)
         ch_r, _ = api.get_dft_convexhull(["Zr", "Hf"], "GGA", data_dir=tmp_path)
         j = self._synthetic_json()
 
-        (cong_a, incong_a, tmax_a), _ = mpds.get_low_temp_phase_data(j, ch_a)
-        (cong_r, incong_r, tmax_r), _ = mpds.get_low_temp_phase_data(j, ch_r)
+        (cong_a, incong_a, tmax_a, forms_a), _ = mpds.get_low_temp_phase_data(j, ch_a)
+        (cong_r, incong_r, tmax_r, forms_r), _ = mpds.get_low_temp_phase_data(j, ch_r)
 
         all_a = {**cong_a, **incong_a}
         all_r = {**cong_r, **incong_r}
@@ -166,19 +192,29 @@ class TestLowTempPhaseDataFrame:
             assert (r1, r2) == (pytest.approx(1 - c2), pytest.approx(1 - c1))
             assert tr == pytest.approx(t, rel=RTOL)
 
+        assert set(forms_a) == set(all_a) == set(forms_r)
+        for name, records_a in forms_a.items():
+            records_r = forms_r[name]
+            assert len(records_r) == len(records_a)
+            for rec_a, rec_r in zip(records_a, records_r):
+                (c1, c2), (r1, r2) = rec_a["comp_range"], rec_r["comp_range"]
+                assert (r1, r2) == (pytest.approx(1 - c2), pytest.approx(1 - c1))
+                for key in ("form", "t_lo", "t_hi", "decomp"):
+                    assert rec_r[key] == rec_a[key]
+
     @pytest.mark.directory_only  # seeds tmp_path by copying a FILE out of the corpus
     def test_component_phases_are_not_melting_compounds(self, tmp_path, monkeypatch):
         """A pure component is neither congruent nor incongruent, and must not set the
         temperature scale either. '(Zr) rt' here is the frame edge spanning the full
-        temperature axis -- exactly Cr-Ti's defect -- so leaving it in would pin
-        max_phase_temp to the top of the diagram and squash the real compound bars."""
-        src = Path(config.data_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
+        temperature axis -- the same shape Cr-Ti's diagram has -- so leaving it in would
+        pin max_phase_temp to the top of the diagram and squash the real compound bars."""
+        src = Path(config.cache_dir) / "Hf-Zr_ENTRIES_MP_GGA.json"
         shutil.copy(src, tmp_path / "Hf-Zr_ENTRIES_MP_GGA.json")
         monkeypatch.setattr(api, "_get_dft_entries_from_components", _no_fetch)
         ch, _ = api.get_dft_convexhull(["Hf", "Zr"], "GGA", data_dir=tmp_path)
 
         j = self._synthetic_json()
-        (cong_ref, incong_ref, tmax_ref), _ = mpds.get_low_temp_phase_data(j, ch)
+        (cong_ref, incong_ref, tmax_ref, _), _ = mpds.get_low_temp_phase_data(j, ch)
 
         j_with_component = self._synthetic_json()
         j_with_component["shapes"].append(
@@ -190,8 +226,9 @@ class TestLowTempPhaseDataFrame:
                 "svgpath": "100,450 100,1590",
             }
         )
-        (cong, incong, tmax), _ = mpds.get_low_temp_phase_data(j_with_component, ch)
+        (cong, incong, tmax, forms), _ = mpds.get_low_temp_phase_data(j_with_component, ch)
 
         assert "(Zr)" not in {**cong, **incong}
+        assert "(Zr)" not in forms
         assert (set(cong), set(incong)) == (set(cong_ref), set(incong_ref))
         assert tmax == pytest.approx(tmax_ref, rel=RTOL)

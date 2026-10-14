@@ -1,26 +1,16 @@
 """The pooled entry store: ``entry_pool`` and its coverage record.
 
 Pooling deduplicates DFT entries by ``entry_id`` across systems and reassembles a system's
-record as ``chemsys IN (<its non-empty subsets>)``. It is enabled for TERNARIES only, and
-only because a drift census says so: 0.00% payload drift over 6,241 repeated ids in the 109
-existing ternary caches, against 3.58% in the binary corpus. The tests here pin the three
-things that make that reassembly trustworthy rather than merely small:
+record as ``chemsys IN (<its non-empty subsets>)``. It is enabled for TERNARIES only. The
+tests here pin three things:
 
 * **The query shape is the fetch's shape.** ``chemsys_subsets`` returns exactly the groups
-  ``MPRester.get_entries_in_chemsys`` enumerates -- 7 for a ternary, 3 for a binary. A
-  narrower query would return a smaller entry set than the fetch did, and the hull built
-  from it would be quietly missing phases.
+  ``MPRester.get_entries_in_chemsys`` enumerates -- 7 for a ternary, 3 for a binary.
 * **Coverage is recorded, never inferred.** A system whose entries all happen to be in the
-  pool, because its neighbours contributed them, must still read as ABSENT unless it was
-  actually pooled. This is the single most dangerous failure available here: the pool would
-  return a plausible, non-empty entry list with every ternary compound missing, and the
-  hull would be wrong with nothing raising.
-* **Drift is reported, never resolved.** Two payloads for one ``entry_id`` is the condition
-  that rules pooling out; ``write_pool_entries`` keeps the first and NAMES the conflict
-  rather than picking a winner.
-
-The end-to-end reconstruction against real data (109 systems, hull by hull) lives in
-``dev/tests/test_ternary_entry_pool.py``, next to the corpus it needs.
+  pool, because its neighbours contributed them, still reads as ABSENT unless it was
+  actually pooled.
+* **Drift is reported, never resolved.** For two payloads under one ``entry_id``,
+  ``write_pool_entries`` keeps the first and NAMES the conflict.
 """
 
 import json
@@ -53,12 +43,8 @@ from gliquid.cache import (
 # arranged so every entry is on the hull, which makes a dropped entry visible as a changed
 # hull rather than as nothing at all.
 def _entry(composition, energy, entry_id):
-    """One cached entry, in the shape ``ComputedEntry.from_dict`` accepts.
-
-    ``correction`` and ``energy_adjustments`` are not decoration: pymatgen raises
-    ``KeyError: 'correction'`` without them, so an entry dict missing them would never
-    reach a hull and these tests would be exercising a shape the corpus does not hold.
-    """
+    """One cached entry, in the shape ``ComputedEntry.from_dict`` accepts: pymatgen raises
+    ``KeyError: 'correction'`` without ``correction`` and ``energy_adjustments``."""
     return {
         "@module": "pymatgen.entries.computed_entries",
         "@class": "ComputedEntry",
@@ -86,12 +72,8 @@ TERNARY_SYS = "Ag-Cu-Zr"
 
 
 def _create_plain_store(path):
-    """A store with the base schema and NO pool, actually written to disk.
-
-    ``SqliteBackend`` opens its connection lazily, so constructing one with ``create=True``
-    and immediately closing it leaves no file at all -- the schema is created by the first
-    query, not by ``__init__``. Touching ``meta()`` is what forces it.
-    """
+    """A store with the base schema and NO pool, actually written to disk: ``SqliteBackend``
+    connects lazily, so touching ``meta()`` is what creates the file."""
     backend = SqliteBackend(path, create=True)
     backend.meta()
     backend.close()
@@ -156,7 +138,9 @@ class TestEntryIdentity:
     def test_dict_entry_id_is_keyed_canonically(self):
         """Two spellings of one new-API id must collide, not become two rows."""
         reordered = _entry(
-            AGCUZR["composition"], AGCUZR["energy"], {"database_IDs": {}, "identifier": "mp-aaaaaaeu"}
+            AGCUZR["composition"],
+            AGCUZR["energy"],
+            {"database_IDs": {}, "identifier": "mp-aaaaaaeu"},
         )
         assert entry_pool_id(reordered) == entry_pool_id(AGCUZR)
 
@@ -209,12 +193,8 @@ class TestPoolRoundTrip:
 
 
 class TestCoverageIsRecordedNotInferred:
-    """The pool's most dangerous failure mode, pinned.
-
-    ``Ag-Cu`` and ``Ag-Cu-Ti`` both have entries sitting in the pool -- contributed by
-    Ag-Cu-Zr -- yet neither was ever fetched. Answering them from those entries would hand
-    back a hull with every unseen phase missing and nothing raising.
-    """
+    """``Ag-Cu`` and ``Ag-Cu-Ti`` both have entries sitting in the pool, contributed by
+    Ag-Cu-Zr, yet neither was ever fetched, so both read as absent."""
 
     def test_an_unfetched_subsystem_reads_as_absent(self, pooled_store):
         backend = SqliteBackend(pooled_store)
@@ -237,9 +217,7 @@ class TestCoverageIsRecordedNotInferred:
         """Without this, the two tests above would pass on an empty pool."""
         backend = SqliteBackend(pooled_store)
         reachable = backend.read_pool_entries(["Ag", "Cu"])
-        assert {entry_pool_id(e) for e in reachable} == {
-            entry_pool_id(e) for e in (AG, CU, AGCU)
-        }
+        assert {entry_pool_id(e) for e in reachable} == {entry_pool_id(e) for e in (AG, CU, AGCU)}
         backend.close()
 
     def test_a_different_dft_type_is_not_covered(self, pooled_store):
@@ -249,12 +227,8 @@ class TestCoverageIsRecordedNotInferred:
 
 
 class TestBinaryReadThroughTheSubsetQuery:
-    """Acceptance: a binary served by the 3-subset ``IN`` matches the per-system blob.
-
-    This proves the query SHAPE, and deliberately changes nothing about where binaries are
-    actually read from -- they stay per-system blobs, because their measured 3.58% payload
-    drift is exactly what pooling cannot survive.
-    """
+    """A binary served by the 3-subset ``IN`` matches the per-system blob. This pins the
+    query SHAPE; binaries are still read from their per-system blobs."""
 
     def test_three_subset_read_equals_the_edge_of_the_source_record(self, pooled_store):
         backend = SqliteBackend(pooled_store)
@@ -266,11 +240,8 @@ class TestBinaryReadThroughTheSubsetQuery:
         backend.close()
 
     def test_a_blob_wins_over_the_pool_when_both_are_present(self, tmp_path):
-        """Precedence, asserted rather than assumed.
-
-        The blob is what a fetch actually returned for that system; the pool is a
-        reassembly. Where both exist the un-reassembled one must win.
-        """
+        """Where both exist, the blob (what a fetch returned) wins over the pool's
+        reassembly."""
         path = tmp_path / "both.sqlite"
         backend = SqliteBackend(path, create=True)
         backend.ensure_entry_pool()
@@ -376,7 +347,7 @@ class TestStats:
 
     def test_recorded_sha256_matches_a_pooled_read(self, pooled_store):
         backend = SqliteBackend(pooled_store)
-        (_, _, _, recorded, _), = backend.pool_systems()
+        ((_, _, _, recorded, _),) = backend.pool_systems()
         pooled = backend.read_json(CacheKey(TERNARY_SYS, KIND_DFT_ENTRIES, "GGA"))
         assert recorded == entry_list_sha256(pooled)
         backend.close()
