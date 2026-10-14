@@ -1,11 +1,10 @@
 """build_phase_color_map: the PHASE_PALETTE contract + SS collision guard.
 
-The unified palette scheme (user-curated max-contrast PHASE_PALETTE, secondary-track
-S7b — replacing the retired Pastel binary scheme and the Dark24_r ternary scheme) lives
-in gliquid.plotting.style.build_phase_color_map. Two contracts:
+The palette scheme (the max-contrast PHASE_PALETTE) lives in
+gliquid.plotting.style.build_phase_color_map. Two contracts:
 1. ASSIGNMENT — line phases cycle PHASE_PALETTE in ``phase_names`` order and 'L' is
    cornflowerblue; the live-vs-frozen dict check runs in
-   test_binary_figure_characterization.py.
+   test_decomposition_pins.py (the ``color_map`` figure summaries).
 2. COLLISION-FREE — no line-phase or liquid color may equal any of the 3 reserved
    SS_FIXED_COLORS, compared numerically (hex vs 'rgb(r, g, b)' vs named colors).
 """
@@ -43,10 +42,21 @@ class TestPaletteAssignment:
         assert got[f"P{len(PHASE_PALETTE)}"] == PHASE_PALETTE[0]
         assert got[f"P{len(PHASE_PALETTE) + 1}"] == PHASE_PALETTE[1]
 
-    def test_pinned_assignment_is_covered_by_characterization(self):
-        """The live-vs-frozen check runs in
-        test_binary_figure_characterization.py::test_hsx_color_map_pinned against the
-        PHASE_PALETTE color_map dicts refrozen at the palette-unification step."""
+    def test_inserting_imputed_phase_preserves_other_colors(self):
+        """Inserting an imputed phase at an interior composition must not shift the
+        palette index -- and therefore the color -- of any pre-existing phase."""
+        phase_names = ["A", "B", "C", "D", "L"]
+        polymorph_names = {"A", "D"}
+        before = build_phase_color_map(phase_names, polymorph_names=polymorph_names)
+
+        with_imputed = ["A", "B", "Imp", "C", "D", "L"]
+        after = build_phase_color_map(
+            with_imputed, polymorph_names=polymorph_names, imputed_names={"Imp"}
+        )
+
+        for phase, color in before.items():
+            assert after[phase] == color
+        assert after["Imp"] not in set(before.values())
 
 
 class TestSsCollisionGuard:

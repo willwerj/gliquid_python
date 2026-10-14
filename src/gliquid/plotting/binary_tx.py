@@ -1,11 +1,9 @@
 """Binary T-X phase-diagram rendering: the module-level plot stack over an HSX instance.
 
-Exported from gliquid.binary: label layout + legend placement helpers, the plot_tx
-renderer, and polymorph-transition annotations. Colors and display-name rules live in
-gliquid.plotting.style. Pure presentation over an HSX instance + dataframes -- no
-model imports (import order:
-hsx <- plotting.binary_tx <- binary). plot_tx and _place_legend mutate hsx.conds in
-place (pinned behavior).
+gliquid.binary re-exports plot_tx, record_tie_lines and build_polymorph_transitions. Colors
+and display-name rules live in gliquid.plotting.style. Pure presentation over an HSX
+instance + dataframes -- no model imports (import order: hsx <- plotting.binary_tx <-
+binary). plot_tx and _place_legend mutate hsx.conds in place (pinned behavior).
 """
 
 from __future__ import annotations
@@ -20,21 +18,25 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
+from gliquid.phase import non_dft_kind
 from gliquid.plotting.style import (
     ASSESSED_LIQUIDUS_COLOR,
+    ASSESSED_LIQUIDUS_UNSUPPORTED_COLOR,
+    IMPUTED_LEGEND_LABEL,
+    IMPUTED_LINE_DASH,
     LIQUID_COLOR,
     PREDICTED_LIQUIDUS_COLOR,
+    abbreviate_phase_name,
     build_phase_color_map,
+    contrast_text,
     format_phase_display_name,
-    subscript_formula,
+    non_dft_legend_label,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# --- Solid-solution envelope geometry -------------------------------------------------
-# A continuous SS field is drawn as a closed, hatch-filled polygon. Both boundaries come
-# from the same branch split, so they cannot disagree about where a composition gap falls.
+# -- Solid-solution envelope geometry: a continuous SS field is a closed, hatch-filled polygon --
 _SS_PINCH_FRAC = 0.05  # terminal spread <= this fraction of the widest -> single apex
 _SS_EDGE_STEPS = 1.5  # a terminus this close (in grid steps) to 0/100 is an axis end
 _SS_APEX_STEPS = 3.0  # cap on how far past the terminus an extrapolated apex may land
@@ -42,40 +44,28 @@ _SS_EXTREME_STEPS = 0.75  # composition tolerance when matching a tie to an extr
 _SS_LINE_W = 2.4  # outline width, uniform around the whole ring
 _SS_HATCH_SIZE_PX = 9.0
 _SS_HATCH_SOLIDITY = 0.22
-# _SS_TIE_T_FRAC is retained alongside the region anchors it belongs to; the extremum
-# admission it sized was removed from _ss_tie_allowed and nothing reads it now.
-_SS_TIE_T_FRAC = 0.005  # temperature tolerance when matching a tie to a field vertex
-# _SS_TIE_FRAME_FRAC is load-bearing: it is admission rule 2 of
-# _ss_minimum_tie_allowed -- a field clipped by the bottom of the plotted range has an
-# artificial minimum sitting there, not a physical one.
+# Admission rule 2 of _ss_minimum_tie_allowed: a minimum this close to the plotted floor is a
+# clipping artifact.
 _SS_TIE_FRAME_FRAC = 0.025  # how close to the plotted T range counts as "at its edge"
-# Half-width of the "at the minimum" temperature window used when reading the assemblage
-# on either side of it, as a fraction of the plotted span. Sized to exclude the
-# invariant's own facets, never a neighbouring equilibrium.
+# Half-width of the temperature window, as a fraction of the plotted span, read on either side
+# of a minimum.
 _SS_MIN_T_EPS_FRAC = 1e-6
-# Three-phase invariants put a participating solution phase at its solubility limit by
-# definition, so they bypass the SS admission filter entirely.
+# Three-phase invariants bypass the SS admission filter.
 _SS_TIE_ALWAYS_KEYS = ("Eutectics", "Peritectics")
 # The inv_points keys plot_tx draws ties from, in the order hsx.py emits them.
 _TIE_INV_KEYS = ("Eutectics", "Peritectics", "Misc Gaps", "Solid Ties")
-# The label hsx.py gives the liquid phase. An invariant carrying two of these is an
-# L1+L2 (monotectic) horizontal, which is admitted regardless of any SS field it touches.
+# The liquid label from hsx.py; an invariant carrying two is an L1+L2 horizontal, always admitted.
 _LIQUID_LABEL = "L"
-# Minimum separation (at.%) between the two solid vertices of an L + S1 + S2 invariant for
-# them to be two distinct compositions rather than adjacent samples of one continuous
-# boundary. hsx.liquidus_invariants' own width gate measures liquid-to-solid distance and
-# so never rejects a collapsed solid pair.
+# Minimum separation (at.%) between the two solid vertices of an L + S1 + S2 invariant for them
+# to be distinct compositions.
 _SS_TIE_SOLID_GAP_PCT = 1.2
-# Ties within this fraction of the plotted temperature span whose composition spans touch
-# or overlap are merged into one trace spanning their union. Keep small: merging distinct
-# invariants that happen to sit close in temperature is the failure mode.
+# Ties within this fraction of the plotted temperature span whose composition spans touch or
+# overlap merge into one trace spanning their union.
 _TIE_MERGE_T_FRAC = 0.005  # ~10 K on a 2000 K diagram
 
 
-# --- Tie-line instrumentation ---------------------------------------------------------
-# While a sink is installed, plot_tx appends one mutable record per drawn tie --
-# ``{'temp', 'x0', 'x1', 'sources'}`` -- and a merge updates the record already there, so
-# the sink mirrors fig.data. Inert when None.
+# -- Tie-line instrumentation: while a sink is installed, plot_tx appends one record per drawn
+# tie (``{'temp', 'x0', 'x1', 'sources'}``), updated in place on a merge; inert when None --
 _TIE_SINK: list | None = None
 
 
@@ -104,11 +94,8 @@ def _grid_step(x_vals: np.ndarray) -> float:
     :func:`_ss_regions` and :func:`_split_indices` both accept.
 
     Two or fewer samples cannot evidence a grid at all: the only spacing present is the
-    candidate GAP itself. Mo-Y's and W-Y's BCC fields are sampled at exactly 0.2 and 100
-    at.%, and taking 99.8 as the "step" made :func:`_split_indices`' 1.5x rule
-    unsatisfiable, welding two terminal branches into one diagram-spanning quadrilateral.
-    So a two-sample array is capped at the 1 at.% base composition grid -- it may report a
-    FINER spacing (Hf-W's HCP field really is sampled at 0.2 and 0.4), never a coarser one.
+    candidate GAP itself. So a two-sample array is capped at the 1 at.% base composition
+    grid -- it may report a FINER spacing, never a coarser one.
     """
     if x_vals.size <= 1:
         return 1.0
@@ -126,8 +113,7 @@ def _hull_grid_step(x_pct: np.ndarray) -> float:
     The FINEST spacing present, not the median. A presentation hull refines only its
     SOLUTION phases (``BinaryLiquid.refined_hsx``), so wherever no solution phase is stable
     the axis falls back to the coarse 1 at.% liquid grid -- and a median then reports that
-    instead of the grid the solution field was actually sampled on. Both Mo-Y (median 1.0)
-    and Hf-Y (median 0.2) come off the same 0.2 at.% presentation grid.
+    instead of the grid the solution field was actually sampled on.
 
     Rounded before differencing: the coarse and refined grids are built by different
     arithmetic (``np.arange(0, 1.01, 0.01)`` against ``np.arange(n + 1) / n``), so a shared
@@ -200,8 +186,7 @@ def _match_edge_interval(
     """The component polymorph a solid-solution branch degenerates into at ``edge``.
 
     ``edge_intervals`` maps a composition-axis edge to the ``(t_lo, t_hi)`` stability
-    intervals of the non-solution solid phases sitting there -- for Hf-Y's x=0 that is
-    alpha-Hf [733.4, 1742.9] and beta-Hf [1742.9, 2232.8]. The branch's own temperature
+    intervals of the non-solution solid phases sitting there. The branch's own temperature
     extent at its outermost sampled composition picks between them by overlap, so no phase
     name or spacegroup has to be parsed and a bcc branch cannot be snapped onto an hcp
     ground state. Returns None when nothing overlaps, leaving extrapolation in charge.
@@ -245,15 +230,11 @@ def _apex_from_invariant(
 
     Maximum solubility occurs AT the eutectic/peritectic, so when one of those sits on the
     blunt face the field's corner is that invariant's temperature -- the composition grid
-    just cannot reach the composition. Hf-Y's BCC face spans 1326.3-1488.4 C at x=21.4 and
-    its eutectic is at 1330.7 C, so the drawn field asserts a maximum solubility it never
-    locates.
+    just cannot reach the composition.
 
     The apex temperature is the invariant's. Its composition comes from extending whichever
-    boundary ENDS NEAREST that temperature: at Hf-Y's terminus the solvus is 4.4 K away and
-    near-linear (~35 K/at.%) while the solidus is 158 K away and plunging (-236 K/at.% over
-    the last step), so extrapolating the near one is both the shortest reach and by far the
-    better conditioned. Returns None when no invariant sits on the face or the reach is
+    boundary ENDS NEAREST that temperature, the shortest and best-conditioned reach. Returns
+    None when no invariant sits on the face or the reach is
     implausible, leaving the blunt terminus alone.
     """
     if not invariants:
@@ -307,11 +288,8 @@ def _ss_terminus(
     if abs(x_end - edge) <= _SS_EDGE_STEPS * step:
         snapped = None
         if abs(x_end - edge) > 1e-9:
-            # The branch stops short of the axis, so the corner would be extrapolated and a
-            # steep boundary can overshoot the component's transition temperature. At the
-            # axis a solid solution IS the pure component in that structure, so snap to the
-            # stability interval of the matching polymorph, matched by overlap rather than
-            # by name. Corners actually sampled at the axis are left as the hull produced.
+            # A branch stopping short of the axis snaps its corner to the stability interval of the
+            # overlapping component polymorph.
             snapped = _match_edge_interval(edge_intervals, edge, t_lo_end, t_hi_end)
         if snapped is not None:
             t_lo_edge, t_hi_edge = snapped
@@ -325,11 +303,6 @@ def _ss_terminus(
                 {"x": edge, "t": t_lo_edge, "on_edge": True, "kind": "edge"},
                 {"x": edge, "t": t_hi_edge, "on_edge": True, "kind": "edge"},
             ],
-            "edge_anchor": {
-                "x": edge,
-                "t_bottom": min(t_lo_edge, t_hi_edge),
-                "t_top": max(t_lo_edge, t_hi_edge),
-            },
             "vertex_anchors": [],
         }
 
@@ -342,14 +315,13 @@ def _ss_terminus(
         )
         return {
             "vertices": [{"x": apex_x, "t": apex_t, "on_edge": False, "kind": "apex"}],
-            "edge_anchor": None,
             "vertex_anchors": [
                 {"x_lo": span[0], "x_hi": span[1], "t": apex_t, "x": apex_x, "kind": "apex"}
             ],
         }
 
-    # Still blunt by shape -- but if a three-phase invariant sits on that face, IT is the
-    # maximum-solubility point and the face is only a grid artifact. Close on it.
+    # A three-phase invariant on a blunt face is the maximum-solubility point; the face closes on
+    # it.
     snapped_apex = _apex_from_invariant(
         apex_invariants, x_end, t_lo_end, t_hi_end, xs, lo, hi, from_left=from_left, step=step
     )
@@ -361,21 +333,17 @@ def _ss_terminus(
         )
         return {
             "vertices": [{"x": apex_x, "t": apex_t, "on_edge": False, "kind": "apex"}],
-            "edge_anchor": None,
             "vertex_anchors": [
                 {"x_lo": span[0], "x_hi": span[1], "t": apex_t, "x": apex_x, "kind": "apex"}
             ],
         }
 
-    # A blunt terminus is a vertical face: every temperature on it is at the maximum
-    # composition, so composition alone would re-admit one tie per grid step (Hf-Y's BCC
-    # field). Only its two corners count as extrema.
+    # Only the two corners of a blunt terminus count as extrema.
     return {
         "vertices": [
             {"x": x_end, "t": t_lo_end, "on_edge": False, "kind": "blunt"},
             {"x": x_end, "t": t_hi_end, "on_edge": False, "kind": "blunt"},
         ],
-        "edge_anchor": None,
         "vertex_anchors": [
             {"x_lo": span[0], "x_hi": span[1], "t": t_lo_end, "x": x_end, "kind": "blunt"},
             {"x_lo": span[0], "x_hi": span[1], "t": t_hi_end, "x": x_end, "kind": "blunt"},
@@ -439,9 +407,7 @@ def _ss_regions(
     x_pct, t_lo, t_hi = x_pct[order], t_lo[order], t_hi[order]
 
     regions = []
-    # ONE splitter call for the whole field, so the upper and lower boundaries can never
-    # disagree about where a composition gap falls (the Hf-Y / Ru-Y / Hf-W / Cr-W
-    # disconnection class). Both branches then share the same grid step.
+    # One splitter call for the whole field; both branches share its grid step.
     for start, stop in _split_indices(x_pct, grid_step=grid_step):
         xs, lo, hi = x_pct[start:stop], t_lo[start:stop], t_hi[start:stop]
         step = _grid_step(xs) if grid_step is None else float(grid_step)
@@ -481,13 +447,9 @@ def _ss_regions(
             if i == 0 or abs(p[0] - ring[i - 1][0]) > 1e-9 or abs(p[1] - ring[i - 1][1]) > 1e-9
         ]
 
-        # Interior temperature extrema are critical points too: the coldest point of a
-        # field is where it meets the invariant that terminates it, so anchoring only on
-        # composition extrema drops those ties.
-        #
-        # 'kind' names WHICH extremum an anchor marks: 'lower_min' is the branch's coldest
-        # sampled point and the only one _ss_minimum_tie_allowed draws a horizontal at. A
-        # terminus anchor keeps its own kind ('apex'/'blunt').
+        # Interior temperature extrema are anchors too. 'kind' names the extremum: 'lower_min' is
+        # the branch's coldest sampled point, where _ss_minimum_tie_allowed draws its horizontal; a
+        # terminus keeps 'apex'/'blunt'.
         vertex_anchors = left["vertex_anchors"] + right["vertex_anchors"]
         for kind, arr, idx in (
             ("lower_min", lo, int(np.argmin(lo))),
@@ -511,9 +473,8 @@ def _ss_regions(
                 "x": np.array([p[0] for p in ring], dtype=float),
                 "t": np.array([p[1] for p in ring], dtype=float),
                 "vertices": left["vertices"] + right["vertices"],
-                # plot_tx reads the 'lower_min' anchor, with 'edge_tol' as its interiority
-                # window, to place the eutectoid horizontal. 'edge_anchors' is fixture-only.
-                "edge_anchors": [a for a in (left["edge_anchor"], right["edge_anchor"]) if a],
+                # plot_tx reads the 'lower_min' anchor and 'edge_tol' to place the eutectoid
+                # horizontal.
                 "vertex_anchors": vertex_anchors,
                 "edge_tol": _SS_EDGE_STEPS * step,
             }
@@ -526,18 +487,15 @@ def _ss_solid_pair_phase(comps_pct, phases, ss_regions: dict[str, list[dict]]) -
 
     Qualifies only a three-vertex entry with exactly one liquid vertex whose other two
     vertices are the SAME solution phase at compositions that are genuinely APART -- a
-    solid miscibility gap meeting the liquidus (Cr-W's ``('BCC','BCC','L')`` at ~1932 C,
-    liquid at 14 at.% with the BCC pair at 28.8 and 71.2).
+    solid miscibility gap meeting the liquidus.
 
     The separation test is what makes the clause usable. ``hsx.liquidus_invariants`` gates
     a 'Misc Gaps' entry on ``comp_diff > 0.012``, but for this topology ``comp_diff`` is
     the LIQUID-to-nearest-solid distance -- the solid pair is never checked. So every
     slice of the ordinary two-phase L + SS band arrives here as an ``L + S1 + S2`` whose
     two "solid" vertices are adjacent samples of one continuous boundary: a collapsed
-    facet, not a gap. Measured over the acceptance corpus, every such artifact sits at
-    exactly one sampling step (0.20 at.%) while the one real reaction sits at 42.4 at.%,
-    so the emitter's own width gate re-applied to the SOLID pair separates them with two
-    orders of magnitude to spare.
+    facet, not a gap. The emitter's own width gate, re-applied to the SOLID pair, separates
+    the two.
     """
     comps = [float(c) for c in comps_pct]
     phases = list(phases)
@@ -591,39 +549,17 @@ def _ss_tie_allowed(
 ) -> bool:
     """Whether an invariant that touches a solid-solution field earns a tie line.
 
-    Four admissions, in the order they matter:
+    Admitted:
 
-      1. an invariant touching no SS field at all is passed through untouched -- this
-         filter only ever speaks about solution phases;
-      2. a eutectic or peritectic is a three-phase invariant, so a participating SS phase
-         sits AT its maximum solubility there by definition -- always drawn;
-      3. an invariant carrying two liquid vertices is an L1+L2 monotectic. Its remaining
-         vertex is a SOLID, which in a system like Sc-V is the solution phase itself
-         (['L', 'L', 'BCC'] at 1459 C), so any test that asks the SS field's geometry to
-         justify the tie rejects the one horizontal that marks the miscibility gap. The
-         liquid pair is what makes it an invariant, not the solid it terminates on --
-         always drawn;
-      4. an invariant with ONE liquid vertex and two SEPARATED compositions of the same
-         solution phase is an L + S1 + S2 -- a solid miscibility gap meeting the liquidus
-         (Cr-W's ~1932 C horizontal). Also invariant by the phase rule, so it is drawn,
-         but only the EXTREMAL (hottest) member of its family: the emitter hands one
-         reaction over as many grid slices, and admitting all of them restores the fan
-         this filter exists to stop. ``ss_family_max`` carries the per-phase maximum
-         computed once by the caller (``_ss_family_maxima``); without it the clause cannot
-         fire and behavior is exactly as it was before the clause existed.
+      1. an invariant touching no SS field;
+      2. a eutectic or peritectic (``inv_key`` in ``_SS_TIE_ALWAYS_KEYS``);
+      3. an L1+L2 monotectic (two liquid vertices);
+      4. an L + S1 + S2 invariant (one liquid vertex, two separated compositions of one solution
+         phase), only as the hottest member of its family: within ``_TIE_MERGE_T_FRAC`` of the
+         plotted span of ``ss_family_max[phase]`` (from ``_ss_family_maxima``).
 
-    Everything else -- a 'Misc Gaps' solvus or a 'Solid Ties' pair touching an SS field --
-    is dropped. Those mark no invariant: they are one grid-pair slice per temperature step
-    along a CONTINUOUS boundary (Cr-W emits 75, Hf-W 64), and the field's own hatched
-    polygon already draws where that boundary runs. Admitting them at the field's
-    composition extrema, as this function used to, put a tie line where no two-phase
-    equilibrium ends.
-
-    ``comps_pct``/``temp``/``t_range`` are read by clause 4 only: ``comps_pct`` measures
-    the solid-pair separation (see ``_ss_solid_pair_phase``), and the family maximum is
-    matched within ``_TIE_MERGE_T_FRAC`` of the plotted temperature span -- the same window
-    below which ``_add_tie`` would merge two ties into one trace anyway, so being exact to
-    the grid step buys nothing.
+    Anything else touching an SS field ('Misc Gaps' solvus slices, 'Solid Ties' pairs) is
+    dropped. ``comps_pct``, ``temp`` and ``t_range`` are read by clause 4 only.
     """
     if not any(p in ss_regions for p in phases):
         return True
@@ -751,18 +687,14 @@ def _ss_minimum_tie_allowed(
 
       1. **The coexisting assemblage changes across it.** Read the hull's own facets just
          above and just below the minimum temperature at the minimum composition and
-         require the two phase sets to differ. Y-Zr's BCC bottoms out at 768.0 C @ 91.0
-         at.% with HCP+HCP below and BCC+HCP above -- a reaction. Sc-V's Sc-side BCC
-         sliver bottoms out at 1330.6 C @ 0.4 at.% with BCC+HCP on BOTH sides -- a field
-         pinching to an apex inside one two-phase region, which is no invariant at all and
-         earns no horizontal. This is the whole physical content of the rule; 2 and 3 only
+         require the two phase sets to differ. A field pinching to an apex inside one
+         two-phase region has the same set on both sides and earns no horizontal. This is the
+         whole physical content of the rule; 2 and 3 only
          throw out minima that are artifacts of WHERE THE FIELD WAS CUT, not of what it does.
       2. **The minimum is interior.** Within ``edge_tol`` (the branch's own
          ``_SS_EDGE_STEPS`` window) of either composition axis it is not a minimum of the
          field at all -- the boundary is still running off the edge, where the solution
-         degenerates into the pure component and its unary polymorphic transition. Ti-V's
-         BCC lower boundary is monotonic from the Ti-side HCP->BCC transition down to its
-         V-side end at 99.8 at.%, one grid step from the axis: rejected here.
+         degenerates into the pure component and its unary polymorphic transition.
       3. **It is not at the plotted temperature floor.** A field the bottom of the frame
          cuts off has its coldest SAMPLE there rather than its coldest point.
     """
@@ -794,21 +726,22 @@ def _split_segments(
     return segments
 
 
-# Assessed (digitized) liquidus break, in at.%. Any gap wider than mpds._FILL_GAP_X is an
-# undigitized hole and must not be drawn through. A literal because this module takes no
-# model imports; test_multi_l_liquidus pins the two in sync.
+# Assessed liquidus break, in at.%: a wider gap is an undigitized hole. Equals mpds._FILL_GAP_X
+# * 100 (test_multi_l_liquidus pins the two).
 _ASSESSED_GAP_PCT = 6.0
-# A gap sitting exactly ON the fill threshold is legitimate in-region sampling that the
-# extractor declined to densify (Hf-Zr's widest is 5.96 at.%). x*100 - x'*100 can land a
-# few ulps above 6.0 for such a pair, so compare with slack -- real holes are 10+ at.%.
+# Slack on that comparison, so a gap exactly on the fill threshold is not a break.
 _ASSESSED_GAP_EPS = 1e-6
+
+# Line styles for the assessed liquidus; unsupported stretches are dash-dotted.
+_ASSESSED_DASH = "dash"
+_ASSESSED_UNSUPPORTED_DASH = "dashdot"
 
 
 def _assessed_liquidus_segments(points) -> list[list[list[float]]]:
     """Digitized liquidus (at.%, degC) split into the runs that are actually digitized.
 
     One segment per contiguous liquid region, so a connect-the-dots trace never draws a
-    phantom liquidus across a hole no 'L' shape covers (Bi-Si, Ag-Fe, Er-Ta, Ir-Th).
+    phantom liquidus across a hole no 'L' shape covers.
     """
     if not points:
         return []
@@ -821,14 +754,63 @@ def _assessed_liquidus_segments(points) -> list[list[list[float]]]:
     ]
 
 
-# ======================================================================================
-# Binary TX plot stack: plot-geometry constants, label helpers, and plot_tx over an HSX.
-# ======================================================================================
+def _normalize_ranges_pct(ranges) -> list[tuple[float, float]]:
+    """``[lo, hi]`` composition intervals as ordered at.% pairs, dropping degenerate ones."""
+    out = []
+    for entry in ranges or ():
+        lo, hi = float(entry[0]) * 100.0, float(entry[1]) * 100.0
+        if hi < lo:
+            lo, hi = hi, lo
+        if hi > lo:
+            out.append((lo, hi))
+    return sorted(out)
 
-# ---------------------------------------------------------------------------
-# Plotting geometry constants; must match the layout plot_tx builds. The single
-# source of truth for the pixel<->data conversions label-collision detection uses.
-# ---------------------------------------------------------------------------
+
+def _in_ranges(x: float, ranges_pct: list[tuple[float, float]]) -> bool:
+    """True when composition ``x`` (at.%) falls inside any of ``ranges_pct``."""
+    return any(lo <= x <= hi for lo, hi in ranges_pct)
+
+
+def _unsupported_liquidus_runs(segment, ranges_pct) -> list[tuple[list[list[float]], bool]]:
+    """One digitized run cut into ``(points, unsupported)`` sub-runs at the range edges.
+
+    Every range edge strictly interior to a sample interval is linearly interpolated onto
+    the curve and becomes a real vertex, so each resulting interval lies wholly inside or
+    wholly outside the union of ranges. Consecutive sub-runs SHARE that vertex -- it is the
+    last point of one and the first of the next -- so the drawn curve has no gap where the
+    colour changes. With no ranges the input segment is returned unchanged.
+    """
+    if not ranges_pct or not segment:
+        return [(list(segment), False)] if segment else []
+
+    edges = sorted({edge for pair in ranges_pct for edge in pair})
+    dense: list[list[float]] = [list(segment[0])]
+    for (x0, t0), (x1, t1) in zip(segment, segment[1:]):
+        interior = [e for e in edges if min(x0, x1) < e < max(x0, x1)]
+        if x1 < x0:
+            interior.reverse()
+        span = x1 - x0
+        for edge in interior:
+            frac = (edge - x0) / span if span else 0.0
+            dense.append([float(edge), float(t0 + frac * (t1 - t0))])
+        dense.append([float(x1), float(t1)])
+
+    if len(dense) == 1:
+        return [(dense, _in_ranges(dense[0][0], ranges_pct))]
+
+    runs: list[tuple[list[list[float]], bool]] = []
+    for start, end in zip(dense, dense[1:]):
+        unsupported = _in_ranges(0.5 * (start[0] + end[0]), ranges_pct)
+        if runs and runs[-1][1] == unsupported:
+            runs[-1][0].append(end)
+        else:
+            runs.append(([start, end], unsupported))
+    return runs
+
+
+# -- Binary TX plot stack: plot-geometry constants, label helpers, and plot_tx over an HSX --
+
+# Plotting geometry; matches the layout plot_tx builds and drives the pixel<->data conversions.
 _FIG_W_PX = 750
 _FIG_H_PX = 600
 _MARGIN_L_PX = 80  # plotly default left margin
@@ -843,58 +825,17 @@ _CHAR_W_FACTOR = 0.6  # mean glyph advance width
 _LINE_H_FACTOR = 1.2  # line height
 _SUB_W_FACTOR = 0.7  # subscript glyph relative width
 
-# Consistent gap between a bottom-anchored label's box and the lower plot boundary,
-# as a fraction of the temperature span. Keeps compound labels off the axis line.
+# Gap between a bottom-anchored label's box and the lower plot boundary, as a fraction of the span.
 _BOTTOM_PAD_FRAC = 0.015
 
-# Greek polymorph prefixes -> unicode letters.
-_GREEK_MAP = {
-    "alpha": "α",
-    "beta": "β",
-    "gamma": "γ",
-    "delta": "δ",
-    "epsilon": "ε",
-    "zeta": "ζ",
-    "eta": "η",
-    "theta": "θ",
-    "iota": "ι",
-    "kappa": "κ",
-    "lambda": "λ",
-    "mu": "μ",
-    "nu": "ν",
-    "xi": "ξ",
-    "omicron": "ο",
-    "pi": "π",
-    "rho": "ρ",
-    "sigma": "σ",
-    "tau": "τ",
-    "upsilon": "υ",
-    "phi": "φ",
-    "chi": "χ",
-    "psi": "ψ",
-    "omega": "ω",
-}
+# Clearance between the generated liquidus extremes and the plotted temperature bounds, as a
+# fraction of the final span.
+_LIQ_PAD_FRAC = 0.05
 
-# Long crystal-structure names -> short forms.
-_STRUCT_ABBREV = {
-    "orthorhombic": "ortho",
-    "rhombohedral": "rhomb",
-    "monoclinic": "mono",
-    "tetragonal": "tetra",
-    "hexagonal": "hex",
-    "trigonal": "trig",
-    "triclinic": "tric",
-    "body centered cubic": "bcc",
-    "face centered cubic": "fcc",
-    "hexagonal close packed": "hcp",
-    "complex cubic a12": "A12",
-    "complex cubic a13": "A13",
-    "diamond cubic": "dc",
-    "graphite": "gra",
-}
+# Half-width (at.%) above which a label box is sampled against the liquidus on a finer grid.
+_WIDE_BOX_HALF_W = 3.0
 
 _SUB_TAG_RE = re.compile(r"<sub>(.*?)</sub>")
-_TAG_PHASE_TAG_RE = r"(?:rt|lt|ht\d*|r\d*)"  # room/low/high-temperature ordinal tags
 
 
 def _text_glyph_width(text: str) -> float:
@@ -939,140 +880,37 @@ def _estimate_label_box(
     return cx, cy, half_w, half_h
 
 
+def _label_metrics(
+    text: str, xlim: tuple[float, float], ylim: tuple[float, float], font_size: int = 12
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Estimate a label's footprint in both orientations.
+
+    Calls ``_estimate_label_box`` once with ``textangle=-90`` (vertical) and once with
+    ``textangle=0`` (horizontal), at a fixed probe position (its position does not affect the
+    returned half-dimensions). Returns ``((half_w, half_h_frac), (half_w, half_h_frac))`` for
+    (vertical, horizontal), where ``half_h_frac`` is that orientation's half-height as a
+    fraction of ``ylim[1] - ylim[0]``.
+    """
+    span_y = ylim[1] - ylim[0]
+    metrics = []
+    for angle in (-90, 0):
+        probe = {
+            "x": 0.0,
+            "y": 0.0,
+            "text": text,
+            "textangle": angle,
+            "font_size": font_size,
+            "xanchor": "center",
+            "yanchor": "middle",
+        }
+        _, _, half_w, half_h = _estimate_label_box(probe, xlim, ylim)
+        metrics.append((half_w, half_h / span_y))
+    return metrics[0], metrics[1]
+
+
 def _box_overlap(b1: tuple, b2: tuple) -> tuple[float, float]:
     """Return positive (x, y) penetration depths if AABBs ``b1``/``b2`` overlap, else <=0."""
     return (b1[2] + b2[2] - abs(b1[0] - b2[0]), b1[3] + b2[3] - abs(b1[1] - b2[1]))
-
-
-def _parse_elemental_phase(name: str):
-    """Parse an elemental solid-solution label into ``(greek_word, element, struct, tag)``.
-
-    Accepts both space- and hyphen-separated greek prefixes (e.g. ``"alpha Mn (bcc)"`` and
-    ``"alpha-Ga (orthorhombic)"``). Returns ``None`` for compounds (e.g. ``"ZrMn2"``) so the
-    caller falls through to formula subscripting.
-    """
-    s = str(name).strip()
-    greek_word = None
-    struct_prefix = None
-    # "<Structure words> <Element>" form ("Diamond cubic Si"): a capitalised structure name
-    # preceding a trailing element symbol. Only fires when the leading token is capitalised
-    # and non-greek, so "alpha Mn" stays a greek polymorph.
-    toks = s.split()
-    if (
-        len(toks) >= 2
-        and re.fullmatch(r"[A-Z][a-z]?", toks[-1])
-        and toks[0][:1].isupper()
-        and toks[0].lower() not in _GREEK_MAP
-        and not re.fullmatch(r"[A-Z][a-z]?", " ".join(toks[:-1]))
-    ):
-        return None, toks[-1], " ".join(toks[:-1]), None
-    # A leading token before a space/hyphen is either a greek polymorph prefix
-    # ("alpha-Ga (orthorhombic)") or a lowercase structure tag ("fcc-Al", "bcc-Cr"),
-    # provided what follows starts with an element symbol.
-    m = re.match(r"^([A-Za-z0-9]+)[ \-](.+)$", s)
-    if m and re.match(r"^[A-Z][a-z]?(?:$|[\s(])", m.group(2).strip()):
-        prefix = m.group(1)
-        if prefix.lower() in _GREEK_MAP:
-            greek_word = prefix.lower()
-            s = m.group(2).strip()
-        elif prefix[0].islower():
-            struct_prefix = prefix
-            s = m.group(2).strip()
-
-    m2 = re.match(r"^([A-Z][a-z]?)\s*(?:\(([^)]*)\))?\s*(.*)$", s)
-    if not m2:
-        return None
-    element = m2.group(1)
-    struct = (m2.group(2) or "").strip() or struct_prefix
-    tag = (m2.group(3) or "").strip() or None
-    # Reject compounds: any trailing remainder that is not a temperature tag means this is
-    # a formula, not an elemental phase -- "ZrMn2" parses as element "Zr" + remainder
-    # "Mn2", and "Ce(FeSi)2" as element "Ce" + "structure" FeSi + remainder "2".
-    if tag and not re.fullmatch(_TAG_PHASE_TAG_RE, tag, re.IGNORECASE):
-        return None
-    return greek_word, element, struct, tag
-
-
-def _abbrev_structure(struct: str) -> str:
-    """Abbreviate a crystal-structure name; pass short names through, drop unrecognised long ones.
-
-    Returns ``''`` for long, unmapped descriptors (e.g. space-group symbols like ``P6_3/mmc``)
-    so the label falls back to just ``(El)``/``(αEl)`` rather than showing truncated noise.
-    """
-    s = struct.strip()
-    key = s.lower()
-    if key in _STRUCT_ABBREV:
-        return _STRUCT_ABBREV[key]
-    m = re.search(r"\b([A-D]\d{1,2})\b", s)  # Strukturbericht token, e.g. A13, B2
-    if m:
-        return m.group(1)
-    if re.search(r"\d", s) and ("-" in s or "/" in s):
-        return ""  # space-group symbol (Fm-3m, R-3m, P6_3/mmc) -> omit
-    if len(s) <= 6:
-        return s
-    return ""  # unrecognised long descriptor -> omit
-
-
-#: Shared with the ternary stack via plotting.style; kept under the old private name
-#: so binary.py's re-export and the call site below need no edit.
-_subscript_formula = subscript_formula
-
-
-def _abbreviate_phase_name(name: str, all_names: list[str]) -> str:
-    """Format a phase label: greek polymorph prefixes, subscripted stoichiometries,
-    abbreviated crystal structures.
-
-    Elemental phases render as ``αMn`` with the structure parenthesised after it —
-    ``α-Mn (bcc)`` — matching ``phase_transitions.json``'s ``<name>-<El> (<structure>)``
-    convention, so a corner label in the ternary figure and a field label here read the
-    same. The greek prefix is dropped when the element has only one phase present in
-    ``all_names`` (``Fe (bcc)``), since there is then nothing to tell apart.
-
-    This replaced a ``(αMn) bcc`` form. The parentheses around the ELEMENT were the
-    conventional phase-diagram mark for a terminal solid solution, which this notation no
-    longer distinguishes from a line compound; that was an explicit call, taken so the two
-    figures agree.
-
-    Compounds render with subscripts (``ZrMn2`` -> ``ZrMn<sub>2</sub>``).
-    ``"Liquid"``/``"L"`` -> ``"L"``.
-    """
-    name = str(name).strip()
-    if name in ("L", "Liquid"):
-        return "L"
-
-    parsed = _parse_elemental_phase(name)
-    if parsed is not None:
-        greek_word, element, struct, tag = parsed
-        same_element = sum(
-            1
-            for other in all_names
-            if (_parse_elemental_phase(str(other).strip()) or (None, None, None, None))[1]
-            == element
-        )
-        prefix = _GREEK_MAP.get(greek_word, "") if (greek_word and same_element > 1) else ""
-        label = f"{prefix}-{element}" if prefix else element
-        abbr = _abbrev_structure(struct) if struct else ""
-        if abbr:
-            label += f" ({abbr})"
-        if tag:
-            label += f" {tag}"
-        return label
-
-    return _subscript_formula(name)
-
-
-def _merge_close_values(values: list[float], tol: float) -> list[float]:
-    """Cluster values whose sorted consecutive differences are <= ``tol``; return cluster means."""
-    vals = sorted(float(v) for v in values)
-    if not vals:
-        return []
-    groups = [[vals[0]]]
-    for v in vals[1:]:
-        if v - groups[-1][-1] <= tol:
-            groups[-1].append(v)
-        else:
-            groups.append([v])
-    return [sum(g) / len(g) for g in groups]
 
 
 def _curve_crossings_at_temp(
@@ -1126,8 +964,7 @@ def _edge_inside_ss_field(
     When it is, the polymorph whose trace tops out at ``temp`` is subsumed by the solution
     right at the axis: the nearest field boundary is at zero distance, so a horizontal from
     the edge would be drawn straight through the field's interior rather than stopping on
-    it. Mn-Si's beta-Mn tops out at 1132.8 C, exactly the on-edge corner of the (Mn) BCC
-    field, and the tie ran 13 at.% into the hatched region. Emit nothing there.
+    it. Emit nothing there.
 
     Note this is a COMPOSITION-span test at one temperature, so a field anchored on the
     opposite axis edge can never trigger it.
@@ -1139,49 +976,6 @@ def _edge_inside_ss_field(
             if xs and min(xs) - 1e-9 <= side <= max(xs) + 1e-9:
                 return True
     return False
-
-
-def _detect_tie_lines(
-    invariant_temps: list[float],
-    boundary_curves: list[list[tuple]],
-    plot_xlim: tuple[float, float],
-    temp_tol: float = 1.0,
-    x_tol: float = 0.5,
-) -> list[dict]:
-    """Detect horizontal tie lines at each invariant temperature.
-
-    A boundary curve is treated as a *solid* phase boundary when its x-extent is within
-    ``x_tol`` (a near-vertical line). For each invariant temperature the tie line spans the
-    outermost solid-boundary crossings; if only one solid boundary crosses, it is paired
-    with the nearest liquidus (non-vertical) crossing. Returns ``{temp, x_start, x_end}`` dicts.
-    """
-    classified = []
-    for curve in boundary_curves:
-        pts = [(float(x), float(t)) for x, t in curve]
-        if not pts:
-            continue
-        xs = [p[0] for p in pts]
-        classified.append((pts, (max(xs) - min(xs)) <= x_tol))
-
-    tie_lines = []
-    for temp in invariant_temps:
-        solid_x, liq_x = [], []
-        for pts, is_solid in classified:
-            hits = _curve_crossings_at_temp(pts, temp, temp_tol)
-            (solid_x if is_solid else liq_x).extend(hits)
-
-        solid_merged = _merge_close_values(solid_x, x_tol) if solid_x else []
-        if len(solid_merged) >= 2:
-            tie_lines.append(
-                {"temp": float(temp), "x_start": min(solid_merged), "x_end": max(solid_merged)}
-            )
-        elif len(solid_merged) == 1 and liq_x:
-            sx = solid_merged[0]
-            nearest = min(liq_x, key=lambda lx: abs(lx - sx))
-            lo, hi = sorted((sx, nearest))
-            if hi - lo > x_tol:
-                tie_lines.append({"temp": float(temp), "x_start": lo, "x_end": hi})
-    return tie_lines
 
 
 def _resolve_label_collisions(
@@ -1216,9 +1010,7 @@ def _resolve_label_collisions(
         if lbl.get("pin") or lbl.get("above_liquidus") or not tie_segments:
             return
         cx, cy, half_w, half_h = _estimate_label_box(lbl, xlim, ylim)
-        # Only a tie that genuinely bisects the box counts. A tie above the box top does not
-        # cross the label, and lifting toward it lands the label straddling that tie once
-        # ``apply_ceiling`` pulls the box back down.
+        # Only a tie that crosses the box counts.
         blocking = [
             T
             for (x0, x1, T) in tie_segments
@@ -1233,9 +1025,13 @@ def _resolve_label_collisions(
         if ceiling is None or lbl.get("above_liquidus"):
             return  # labels deliberately floated above the liquidus are exempt
         cx, cy, half_w, half_h = _estimate_label_box(lbl, xlim, ylim)
-        # The box must clear the liquidus across its full width, so use the lowest liquidus
-        # temperature spanned by the box (the curve descends across a vertical label).
-        samples = [ceiling(x) for x in (cx - half_w, cx, cx + half_w)]
+        # The box clears the lowest liquidus temperature across its width, sampled finer for a box
+        # wider than _WIDE_BOX_HALF_W.
+        xs = [cx - half_w, cx, cx + half_w]
+        if half_w > _WIDE_BOX_HALF_W:
+            n = 1 + 2 * int(np.ceil(half_w / _WIDE_BOX_HALF_W))
+            xs = list(np.linspace(cx - half_w, cx + half_w, n))
+        samples = [ceiling(x) for x in xs]
         finite = [c for c in samples if np.isfinite(c)]
         if not finite:
             return
@@ -1245,18 +1041,15 @@ def _resolve_label_collisions(
 
     def clamp_bounds(lbl):
         _, cy, _, half_h = _estimate_label_box(lbl, xlim, ylim)
-        # Bottom-anchored labels (compounds) keep a consistent pad above the lower boundary;
-        # labels deliberately floated above the liquidus are exempt from the pad.
+        # Bottom-anchored labels keep a pad above the lower boundary; floated labels are exempt.
         floor = ylim[0] + (0.0 if lbl.get("above_liquidus") else bottom_pad)
         if cy - half_h < floor:
             lbl["y"] += floor - (cy - half_h)
         elif cy + half_h > ylim[1] and not lbl.get("above_liquidus"):
-            # Floated labels are meant to sit above the liquidus; never pull them back down.
+            # Floated labels stay above the liquidus.
             lbl["y"] += ylim[1] - (cy + half_h)
 
-    # Pull labels below the liquidus *before* recording home, so the ceiling adjustment alone
-    # does not trigger leader arrows (only collision displacement should). Pinned labels were
-    # already placed in a valid slot by the packer and are never moved.
+    # Labels are pulled below the liquidus before home is recorded; pinned labels stay put.
     for lbl in out:
         if not lbl.get("pin"):
             apply_tie_clearance(lbl)
@@ -1276,7 +1069,7 @@ def _resolve_label_collisions(
                         continue
                     pin_i, pin_j = out[i].get("pin"), out[j].get("pin")
                     if pin_i and pin_j:
-                        continue  # both fixed (packer guarantees these do not overlap)
+                        continue  # both fixed; the packer keeps them apart
                     shift = pen_y / 2.0 + one_px_y
                     if pin_i:  # only j may move
                         out[j]["y"] += (pen_y + one_px_y) * (
@@ -1345,8 +1138,14 @@ def _place_liquid_label(
     xlim: tuple[float, float],
     ylim: tuple[float, float],
     font_size: float = 14,
+    blocked: list[tuple[float, float]] | None = None,
 ) -> tuple[float, float]:
-    """Place the ``L`` label in the widest sufficiently-tall empty band above the liquidus."""
+    """Place the ``L`` label in the widest sufficiently-tall empty band above the liquidus.
+
+    ``blocked``: ``(x_lo, x_hi)`` composition ranges already occupied above the liquidus (the
+    floated labels' boxes), withheld from the gap scan. When every scanned x is withheld the
+    fallback to the single tallest band ignores them.
+    """
     top = _liquidus_top_fn(liq_df, assessed_pts)
     xs = np.linspace(xlim[0] + 2, xlim[1] - 2, 49)
     tops = np.array([(top(x) if np.isfinite(top(x)) else ylim[0]) for x in xs])
@@ -1355,6 +1154,8 @@ def _place_liquid_label(
 
     # Find the widest contiguous band tall enough for the label.
     ok = gaps >= min_gap
+    for x_lo, x_hi in blocked or []:
+        ok = ok & ~((xs >= x_lo) & (xs <= x_hi))
     best = None  # (run_length, mean_gap, i, j)
     i, n = 0, len(xs)
     while i < n:
@@ -1373,12 +1174,135 @@ def _place_liquid_label(
         k = int(np.argmax(gaps))
         return float(xs[k]), float(tops[k] + gaps[k] / 2.0)
 
-    # Within the widest band, place at the gap-weighted centroid so the label tracks the
-    # open liquid field (centre for symmetric liquidi; shifted toward the deeper side).
+    # Within the widest band, the label sits at the gap-weighted centroid.
     i, j = best[2], best[3]
     seg_x, seg_gap = xs[i : j + 1], gaps[i : j + 1]
     cx = float(np.sum(seg_x * seg_gap) / np.sum(seg_gap))
     return cx, float(top(cx) + (ylim[1] - top(cx)) / 2.0)
+
+
+def _free_intervals(
+    floor: float, ceiling: float, cut_temps: list[float], margin: float
+) -> list[tuple[float, float]]:
+    """Split ``[floor, ceiling]`` into tie-free sub-bands, each clear of every cut in
+    ``cut_temps`` by ``margin`` on both sides.
+
+    Cuts outside the open interval ``(floor, ceiling)`` are ignored. Returns the sub-bands
+    as ascending ``(lo, hi)`` pairs; a sub-band a cut's margin collapses entirely is omitted.
+    """
+    cuts = sorted(t for t in cut_temps if floor < t < ceiling)
+    intervals, lo = [], floor
+    for t in cuts:
+        if t - margin > lo:
+            intervals.append((lo, t - margin))
+        lo = max(lo, t + margin)
+    if ceiling > lo:
+        intervals.append((lo, ceiling))
+    return intervals
+
+
+def _subtract_bands(
+    intervals: list[tuple[float, float]], blocked: list[tuple] | None
+) -> list[tuple[float, float]]:
+    """Remove every ``(lo, hi)`` band in ``blocked`` from the ascending ``intervals``.
+
+    Returns the remaining sub-intervals in ascending order; ``intervals`` is returned
+    unchanged when ``blocked`` is empty or ``None``.
+    """
+    if not blocked:
+        return intervals
+    out = intervals
+    for lo, hi in blocked:
+        kept = []
+        for ilo, ihi in out:
+            if hi <= ilo or lo >= ihi:
+                kept.append((ilo, ihi))
+                continue
+            if lo > ilo:
+                kept.append((ilo, lo))
+            if hi < ihi:
+                kept.append((hi, ihi))
+        out = kept
+    return out
+
+
+def _column_blocked_bands(
+    x_lo: float, x_hi: float, traces: list[dict], clear: float
+) -> list[tuple[float, float]]:
+    """Temperature bands a compound's vertical trace blocks inside a label column.
+
+    A compound is a single vertical trace at its own composition (``trace["comp"]``); one
+    whose composition falls in ``[x_lo - clear, x_hi + clear]`` blocks its full stability
+    range (``trace["t_min"]`` to ``trace["t_max"]``), regardless of where that compound's OWN
+    label is drawn. Returns the blocked ``(t_min, t_max)`` bands, one per matching trace;
+    empty when none fall inside the widened column. Both imputed and non-imputed compounds
+    are considered -- ``traces`` carries no such distinction.
+    """
+    lo, hi = x_lo - clear, x_hi + clear
+    return [(cp["t_min"], cp["t_max"]) for cp in traces if lo <= cp["comp"] <= hi]
+
+
+def _horizontal_anchor(
+    side_comp: float,
+    half_w: float,
+    obstacles: list[float],
+    obstacle_half_w: float,
+    xlim: tuple[float, float] = (0.0, 100.0),
+    standoff: float = 1.5,
+    step: float = 0.5,
+    gap: float = 0.4,
+) -> tuple[float, str] | None:
+    """Anchor a horizontal label in a band growing inward from one element edge.
+
+    The band starts ``standoff`` inside the ``side_comp`` edge of ``xlim`` and steps inward by
+    ``step`` until the label box clears every entry of ``obstacles`` (each treated as
+    ``obstacle_half_w`` wide) by ``gap``. Returns ``(anchor_x, xanchor)`` -- ``"left"`` on the
+    low edge and ``"right"`` on the high edge, so the text reads away from the edge -- or
+    ``None`` when the box would have to cross the midpoint of ``xlim`` to find room.
+    """
+    mid = 0.5 * (xlim[0] + xlim[1])
+    width = 2.0 * half_w
+    low_side = abs(side_comp - xlim[0]) <= abs(side_comp - xlim[1])
+    xanchor = "left" if low_side else "right"
+    ax = (xlim[0] + standoff) if low_side else (xlim[1] - standoff)
+    while True:
+        box_lo, box_hi = (ax, ax + width) if low_side else (ax - width, ax)
+        if box_lo < xlim[0] or box_hi > xlim[1]:
+            return None
+        if (box_hi > mid) if low_side else (box_lo < mid):
+            return None  # the band reached the diagram midpoint without finding room
+        if all(
+            o + obstacle_half_w + gap <= box_lo or o - obstacle_half_w - gap >= box_hi
+            for o in obstacles
+        ):
+            return ax, xanchor
+        ax += step if low_side else -step
+
+
+class _OrientationLatch:
+    """One-way per-label text orientation: vertical until a label turns horizontal, then
+    horizontal for good.
+
+    Call ``angle(key, prefer_horizontal)`` for a ``textangle`` of ``0`` (horizontal) or
+    ``-90`` (vertical). ``prefer_horizontal=True`` latches ``key`` horizontal; afterwards
+    ``key`` answers ``0`` whatever is asked. Build one per figure and never reset it, so
+    orientation is monotone across a layout fixed point and cannot oscillate.
+    """
+
+    def __init__(self):
+        self._horizontal: set = set()
+
+    def angle(self, key, prefer_horizontal: bool) -> int:
+        if key in self._horizontal:
+            return 0
+        if prefer_horizontal:
+            self._horizontal.add(key)
+            return 0
+        return -90
+
+    def is_horizontal(self, key) -> bool:
+        """Whether ``key`` has been latched horizontal, without latching it."""
+        return key in self._horizontal
 
 
 def _pack_labels(
@@ -1389,6 +1313,7 @@ def _pack_labels(
     floor: float,
     margin: float,
     gap: float = 0.0,
+    blocked: list[tuple] | None = None,
 ) -> list:
     """Place each vertical label inside its OWN stability band (``regions[i] = (t_bottom,
     t_top)``), in a tie-free sub-interval of ``[floor, ceiling]``.
@@ -1396,20 +1321,16 @@ def _pack_labels(
     A label is only placed in an interval that overlaps its own region, so it is never shifted
     onto a neighbouring polymorph; labels that do not fit in their band return ``None`` (the
     caller floats those). Returns centre y values aligned with ``regions``.
+
+    ``blocked``: additional ``(lo, hi)`` temperature bands (e.g. an orthogonal-orientation
+    label's footprint) withheld from every placement, alongside the ``tie_temps`` margins.
     """
     n = len(regions)
     results = [None] * n
     if not np.isfinite(ceiling) or ceiling <= floor:
         return results
 
-    cuts = sorted(t for t in tie_temps if floor < t < ceiling)
-    intervals, lo = [], floor
-    for t in cuts:
-        if t - margin > lo:
-            intervals.append((lo, t - margin))
-        lo = max(lo, t + margin)
-    if ceiling > lo:
-        intervals.append((lo, ceiling))
+    intervals = _subtract_bands(_free_intervals(floor, ceiling, tie_temps, margin), blocked)
 
     next_bottom = floor
     for idx in sorted(range(n), key=lambda i: regions[i][0]):
@@ -1486,32 +1407,63 @@ def _assign_compound_sides(
 
 
 def _place_compound_y(
-    c0: float, ceiling: float, tie_temps: list[float], half_h: float, pad: float, margin: float
+    c0: float,
+    ceiling: float,
+    tie_temps: list[float],
+    half_h: float,
+    pad: float,
+    margin: float,
+    blocked: list[tuple] | None = None,
 ) -> float | None:
     """Bottom-align a compound label in the LOWEST tie-free sub-band of ``[c0, ceiling]`` that
     is tall enough. Returns the label centre y, or ``None`` if no sub-band fits.
 
     The bottom-most band keeps ``pad`` above ``c0``; bands above a tie keep ``margin`` above it.
     This realises "drop the label to the bottom, but skip up to the next two-phase region when a
-    tie line would cross it" (bugs 1 & 2).
+    tie line would cross it".
+
+    ``blocked``: additional ``(lo, hi)`` temperature bands (e.g. an orthogonal-orientation
+    label's footprint) withheld from every placement, alongside the ``tie_temps`` margins.
     """
     if not np.isfinite(ceiling) or ceiling <= c0:
         return None
-    cuts = sorted(t for t in tie_temps if c0 < t < ceiling)
-    intervals, lo = [], c0
-    for t in cuts:
-        if t - margin > lo:
-            intervals.append((lo, t - margin))
-        lo = max(lo, t + margin)
-    if ceiling > lo:
-        intervals.append((lo, ceiling))
+    intervals = _subtract_bands(_free_intervals(c0, ceiling, tie_temps, margin), blocked)
     for ilo, ihi in intervals:
-        # The floor region keeps ``pad`` above c0; regions above a tie already start at
-        # ``tie + margin``, so no extra offset is needed there.
+        # The floor region keeps ``pad`` above c0; regions above a tie start at ``tie + margin``.
         bottom = ilo + (pad if abs(ilo - c0) < 1e-9 else 0.0)
         if bottom + 2 * half_h <= ihi:
             return bottom + half_h
     return None
+
+
+def _pad_range_for_liquidus(
+    conds, max_liq: float, min_liq: float, pad_frac: float = _LIQ_PAD_FRAC
+) -> tuple[float, float]:
+    """Widen a temperature range until the generated liquidus clears both of its bounds.
+
+    Args:
+        conds: ``(lower, upper)`` temperature bounds, in °C.
+        max_liq (float): Highest generated-liquidus temperature, in °C.
+        min_liq (float): Lowest generated-liquidus temperature, in °C.
+        pad_frac (float): Clearance demanded above ``max_liq`` and below ``min_liq``, each
+            as a fraction of the returned span. Must satisfy ``0 < pad_frac < 0.5``.
+
+    Returns:
+        tuple[float, float]: Bounds that contain ``conds`` and satisfy both
+        ``upper - max_liq >= pad_frac * (upper - lower)`` and
+        ``min_liq - lower >= pad_frac * (upper - lower)``. ``conds`` is returned unchanged
+        when either liquidus extreme is not finite or ``pad_frac`` is out of range.
+    """
+    c0, c1 = float(conds[0]), float(conds[1])
+    if not (np.isfinite(max_liq) and np.isfinite(min_liq)) or not 0.0 < pad_frac < 0.5:
+        return c0, c1
+    denom = 1.0 - 2.0 * pad_frac
+    c0 = min(c0, ((1.0 - pad_frac) * min_liq - pad_frac * max_liq) / denom)
+    c1 = max(c1, ((1.0 - pad_frac) * max_liq - pad_frac * min_liq) / denom)
+    # One further one-sided solve per side restores both clearances when a bound lies outside.
+    c1 = max(c1, (max_liq - pad_frac * c0) / (1.0 - pad_frac))
+    c0 = min(c0, (min_liq - pad_frac * c1) / (1.0 - pad_frac))
+    return c0, c1
 
 
 def _place_legend(
@@ -1561,14 +1513,370 @@ def _place_legend(
     return {"xanchor": xanchor, "yanchor": "top", "x": xp, "y": 0.99, "font": dict(size=15)}
 
 
+class _TieDrawer:
+    """Draws horizontal tie lines on one figure, merging coincident ties into one trace.
+
+    ``segments`` holds one ``(x_lo, x_hi, t)`` per drawn trace, in draw order; a merge
+    widens its entry in place.
+    """
+
+    def __init__(self, fig, merge_t_tol):
+        self.fig = fig
+        self.merge_t_tol = merge_t_tol
+        # One record per drawn tie, in draw order: its span, fig.data index, slot in segments and
+        # instrumentation record; a merge rewrites it in place.
+        self.drawn: list[dict] = []
+        self.segments: list[tuple] = []
+
+    def add(self, x0, x1, temp, dedup=True, source=None):
+        """Draw one horizontal tie, merging it into a coincident one already drawn.
+
+        Two sources can emit the same physical horizontal with slightly different extents. A
+        candidate within ``self.merge_t_tol`` of a drawn tie whose composition span TOUCHES
+        or overlaps it extends that tie to the union span instead of adding a second trace,
+        so the drawn count is monotone in the number of physically distinct ties and trace
+        order is never disturbed. Disjoint spans at the same temperature stay separate --
+        they are the two halves of a genuine three-phase horizontal around a compound.
+        """
+        lo, hi, t = min(float(x0), float(x1)), max(float(x0), float(x1)), float(temp)
+        if dedup:
+            for rec in self.drawn:
+                if abs(t - rec["t"]) > self.merge_t_tol:
+                    continue
+                if min(hi, rec["x_hi"]) < max(lo, rec["x_lo"]):
+                    continue  # disjoint spans -> a different tie
+                new_lo, new_hi = min(lo, rec["x_lo"]), max(hi, rec["x_hi"])
+                if (new_lo, new_hi) != (rec["x_lo"], rec["x_hi"]):
+                    self.fig.data[rec["trace"]].x = (new_lo, new_hi)  # y is already constant
+                    rec["x_lo"], rec["x_hi"] = new_lo, new_hi
+                    self.segments[rec["segment"]] = (new_lo, new_hi, rec["t"])
+                if rec["record"] is not None:
+                    rec["record"]["x0"], rec["record"]["x1"] = new_lo, new_hi
+                    rec["record"]["sources"].append(source)
+                return
+        self.segments.append((lo, hi, t))
+        tie = px.line(x=[x0, x1], y=[temp, temp])
+        tie.update_traces(line=dict(color="Silver"))
+        self.fig.add_trace(tie.data[0])
+        record = None
+        if _TIE_SINK is not None:
+            record = {"temp": t, "x0": lo, "x1": hi, "sources": [source]}
+            _TIE_SINK.append(record)
+        self.drawn.append(
+            {
+                "t": t,
+                "x_lo": lo,
+                "x_hi": hi,
+                "trace": len(self.fig.data) - 1,
+                "segment": len(self.segments) - 1,
+                "record": record,
+            }
+        )
+
+
+class _PhaseBoundaries:
+    """The phase boundaries a horizontal at a given temperature crosses: liquidus crossings,
+    line compounds, solid-solution field boundaries and the element melting points."""
+
+    def __init__(self, liq_pts, temp_tol, compound_bounds, ss_regions, lhs_tm, rhs_tm):
+        self.liq_pts = liq_pts
+        self.temp_tol = temp_tol
+        self.compound_bounds = compound_bounds
+        self.ss_regions = ss_regions
+        self.lhs_tm = lhs_tm
+        self.rhs_tm = rhs_tm
+
+    def boundary_xs(self, temp, skip_region=None):
+        """Every phase boundary the horizontal at ``temp`` crosses, as compositions.
+
+        SS fields have to be asked for explicitly: ``compound_bounds`` is built from
+        ``phase_rows``, which excludes them, so without this a polymorph tie runs straight
+        through the hatched field."""
+        xs = (
+            list(_curve_crossings_at_temp(self.liq_pts, temp, temp_tol=self.temp_tol))
+            if self.liq_pts
+            else []
+        )
+        xs += [c for c, t0, t1 in self.compound_bounds if t0 - 1 <= temp <= t1 + 1]
+        xs += _ss_boundary_crossings(self.ss_regions, temp, self.temp_tol, skip=skip_region)
+        return xs
+
+    def adjacent_boundary_x(self, temp, side):
+        """Nearest phase boundary inward from the element edge at temp: a liquidus crossing, a
+        compound, a solid-solution field boundary, or — when nothing lies between — the
+        opposite element's solid (so a polymorph tie spans to the opposite polymorph)."""
+        xs = self.boundary_xs(temp)
+        opp = 100 if side == 0 else 0
+        if temp < (self.rhs_tm if opp == 100 else self.lhs_tm):  # opposite element is solid at temp
+            xs.append(float(opp))
+        inward = [x for x in xs if (x > side if side == 0 else x < side)]
+        return min(inward, key=lambda x: abs(x - side)) if inward else None
+
+    def ss_minimum_span(self, x_at, temp, region):
+        """Grow the horizontal at a branch's temperature minimum out to its bounding fields.
+
+        The span runs outward from the minimum COMPOSITION to the nearest phase boundary
+        on each side, which is the span the reaction itself has.
+        The witnesses' own compositions are not used. Returns None when no boundary brackets
+        the minimum, since then the extent is not determined.
+        """
+        xs = self.boundary_xs(temp, skip_region=region)
+        left = max((x for x in xs if x < x_at - 1e-9), default=None)
+        right = min((x for x in xs if x > x_at + 1e-9), default=None)
+        # With nothing between the minimum and an axis, the pure element bounds the field.
+        if left is None and temp < self.lhs_tm:
+            left = 0.0
+        if right is None and temp < self.rhs_tm:
+            right = 100.0
+        if left is None or right is None or right - left <= 0.0:
+            return None
+        return float(left), float(right)
+
+
+def _env_min(fn, cx, half_w):
+    vals = [v for v in (fn(x) for x in np.linspace(cx - half_w, cx + half_w, 11)) if np.isfinite(v)]
+    return min(vals) if vals else None
+
+
+def _env_max(fn, cx, half_w):
+    vals = [v for v in (fn(x) for x in np.linspace(cx - half_w, cx + half_w, 11)) if np.isfinite(v)]
+    return max(vals) if vals else None
+
+
+_ABS_ZERO = -273.15  # absolute zero, °C
+
+
+def _layout_side(sides_data, side_comp, c0, c1, orient_latch):
+    """Classify each of a side's labels into a placement record, at the given conds.
+
+    Each record carries ``kind`` (``'inband'`` | ``'lower'`` | ``'twophase'`` |
+    ``'float'``), ``angle`` (``-90`` vertical, ``0`` horizontal) and ``half_h_frac`` for
+    that angle, plus ``y`` and ``x``/``xanchor`` for a placed label, ``needed_c0`` for
+    ``'lower'``, and ``float_base`` for ``'float'``.
+
+    Relocated (``twophase``) labels are packed JOINTLY in the inward two-phase column so two
+    never share a slot, and ``_pack_labels`` fills them bottom-to-top in their own
+    t_bottom order (monotonic => non-crossing leader arrows / shortest longest arrow). A
+    displaced label takes the side's horizontal band when it has one, and falls back to
+    vertical otherwise; in-band placements are always vertical.
+    """
+    d = sides_data[side_comp]
+    h = d["horiz"]
+    n = len(d["side"])
+    span = c1 - c0
+    margin, gap = 0.012 * span, 0.004 * span
+    half_hs = [hf * span for hf in d["half_hs_frac"]]
+    ceil = (d["ceil_raw"] - margin) if d["ceil_raw"] is not None else c1
+    fx_ceil = (d["fx_ceil_raw"] - margin) if d["fx_ceil_raw"] is not None else c1
+    regions_ty = [(max(r["t_bottom"], c0), min(r["t_max"], c1)) for r in d["side"]]
+    ys = _pack_labels(
+        regions_ty, half_hs, ceil, d["tie_temps"], c0, margin, gap, blocked=d["blocked"]
+    )
+    out = [None] * n
+    for i in range(n):
+        if ys[i] is not None:
+            out[i] = dict(
+                kind="inband",
+                angle=-90,
+                y=ys[i],
+                x=d["label_x"],
+                xanchor="center",
+                half_h_frac=d["half_hs_frac"][i],
+            )
+    # The lowest-T polymorph, if stable inside the plotted range, lowers conds[0] to fit its bottom
+    # gap; ``m`` is the clearance as a fraction of the span.
+    bi = d["bottom_idx"]
+    if out[bi] is None and d["side"][bi]["t_max"] >= c0:
+        r = d["side"][bi]
+        r_top = min(r["t_max"], c1)
+        obstacles = sorted(T for T in d["tie_temps"] if c0 < T < min(r_top, ceil))
+        gap_top = obstacles[0] if obstacles else min(r_top, ceil)
+        m = 2 * d["half_hs_frac"][bi] + 1.5 * 0.012
+        if m < 0.95:
+            needed_c0 = (gap_top - m * c1) / (1.0 - m)
+            has_room = _subtract_bands([(needed_c0, gap_top)], d["blocked"])
+            if needed_c0 >= _ABS_ZERO and has_room:
+                out[bi] = dict(
+                    kind="lower",
+                    angle=-90,
+                    needed_c0=needed_c0,
+                    x=d["label_x"],
+                    xanchor="center",
+                    half_h_frac=d["half_hs_frac"][bi],
+                )
+    # Remaining labels go to the inward two-phase region on a shared cursor; any left over
+    # float above the liquidus.
+    reloc = [i for i in range(n) if out[i] is None]
+    if reloc:
+        regions_fx = [(max(d["side"][i]["t_bottom"], c0), fx_ceil) for i in reloc]
+        fx_ys = _pack_labels(
+            regions_fx, [half_hs[i] for i in reloc], fx_ceil, d["fx_tie_temps"], c0, margin, gap
+        )
+        for k, i in enumerate(reloc):
+            if fx_ys[k] is not None:
+                out[i] = dict(
+                    kind="twophase",
+                    angle=-90,
+                    y=fx_ys[k],
+                    x=d["fx"],
+                    xanchor="center",
+                    half_h_frac=d["half_hs_frac"][i],
+                )
+        # A relocation with no vertical slot tries the horizontal band before floating.
+        miss = [i for k, i in enumerate(reloc) if fx_ys[k] is None]
+        h_ys = [None] * len(miss)
+        if miss and h is not None:
+            h_ceil = (h["ceil_raw"] - margin) if h["ceil_raw"] is not None else c1
+            taken = [
+                (out[i]["y"] - half_hs[i] - gap, out[i]["y"] + half_hs[i] + gap)
+                for i in reloc
+                if out[i] is not None
+            ]
+            h_ys = _pack_labels(
+                [(max(d["side"][i]["t_bottom"], c0), h_ceil) for i in miss],
+                [h["half_hs_frac"][i] * span for i in miss],
+                h_ceil,
+                h["tie_temps"],
+                c0,
+                margin,
+                gap,
+                blocked=taken,
+            )
+        for k, i in enumerate(miss):
+            angle = orient_latch.angle(("poly", side_comp, i), h is not None)
+            if angle == 0 and h_ys[k] is not None:
+                out[i] = dict(
+                    kind="twophase",
+                    angle=0,
+                    y=h_ys[k],
+                    x=h["x"],
+                    xanchor=h["xanchor"],
+                    half_h_frac=h["half_hs_frac"][i],
+                )
+            elif angle == 0:
+                out[i] = dict(
+                    kind="float",
+                    angle=0,
+                    x=h["x"],
+                    xanchor=h["xanchor"],
+                    half_h_frac=h["half_hs_frac"][i],
+                    float_base=h["float_base"],
+                )
+            else:
+                out[i] = dict(
+                    kind="float",
+                    angle=-90,
+                    x=d["fx"],
+                    xanchor="center",
+                    half_h_frac=d["half_hs_frac"][i],
+                    float_base=d["float_base"],
+                )
+    return out
+
+
+def _layout_compounds(compound_cols, c0, c1, orient_latch):
+    """Per compound column, a placement record with the same fields ``_layout_side``
+    returns, restricted to ``kind`` in ``'inband'`` | ``'lower'`` | ``'float'``.
+
+    ``inband`` puts the label at the bottom of the lowest two-phase region that fits (with a
+    consistent bottom pad), skipping up past any tie line that would cross it;
+    it is always vertical. A floated column goes horizontal on its own centred column."""
+    span = c1 - c0
+    margin, gap, pad = 0.012 * span, 0.004 * span, _BOTTOM_PAD_FRAC * span
+    out = []
+    for ci, col in enumerate(compound_cols):
+        hh = col["half_h_frac"] * span
+        ceil = (col["ceil_raw"] - margin) if col["ceil_raw"] is not None else c1
+        if col["is_stacked"]:
+            region = (max(col["t_min"], c0), min(col["t_max"], c1))
+            y = _pack_labels([region], [hh], ceil, col["tie_temps"], c0, margin, gap)[0]
+        else:
+            y = _place_compound_y(c0, ceil, col["tie_temps"], hh, pad, margin)
+        if y is not None:
+            out.append(
+                dict(
+                    kind="inband",
+                    angle=-90,
+                    y=y,
+                    x=col["label_x"],
+                    half_h_frac=col["half_h_frac"],
+                )
+            )
+            continue
+        # Escalate: lower conds[0] so the bottom region grows enough; else float.
+        cuts = sorted(T for T in col["tie_temps"] if c0 < T < ceil)
+        gap_top = cuts[0] if cuts else ceil
+        needed_c0 = gap_top - 2 * hh - pad - margin
+        if np.isfinite(gap_top) and needed_c0 >= _ABS_ZERO:
+            out.append(
+                dict(
+                    kind="lower",
+                    angle=-90,
+                    needed_c0=needed_c0,
+                    x=col["label_x"],
+                    half_h_frac=col["half_h_frac"],
+                )
+            )
+            continue
+        hz = col["horiz"]
+        angle = orient_latch.angle(("cmpd", ci), hz is not None)
+        if angle == 0:
+            out.append(
+                dict(
+                    kind="float",
+                    angle=0,
+                    x=hz["x"],
+                    half_h_frac=hz["half_h_frac"],
+                    float_base=hz["float_base"],
+                )
+            )
+        else:
+            out.append(
+                dict(
+                    kind="float",
+                    angle=-90,
+                    x=col["label_x"],
+                    half_h_frac=col["half_h_frac"],
+                    float_base=col["float_base"],
+                )
+            )
+    return out
+
+
+def _zero_kelvin_stable(hsx, tol: float = 1e-9) -> set[str]:
+    """Names of the ``hsx`` phases with a point on the lower convex hull of H against x, the
+    phases stable at 0 K (where G = H)."""
+    df = hsx.df
+    x = df["X [Fraction]"].to_numpy(dtype=float)
+    h = df["H [J/mol]"].to_numpy(dtype=float)
+    order = np.lexsort((h, x))
+    lowest = order[np.r_[True, np.diff(x[order]) > 0]]
+    hull: list[int] = []
+    for i in lowest:
+        while len(hull) >= 2:
+            (x0, h0), (x1, h1) = (x[hull[-2]], h[hull[-2]]), (x[hull[-1]], h[hull[-1]])
+            if (x1 - x0) * (h[i] - h0) - (h1 - h0) * (x[i] - x0) <= 0:
+                hull.pop()
+            else:
+                break
+        hull.append(i)
+    floor = np.interp(x, x[hull], h[hull])
+    return set(df["Phase"][h <= floor + tol])
+
+
 def plot_tx(
     hsx,
     pred: bool = False,
     digitized_liquidus: list = None,
     polymorph_transitions: list[dict] | None = None,
     imputed_phases: set | None = None,
+    palette_phases: list | None = None,
     ternary_color_map: dict | None = None,
     ss_phases: set | None = None,
+    unsupported_ranges: list | None = None,
+    components: list | None = None,
+    mpds_temp_range: tuple[float, float] | None = None,
+    non_dft_label: str | None = None,
 ) -> go.Figure:
     """Plots the binary phase diagram from computed phase boundaries and invariant points.
 
@@ -1578,27 +1886,47 @@ def plot_tx(
             ``conds`` (the plotted temperature range) are mutated in place.
         pred (bool): If True, use prediction color scheme for the liquidus.
         digitized_liquidus (list): Digitized experimental liquidus data points.
-        polymorph_transitions (list[dict]): List of elemental polymorph transitions, each dict with keys:
-            'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float),
+        polymorph_transitions (list[dict]): Elemental polymorph transitions, each with keys
+            'name' (str), 'comp_x_pct' (float, 0 or 100), 'transition_temp_C' (float) and
             'ground_state_name' (str) for the phase below the transition.
-        imputed_phases (set): Names of phases imputed by phase-energy imputation; their
-            solid boundary lines are drawn dashed and given a single legend entry.
-        ternary_color_map (dict): Optional phase-to-color overrides applied on top of
-            the locally built phase color map (used by ternary edge sub-plots).
-        ss_phases (set): Names of continuous solid-solution phases. These are excluded
-            from the line-compound machinery and rendered as closed, hatch-filled
-            polygons (one per composition branch) in reserved colors, with one legend
-            entry each. Tie lines touching them are kept only where an invariant reaction
-            puts them: at a three-phase invariant, and at a branch's own interior
-            temperature minimum when the coexistence changes there (the eutectoid).
-            Empty/None leaves the non-SS control flow untouched.
+        imputed_phases (set): Names of phases standing in for DFT compounds, imputed or
+            user-defined; drawn dashed with a single legend entry.
+        palette_phases (list): Phase names to assign palette slots from, in order; a name
+            ``hsx`` does not draw still holds its slot. None assigns from ``hsx.phases``.
+        ternary_color_map (dict): Phase-to-color overrides on top of the built color map.
+        ss_phases (set): Names of continuous solid-solution phases, drawn as hatch-filled
+            polygons (one per composition branch) in reserved colors with one legend entry
+            each; their tie lines follow :func:`_ss_tie_allowed` and the eutectoid rule.
+        unsupported_ranges (list): ``[lo, hi]`` mole-fraction intervals with no solid
+            free-energy reference (``BinaryLiquid.unsupported_comp_ranges``); the assessed
+            liquidus inside them is drawn in ``ASSESSED_LIQUIDUS_UNSUPPORTED_COLOR``.
+        components (list): The system's ordered component list, for compound field labels in
+            that element order with whole-number stoichiometry; None/empty subscripts the raw
+            phase name.
+        mpds_temp_range (tuple): ``(min_C, max_C)`` reference temperature range in °C. The
+            plotted range is widened to contain it and never narrowed inside it. None plots
+            without a reference bound.
+        non_dft_label (str): The text of the ``imputed_phases`` legend entry; None uses
+            ``IMPUTED_LEGEND_LABEL``.
+
+    Returns:
+        go.Figure: the T-x figure.
     """
     imputed_phases = imputed_phases or set()
     ss_phases = set(ss_phases or ())
+    polymorph_names = set()
+    if polymorph_transitions:
+        polymorph_names = {pt["name"] for pt in polymorph_transitions}
+        polymorph_names |= {pt.get("ground_state_name", "") for pt in polymorph_transitions}
     liq_inv = hsx.liquidus_invariants()
     inv_points = liq_inv[0]
-    # Colors are plot-local: built from the phase list here, never stored on the HSX.
-    phase_colors = build_phase_color_map(hsx.phases, ss_names=sorted(ss_phases))
+    # Colors are built from the phase list here, per plot.
+    phase_colors = build_phase_color_map(
+        palette_phases or hsx.phases,
+        ss_names=sorted(ss_phases),
+        polymorph_names=polymorph_names,
+        imputed_names=imputed_phases,
+    )
     if ternary_color_map:
         phase_colors.update(ternary_color_map)
 
@@ -1607,22 +1935,17 @@ def plot_tx(
     liq_df.sort_values(by=["x", "t"], inplace=True)
     liq_df.drop_duplicates(subset="x", keep="first", inplace=True)
 
-    # Raw compute_tx scatter points for solids, so polymorphs at identical composition are
-    # preserved. Solid-solution phases never enter the line-compound machinery below --
-    # they render as envelope branches (see the ss_phases block near the end).
+    # Raw compute_tx points for solids, polymorphs included; SS phases render as envelope branches.
     solid_df = hsx.df_tx[hsx.df_tx["label"] != "L"].copy()
     if ss_phases:
         solid_df = solid_df[~solid_df["label"].isin(ss_phases)].copy()
     solid_df["x"] *= 100
     solid_df.drop_duplicates(subset=["x", "t", "label"], keep="first", inplace=True)
 
-    # Closed SS envelope polygons, built once here: the tie filter below reads their
-    # extrema and the render block near the end draws them. Geometry depends only on the
-    # phase's df_tx extents, so the conds adjustments that follow cannot invalidate it.
+    # Closed SS envelope polygons, read by the tie filter and drawn by the render block.
     ss_regions: dict[str, list[dict]] = {}
     if ss_phases:
-        # Stability intervals of the component polymorphs on each composition axis. An SS
-        # branch stopping short of an axis snaps its corner onto whichever it overlaps.
+        # Stability intervals of the component polymorphs on each composition axis.
         edge_intervals: dict[float, list[tuple[float, float]]] = {}
         for edge in (0.0, 100.0):
             at_edge = solid_df[np.isclose(solid_df["x"], edge)]
@@ -1631,9 +1954,7 @@ def plot_tx(
                 for _label, grp in at_edge.groupby("label")
             )
 
-        # Three-phase invariants, per SS phase, as (composition %, temperature). A field
-        # taking part in one is at its maximum solubility there, so a blunt terminus that
-        # straddles one closes onto it.
+        # Three-phase invariants per SS phase, as (composition %, temperature).
         ss_invariants: dict[str, list[tuple[float, float]]] = defaultdict(list)
         for key in ("Eutectics", "Peritectics"):
             for temp, _mid, comps, inv_phases in inv_points.get(key, []):
@@ -1641,10 +1962,7 @@ def plot_tx(
                     if phase in ss_phases:
                         ss_invariants[phase].append((float(comp) * 100, float(temp)))
 
-        # The composition grid is a property of the hull sampling, not of any one phase's
-        # stability range, so measure it once over the axis every phase was sampled on.
-        # Inferred per field it degenerates: a field supported at two compositions has one
-        # spacing, so no gap exceeds 1.5x it and the two terminal branches weld together.
+        # The composition grid step, measured once over the shared composition axis.
         grid_step = _hull_grid_step(hsx.df_tx["x"].to_numpy(dtype=float) * 100.0)
 
         ss_df = hsx.df_tx[hsx.df_tx["label"].isin(ss_phases)].copy()
@@ -1667,6 +1985,8 @@ def plot_tx(
 
     lhs_tm, rhs_tm = liq_df.iloc[0]["t"], liq_df.iloc[-1]["t"]
     max_liq, min_liq = liq_df["t"].max(), liq_df["t"].min()
+    # Extremes of the generated liquidus alone.
+    gen_max_liq, gen_min_liq = float(max_liq), float(min_liq)
 
     fig = go.Figure()
 
@@ -1674,48 +1994,70 @@ def plot_tx(
     assessed_pts = (
         [[p[0] * 100, p[1] - 273.15] for p in digitized_liquidus] if digitized_liquidus else None
     )
+    # The unsupported ranges arrive in mole fraction; convert alongside the curve itself.
+    unsupported_pct = _normalize_ranges_pct(unsupported_ranges)
     if assessed_pts:  # update liquidus temperature range based on digitized liquidus
         max_liq = max(max_liq, max(p[1] for p in assessed_pts))
         min_liq = min(min_liq, min(p[1] for p in assessed_pts))
-        # One trace per digitized region: no dashed line across an undigitized hole.
+        # One trace per digitized region, sub-split at the unsupported-range edges.
         for segment in _assessed_liquidus_segments(assessed_pts):
-            fig.add_trace(
-                go.Scatter(
-                    x=[p[0] for p in segment],
-                    y=[p[1] for p in segment],
-                    mode="lines",
-                    line=dict(color=ASSESSED_LIQUIDUS_COLOR, dash="dash"),
+            for run, unsupported in _unsupported_liquidus_runs(segment, unsupported_pct):
+                fig.add_trace(
+                    go.Scatter(
+                        x=[p[0] for p in run],
+                        y=[p[1] for p in run],
+                        mode="lines",
+                        line=dict(
+                            color=ASSESSED_LIQUIDUS_UNSUPPORTED_COLOR
+                            if unsupported
+                            else ASSESSED_LIQUIDUS_COLOR,
+                            dash=_ASSESSED_UNSUPPORTED_DASH if unsupported else _ASSESSED_DASH,
+                        ),
+                    )
                 )
-            )
 
-    # expand temperature range based on liquidus extremes
-    if max_liq > hsx.conds[1]:
-        hsx.conds[1] = max_liq + 0.1 * (hsx.conds[1] - hsx.conds[0])
-    if min_liq < hsx.conds[0]:
-        hsx.conds[0] = max(-273.15, min_liq - 0.1 * (hsx.conds[1] - hsx.conds[0]))
+    # Widened first to contain the reference range.
+    if mpds_temp_range is not None:
+        hsx.conds[0] = min(hsx.conds[0], float(mpds_temp_range[0]))
+        hsx.conds[1] = max(hsx.conds[1], float(mpds_temp_range[1]))
 
-    # Cap excessive headroom above the liquidus. The 'L' label and legend are auto-placed,
-    # so no artificial y-extension is needed to accommodate them.
+    # Caps headroom above the liquidus at the reference maximum.
     headroom_cap = max_liq + 0.18 * (max_liq - hsx.conds[0])
-    if hsx.conds[1] > headroom_cap:
-        hsx.conds[1] = headroom_cap
+    hsx.conds[1] = max(
+        min(hsx.conds[1], headroom_cap),
+        float(mpds_temp_range[1]) if mpds_temp_range is not None else -np.inf,
+    )
+
+    # Clears the generated liquidus from both bounds by _LIQ_PAD_FRAC of the final span, floor
+    # clamped at absolute zero.
+    padded = _pad_range_for_liquidus(hsx.conds, gen_max_liq, gen_min_liq)
+    hsx.conds[0], hsx.conds[1] = max(-273.15, padded[0]), padded[1]
 
     solid_phases = [
         p for p in hsx.phases if p not in [hsx.comps[0], hsx.comps[1], "L"] and p not in ss_phases
     ]
+    solid_tops = {}
     for phase in solid_phases:
         phase_df = solid_df[solid_df["label"] == phase]
-        if phase_df.empty:
-            continue
+        if not phase_df.empty:
+            solid_tops[phase] = float(phase_df["t"].max())
 
-        # expand temperature range based on minimum decomposition temperatures of solid phases
-        phase_decomp_temp = phase_df["t"].max()
-        if phase_decomp_temp - 0.1 * (hsx.conds[1] - hsx.conds[0]) < hsx.conds[0]:
-            hsx.conds[0] = max(-273.15, phase_decomp_temp - 0.1 * (hsx.conds[1] - hsx.conds[0]))
+    # Lowers the range to show each solid phase's decomposition temperature, for a phase stable at
+    # or above the current floor; repeats until the floor settles.
+    for _ in range(5):
+        c0_before = hsx.conds[0]
+        for phase, phase_decomp_temp in list(solid_tops.items()):
+            if phase_decomp_temp < hsx.conds[0]:
+                continue
+            del solid_tops[phase]
+            headroom = 0.1 * (hsx.conds[1] - hsx.conds[0])
+            if phase_decomp_temp - headroom < hsx.conds[0]:
+                hsx.conds[0] = max(-273.15, phase_decomp_temp - headroom)
+        if abs(hsx.conds[0] - c0_before) < 1e-9:
+            break
 
-    # Build per-phase lower-extension limits. For polymorphs at the same composition,
-    # only the lowest-temperature phase is extended to plot bottom; upper polymorphs
-    # are extended down only to the top of the lower polymorph to avoid full overlap.
+    # Lower-extension limits: of polymorphs at one composition, only the lowest-temperature one
+    # extends to the plot bottom; the others extend to the top of the one below.
     phase_rows = []
     comp_groups = defaultdict(list)
     for phase in solid_phases:
@@ -1734,87 +2076,31 @@ def plot_tx(
             }
         )
 
+    zero_k_stable = _zero_kelvin_stable(hsx)
     phase_low_ext = {}
     for group in comp_groups.values():
         ordered = sorted(group, key=lambda d: (d["t_min"], d["t_max"]))
         prev_top = None
         for idx, entry in enumerate(ordered):
             if idx == 0:
-                low_ext = -273.15
+                # A phase above the 0 K hull is entropy-stabilized: it starts at its formation.
+                low_ext = -273.15 if entry["phase"] in zero_k_stable else entry["t_min"]
             else:
                 low_ext = prev_top if prev_top is not None else -273.15
-                # Never extend above where this phase already starts.
+                # Extends no higher than where this phase already starts.
                 low_ext = min(low_ext, entry["t_min"])
             phase_low_ext[entry["phase"]] = low_ext
             prev_top = entry["t_max"]
 
-    # Collect polymorph phase names for separate labeling
-    polymorph_names = set()
-    if polymorph_transitions:
-        polymorph_names = {pt["name"] for pt in polymorph_transitions}
-        polymorph_names |= {pt.get("ground_state_name", "") for pt in polymorph_transitions}
-
-    # All phase names (used by _abbreviate_phase_name to decide whether to keep greek prefixes).
+    # All phase names (used by abbreviate_phase_name to decide whether to keep greek prefixes).
     all_phase_names = set(solid_df["label"].unique()) | polymorph_names
     # Labels are collected here, then de-collided in one pass before being drawn.
     label_dicts: list[dict] = []
-    # One bookkeeping record per DRAWN tie, in draw order: the span, the fig.data index of
-    # its trace, its slot in tie_segments, and its instrumentation record. A merge rewrites
-    # a record in place so all three stay in sync with the geometry actually on the figure.
-    drawn_ties: list[dict] = []
-    tie_segments: list[tuple] = []
-    # conds is settled for the tie stage by here (the liquidus/decomposition expansions ran
-    # above); the later label-driven lowering of conds[0] cannot reach back into this.
     tie_merge_t_tol = _TIE_MERGE_T_FRAC * (hsx.conds[1] - hsx.conds[0])
+    ties = _TieDrawer(fig, tie_merge_t_tol)
+    tie_segments = ties.segments
 
-    def _add_tie(x0, x1, temp, dedup=True, source=None):
-        """Draw one horizontal tie, merging it into a coincident one already drawn.
-
-        Two sources can emit the same physical horizontal with slightly different extents
-        (Cu-Ir's peritectic at 1224 C and the two 'Misc Gaps' halves of it at 1219/1223).
-        A candidate within ``tie_merge_t_tol`` of a drawn tie whose composition span TOUCHES
-        or overlaps it extends that tie to the union span instead of adding a second trace,
-        so the drawn count is monotone in the number of physically distinct ties and trace
-        order is never disturbed. Disjoint spans at the same temperature stay separate --
-        they are the two halves of a genuine three-phase horizontal around a compound.
-        """
-        lo, hi, t = min(float(x0), float(x1)), max(float(x0), float(x1)), float(temp)
-        if dedup:
-            for rec in drawn_ties:
-                if abs(t - rec["t"]) > tie_merge_t_tol:
-                    continue
-                if min(hi, rec["x_hi"]) < max(lo, rec["x_lo"]):
-                    continue  # spans do not even touch -> a different tie
-                new_lo, new_hi = min(lo, rec["x_lo"]), max(hi, rec["x_hi"])
-                if (new_lo, new_hi) != (rec["x_lo"], rec["x_hi"]):
-                    fig.data[rec["trace"]].x = (new_lo, new_hi)  # y is already constant
-                    rec["x_lo"], rec["x_hi"] = new_lo, new_hi
-                    tie_segments[rec["segment"]] = (new_lo, new_hi, rec["t"])
-                if rec["record"] is not None:
-                    rec["record"]["x0"], rec["record"]["x1"] = new_lo, new_hi
-                    rec["record"]["sources"].append(source)
-                return
-        tie_segments.append((lo, hi, t))
-        tie = px.line(x=[x0, x1], y=[temp, temp])
-        tie.update_traces(line=dict(color="Silver"))
-        fig.add_trace(tie.data[0])
-        record = None
-        if _TIE_SINK is not None:
-            record = {"temp": t, "x0": lo, "x1": hi, "sources": [source]}
-            _TIE_SINK.append(record)
-        drawn_ties.append(
-            {
-                "t": t,
-                "x_lo": lo,
-                "x_hi": hi,
-                "trace": len(fig.data) - 1,
-                "segment": len(tie_segments) - 1,
-                "record": record,
-            }
-        )
-
-    # Compound (non-polymorph) labels are placed after the conds-convergence loop so they can
-    # use the final temperature range and the drawn tie lines (region-fit + escalation below).
+    # Compound labels are placed after the conds loop, against the drawn tie lines.
     compound_phase_list = []
     for phase, phase_df, solid_comp in phase_rows:
         low_ext_temp = phase_low_ext.get(phase, -273.15)
@@ -1822,12 +2108,13 @@ def plot_tx(
             [{"x": solid_comp, "t": low_ext_temp, "label": phase}], columns=phase_df.columns
         )
         phase_df = pd.concat([phase_df, new_row_df], ignore_index=True)
+        phase_df = phase_df.sort_values(by="t")
         line = px.line(phase_df, x="x", y="t", color="label", color_discrete_map=phase_colors)
 
         trace = line.data[0]
         if phase in imputed_phases:
             existing_line = trace.line.to_plotly_json() if trace.line is not None else {}
-            existing_line["dash"] = "dash"
+            existing_line["dash"] = IMPUTED_LINE_DASH
             trace.line = existing_line
         fig.add_trace(trace)
 
@@ -1841,14 +2128,12 @@ def plot_tx(
                     "t_min": float(low_ext_temp),
                     "t_max": float(phase_df["t"].max()),
                     "is_stacked": len(comp_groups.get(comp_key, [])) > 1,
-                    "text": _abbreviate_phase_name(phase, all_phase_names),
+                    "text": abbreviate_phase_name(phase, all_phase_names, components),
                 }
             )
 
     ss_t_range = (hsx.conds[0], hsx.conds[1])
-    # The L + S1 + S2 reaction (a solid miscibility gap meeting the liquidus) arrives as a
-    # whole family of grid slices; the phase rule says it is ONE invariant. Resolve the
-    # per-phase extremum once, before the loop, so admission stays a per-invariant test.
+    # Per-phase extremum of the L + S1 + S2 reaction, resolved once before the loop.
     ss_family_max = (
         _ss_family_maxima(
             (
@@ -1870,11 +2155,10 @@ def plot_tx(
                     comps, inv_phases, temp, ss_regions, ss_t_range, key, ss_family_max
                 ):
                     continue  # SS ties are drawn only where they are physically meaningful
-                _add_tie(min(comps), max(comps), temp, source=f"invariant:{key}")
+                ties.add(min(comps), max(comps), temp, source=f"invariant:{key}")
 
-    # --- Polymorph (element solid-solution) tie lines and label regions, derived from the
-    # ACTUAL DFT traces in solid_df (their on-hull stability ranges), not the experimental
-    # transition temperatures (which do not coincide with the plotted trace boundaries). ---
+    # -- Polymorph tie lines and label regions, from the on-hull stability ranges of the DFT traces
+    # --
     liq_pts = list(zip(liq_df["x"].tolist(), liq_df["t"].tolist())) if not liq_df.empty else []
     poly_traces = {0: [], 100: []}
     compound_bounds = []  # (comp, t_min, t_max) for non-polymorph solids
@@ -1887,9 +2171,7 @@ def plot_tx(
             poly_traces[side].append(
                 {
                     "name": phase,
-                    # RAW lower extent of the DFT trace (e.g. ~-273 for a ground state) so a later
-                    # lowering of conds[0] can extend this region downward in-band. Clamped to the
-                    # *current* conds[0] only at layout time, never frozen here.
+                    # Raw lower extent of the DFT trace; clamped to conds[0] at layout time.
                     "t_bottom": phase_low_ext.get(phase, hsx.conds[0]),
                     "t_max": float(sub["t"].max()),
                 }
@@ -1898,60 +2180,12 @@ def plot_tx(
             compound_bounds.append((solid_comp, float(sub["t"].min()), float(sub["t"].max())))
 
     boundary_temp_tol = 0.01 * (hsx.conds[1] - hsx.conds[0])
+    boundaries = _PhaseBoundaries(
+        liq_pts, boundary_temp_tol, compound_bounds, ss_regions, lhs_tm, rhs_tm
+    )
 
-    def _boundary_xs(temp, skip_region=None):
-        """Every phase boundary the horizontal at ``temp`` crosses, as compositions.
-
-        SS fields have to be asked for explicitly: ``compound_bounds`` is built from
-        ``phase_rows``, which excludes them, so without this a polymorph tie runs straight
-        through the hatched field (Mn-Si's alpha->beta horizontal crossed the (Mn) BCC
-        field from 6 to 25 at.% instead of terminating on it at 6)."""
-        xs = (
-            list(_curve_crossings_at_temp(liq_pts, temp, temp_tol=boundary_temp_tol))
-            if liq_pts
-            else []
-        )
-        xs += [c for c, t0, t1 in compound_bounds if t0 - 1 <= temp <= t1 + 1]
-        xs += _ss_boundary_crossings(ss_regions, temp, boundary_temp_tol, skip=skip_region)
-        return xs
-
-    def _adjacent_boundary_x(temp, side):
-        """Nearest phase boundary inward from the element edge at temp: a liquidus crossing, a
-        compound, a solid-solution field boundary, or — when nothing lies between — the
-        opposite element's solid (so a polymorph tie spans to the opposite polymorph)."""
-        xs = _boundary_xs(temp)
-        opp = 100 if side == 0 else 0
-        if temp < (rhs_tm if opp == 100 else lhs_tm):  # opposite element is solid at temp
-            xs.append(float(opp))
-        inward = [x for x in xs if (x > side if side == 0 else x < side)]
-        return min(inward, key=lambda x: abs(x - side)) if inward else None
-
-    def _ss_minimum_span(x_at, temp, region):
-        """Grow the horizontal at a branch's temperature minimum out to its bounding fields.
-
-        The span runs outward from the minimum COMPOSITION to the nearest phase boundary
-        on each side, which is the span the reaction itself has: Y-Zr's 768.0 C eutectoid
-        runs from the Y-side HCP boundary at ~3.6 at.% to the
-        Zr-side one at ~96.4, exactly the two HCP vertices of the facet at that temperature.
-        The witnesses' own compositions are not used. Returns None when no boundary brackets
-        the minimum, since then the extent is not determined.
-        """
-        xs = _boundary_xs(temp, skip_region=region)
-        left = max((x for x in xs if x < x_at - 1e-9), default=None)
-        right = min((x for x in xs if x > x_at + 1e-9), default=None)
-        # Nothing between the minimum and an axis means the two-phase field reaches the pure
-        # element, which bounds it there -- the same fallback _adjacent_boundary_x makes.
-        if left is None and temp < lhs_tm:
-            left = 0.0
-        if right is None and temp < rhs_tm:
-            right = 100.0
-        if left is None or right is None or right - left <= 0.0:
-            return None
-        return float(left), float(right)
-
-    # --- Solid-solution eutectoid horizontals. The invariant emitter hands a solvus over as
-    # one entry per grid slice and _ss_tie_allowed rejects the lot; the genuine reaction is
-    # the one at the field's interior temperature minimum. At most one per branch. ---
+    # -- Solid-solution eutectoid horizontals: at most one per branch, at the field's interior
+    # temperature minimum --
     if ss_regions:
         ss_assemblages = _facet_assemblages(hsx.df_tx)
         for ss_name in sorted(ss_regions):
@@ -1961,47 +2195,40 @@ def plot_tx(
                     anchor, region, ss_assemblages, (0.0, 100.0), ss_t_range
                 ):
                     continue
-                extent = _ss_minimum_span(float(anchor["x"]), float(anchor["t"]), region)
+                extent = boundaries.ss_minimum_span(float(anchor["x"]), float(anchor["t"]), region)
                 if extent is None:
                     continue
-                # Through _add_tie, so a minimum that restates an already-drawn eutectic or
-                # peritectic extends that trace instead of doubling it (Hf-W's 1228.3 C).
-                _add_tie(extent[0], extent[1], float(anchor["t"]), source="ss_minimum")
+                # Through ties.add, which extends an existing eutectic or peritectic trace at that
+                # temperature.
+                ties.add(extent[0], extent[1], float(anchor["t"]), source="ss_minimum")
 
     polymorph_regions = []  # (region_dict, comp_pct), placed after the safety-net ties
     for side, traces in poly_traces.items():
         elt_melt = lhs_tm if side == 0 else rhs_tm
         for tr in sorted(traces, key=lambda d: d["t_max"]):
-            # Tie line at the trace top (polymorph transition or melting), drawn all the way to
-            # the adjacent phase boundary so it fully intersects it. Skip the top polymorph's
-            # congruent melt at the pure element (a point on the liquidus, not a tie line).
-            # A polymorph the solid solution already covers AT the element edge has no tie:
-            # the field starts at the axis there, so the horizontal would run through its
-            # interior rather than terminate on it.
+            # Tie line at the trace top, to the adjacent phase boundary; none for the top
+            # polymorph's congruent melt or for a polymorph the solid solution covers at the element
+            # edge.
             T = tr["t_max"]
             congruent_melt = abs(T - elt_melt) < 0.02 * (hsx.conds[1] - hsx.conds[0])
             subsumed = _edge_inside_ss_field(ss_regions, T, float(side), boundary_temp_tol)
             if hsx.conds[0] < T < hsx.conds[1] and not congruent_melt and not subsumed:
-                bx = _adjacent_boundary_x(T, side)
+                bx = boundaries.adjacent_boundary_x(T, side)
                 if bx is not None and abs(bx - side) >= 0.6:
-                    _add_tie(side, bx, T, source="polymorph")
-            # Label region carries the RAW trace extent; visibility is decided at layout time
-            # against the (possibly lowered) conds[0]. A region whose entire trace sits below
-            # the current floor is dropped.
+                    ties.add(side, bx, T, source="polymorph")
+            # Label region with the raw trace extent; one entirely below the floor is dropped.
             if tr["t_max"] > hsx.conds[0]:
                 polymorph_regions.append(
                     ({"name": tr["name"], "t_bottom": tr["t_bottom"], "t_max": tr["t_max"]}, side)
                 )
 
-    # --- Safety-net tie lines: connect each incongruently-melting solid phase to the
-    # liquidus at the top of its boundary. The eutectic/peritectic invariants above already
-    # cover most cases; this recovers any solid<->liquidus tie that invariant detection
-    # missed, while staying local (no full-width spans). ---
+    # -- Safety-net tie lines: each incongruently melting solid phase to the liquidus at the top of
+    # its boundary, where invariant detection drew none --
     if not liq_df.empty and phase_rows:
         liq_top = _liquidus_top_fn(liq_df, None)
         span = hsx.conds[1] - hsx.conds[0]
         congruent_tol = 0.02 * span  # phase top within this of the liquidus -> congruent
-        max_tie_span = 40.0  # at.%; tie lines are local, never near-full-width
+        max_tie_span = 40.0  # at.%; widest tie span drawn
         for phase, _pdf, comp_s in phase_rows:
             if phase in polymorph_names:
                 continue  # polymorph ties handled above from their traces
@@ -2018,16 +2245,14 @@ def plot_tx(
             nearest = min(crossings, key=lambda xc: abs(xc - comp_s))
             if not (0.6 < abs(nearest - comp_s) <= max_tie_span):
                 continue
-            _add_tie(comp_s, nearest, t_max, source="safety-net")
+            ties.add(comp_s, nearest, t_max, source="safety-net")
 
-    # --- Place deferred polymorph/element labels. Preference per label: (1) in-band in its own
-    # narrow field; (2) for the lowest-T polymorph, lower conds[0] so it fits (>= absolute zero);
-    # (3) in the wider adjacent two-phase region just inside the element, below the liquidus;
-    # (4) floated above the liquidus with a leader arrow. ---
+    # -- Deferred polymorph/element labels, by preference: (1) in-band; (2) for the lowest-T
+    # polymorph, conds[0] lowered to fit; (3) the adjacent two-phase region; (4) floated above the
+    # liquidus with a leader arrow --
     xlim = (0.0, 100.0)
     liq_floor = _liquidus_top_fn(liq_df, assessed_pts, combine="min")  # below BOTH curves
     liq_high = _liquidus_top_fn(liq_df, assessed_pts, combine="max")  # above BOTH curves
-    _ABS_ZERO = -273.15
     _CLEAR_PX = 10.0  # clearance (px) between a floated label and the liquidus below it
     clear_frac = _CLEAR_PX / _PLOT_H_PX
     gap_frac = 0.004  # stack gap as a fraction of the y-span
@@ -2038,18 +2263,6 @@ def plot_tx(
             format_phase_display_name(name, ss_phases, hsx.comps) for name in sorted(ss_phases)
         ]
 
-    def _env_min(fn, cx, half_w):
-        vals = [
-            v for v in (fn(x) for x in np.linspace(cx - half_w, cx + half_w, 11)) if np.isfinite(v)
-        ]
-        return min(vals) if vals else None
-
-    def _env_max(fn, cx, half_w):
-        vals = [
-            v for v in (fn(x) for x in np.linspace(cx - half_w, cx + half_w, 11)) if np.isfinite(v)
-        ]
-        return max(vals) if vals else None
-
     # Precompute static per-side data (half-heights as span-invariant fractions, ceilings, ties).
     sides_data = {}
     for side_comp in (0, 100):
@@ -2058,27 +2271,21 @@ def plot_tx(
             continue
         label_x = 1.5 if side_comp == 0 else 98.5  # small standoff, like the compound labels
         fx = 8.0 if side_comp == 0 else 92.0  # inward x for two-phase / floated labels
-        texts = [_abbreviate_phase_name(r["name"], all_phase_names) for r in side]
-        half_hs_frac, half_w = [], 1.2
+        texts = [abbreviate_phase_name(r["name"], all_phase_names, components) for r in side]
+        half_hs_frac, vert_half_w = [], 1.2
+        horiz_half_hs_frac, horiz_half_ws = [], []
         for text in texts:
-            probe = {
-                "x": label_x,
-                "y": 0.0,
-                "text": text,
-                "textangle": -90,
-                "font_size": 12,
-                "xanchor": "center",
-                "yanchor": "middle",
-            }
-            _, _, half_w, hh = _estimate_label_box(probe, xlim, (hsx.conds[0], hsx.conds[1]))
-            half_hs_frac.append(hh / (hsx.conds[1] - hsx.conds[0]))
-        # Dodge compound columns: a floated polymorph label sits at ``fx`` with a leader arrow
-        # back to the element edge, and a compound sharing that composition would collide.
-        # Shift fx to the nearest compound-free x; an empty same-side gap leaves it at default.
+            (vert_half_w, hh_frac), (h_hw, h_hh_frac) = _label_metrics(
+                text, xlim, (hsx.conds[0], hsx.conds[1]), font_size=12
+            )
+            half_hs_frac.append(hh_frac)
+            horiz_half_hs_frac.append(h_hh_frac)
+            horiz_half_ws.append(h_hw)
+        # A floated polymorph label's ``fx`` shifts to the nearest compound-free x.
         obstacles = [label_x] + [
             cp["comp"] for cp in compound_phase_list if (cp["comp"] < 50) == (side_comp == 0)
         ]
-        clearance = 2 * half_w + 0.8
+        clearance = 2 * vert_half_w + 0.8
         if any(abs(o - fx) < clearance for o in obstacles):
             lo, hi = (2.0, 48.0) if side_comp == 0 else (52.0, 98.0)
             cands = [
@@ -2088,102 +2295,74 @@ def plot_tx(
             ]
             if cands:
                 fx = min(cands, key=lambda x: abs(x - fx))
+        # Horizontal band for this side's displaced labels: one column sized for the widest text.
+        h_half_w = max(horiz_half_ws) if horiz_half_ws else 0.0
+        band = _horizontal_anchor(side_comp, h_half_w, obstacles, vert_half_w, xlim)
+        horiz = None
+        if band is not None:
+            h_ax, h_xanchor = band
+            h_cx = (h_ax + h_half_w) if h_xanchor == "left" else (h_ax - h_half_w)
+            horiz = dict(
+                x=h_ax,
+                xanchor=h_xanchor,
+                cx=h_cx,
+                half_w=h_half_w,
+                half_hs_frac=horiz_half_hs_frac,
+                ceil_raw=_env_min(liq_floor, h_cx, h_half_w),
+                float_base=_env_max(liq_high, h_cx, h_half_w),
+                tie_temps=[
+                    T
+                    for x0, x1, T in tie_segments
+                    if x1 >= h_cx - h_half_w and x0 <= h_cx + h_half_w
+                ],
+            )
         sides_data[side_comp] = dict(
             side=side,
             label_x=label_x,
             fx=fx,
             texts=texts,
             half_hs_frac=half_hs_frac,
-            ceil_raw=_env_min(liq_floor, label_x, half_w),
-            fx_ceil_raw=_env_min(liq_floor, fx, half_w),
-            float_base=_env_max(liq_high, fx, half_w),
+            horiz=horiz,
+            ceil_raw=_env_min(liq_floor, label_x, vert_half_w),
+            fx_ceil_raw=_env_min(liq_floor, fx, vert_half_w),
+            float_base=_env_max(liq_high, fx, vert_half_w),
             tie_temps=[
-                T for x0, x1, T in tie_segments if x1 >= label_x - half_w and x0 <= label_x + half_w
+                T
+                for x0, x1, T in tie_segments
+                if x1 >= label_x - vert_half_w and x0 <= label_x + vert_half_w
             ],
             fx_tie_temps=[
-                T for x0, x1, T in tie_segments if x1 >= fx - half_w and x0 <= fx + half_w
+                T for x0, x1, T in tie_segments if x1 >= fx - vert_half_w and x0 <= fx + vert_half_w
             ],
+            blocked=_column_blocked_bands(
+                label_x - vert_half_w, label_x + vert_half_w, compound_phase_list, clear=0.5
+            ),
             bottom_idx=min(range(len(side)), key=lambda i: side[i]["t_bottom"]),
         )
 
-    def _layout_side(side_comp, c0, c1):
-        """Classify each label: ('inband', y) | ('lower', needed_c0) | ('twophase', y) |
-        ('float', half_h_frac), evaluated at the given conds.
+    # Read only by displaced (``twophase``/``float``) labels.
+    orient_latch = _OrientationLatch()
 
-        Relocated (``twophase``) labels are packed JOINTLY in the inward two-phase column so two
-        never share a slot, and ``_pack_labels`` fills them bottom-to-top in their own
-        t_bottom order (monotonic => non-crossing leader arrows / shortest longest arrow)."""
-        d = sides_data[side_comp]
-        span = c1 - c0
-        margin, gap = 0.012 * span, 0.004 * span
-        half_hs = [hf * span for hf in d["half_hs_frac"]]
-        ceil = (d["ceil_raw"] - margin) if d["ceil_raw"] is not None else c1
-        fx_ceil = (d["fx_ceil_raw"] - margin) if d["fx_ceil_raw"] is not None else c1
-        regions_ty = [(max(r["t_bottom"], c0), min(r["t_max"], c1)) for r in d["side"]]
-        ys = _pack_labels(regions_ty, half_hs, ceil, d["tie_temps"], c0, margin, gap)
-        out = [None] * len(d["side"])
-        for i in range(len(d["side"])):
-            if ys[i] is not None:
-                out[i] = ("inband", ys[i])
-        # Lowest-T polymorph: lower conds[0] so it fits in its bottom gap.
-        bi = d["bottom_idx"]
-        if out[bi] is None:
-            r = d["side"][bi]
-            r_top = min(r["t_max"], c1)
-            obstacles = sorted(T for T in d["tie_temps"] if c0 < T < min(r_top, ceil))
-            gap_top = obstacles[0] if obstacles else min(r_top, ceil)
-            needed_c0 = gap_top - 2 * half_hs[bi] - 1.5 * margin
-            if needed_c0 >= _ABS_ZERO:
-                out[bi] = ("lower", needed_c0)
-        # Remaining labels relocate to the inward two-phase region, packed jointly (shared
-        # cursor) so they cannot coincide; any that still do not fit float above the liquidus.
-        reloc = [i for i in range(len(d["side"])) if out[i] is None]
-        if reloc:
-            regions_fx = [(max(d["side"][i]["t_bottom"], c0), fx_ceil) for i in reloc]
-            fx_ys = _pack_labels(
-                regions_fx, [half_hs[i] for i in reloc], fx_ceil, d["fx_tie_temps"], c0, margin, gap
-            )
-            for k, i in enumerate(reloc):
-                out[i] = (
-                    ("twophase", fx_ys[k])
-                    if fx_ys[k] is not None
-                    else ("float", d["half_hs_frac"][i])
-                )
-        return out
-
-    # Precompute compound-label columns: each compound's x is assigned to a distinct two-phase
-    # gap (left/right of the compound); per-column ceiling/ties drive region-fit + escalation.
+    # Compound-label columns: each compound's x goes to a distinct two-phase gap.
     compound_cols = []
     if compound_phase_list:
         comps_x = [cp["comp"] for cp in compound_phase_list]
         init_ylim = (hsx.conds[0], hsx.conds[1])
         half_ws = []
         for cp in compound_phase_list:
-            probe = {
-                "x": cp["comp"],
-                "y": 0.0,
-                "text": cp["text"],
-                "textangle": -90,
-                "font_size": 12,
-                "xanchor": "center",
-                "yanchor": "middle",
-            }
-            half_ws.append(_estimate_label_box(probe, xlim, init_ylim)[2])
+            (hw, _), _ = _label_metrics(cp["text"], xlim, init_ylim, font_size=12)
+            half_ws.append(hw)
         assigned_x = _assign_compound_sides(comps_x, half_ws, xlim)
         for cp, ax in zip(compound_phase_list, assigned_x):
-            # Stacked compounds (>1 phase at the same composition) sit just inside the diagram on
-            # one side, separated by their own stability bands rather than left/right gaps.
+            # Stacked compounds sit just inside the diagram on one side, separated by stability
+            # band.
             label_x = (cp["comp"] + (1.5 if cp["comp"] <= 50 else -1.5)) if cp["is_stacked"] else ax
-            probe = {
-                "x": label_x,
-                "y": 0.0,
-                "text": cp["text"],
-                "textangle": -90,
-                "font_size": 12,
-                "xanchor": "center",
-                "yanchor": "middle",
-            }
-            _, _, hw, hh = _estimate_label_box(probe, xlim, init_ylim)
+            (hw, hh_frac), (h_hw, h_hh_frac) = _label_metrics(
+                cp["text"], xlim, init_ylim, font_size=12
+            )
+            # A floated compound label is horizontal, centred on its column and clamped inside the
+            # axis.
+            h_cx = min(max(label_x, xlim[0] + h_hw), xlim[1] - h_hw)
             compound_cols.append(
                 dict(
                     comp=cp["comp"],
@@ -2193,70 +2372,54 @@ def plot_tx(
                     t_min=cp["t_min"],
                     t_max=cp["t_max"],
                     half_w=hw,
-                    half_h_frac=hh / (init_ylim[1] - init_ylim[0]),
+                    half_h_frac=hh_frac,
                     ceil_raw=_env_min(liq_floor, label_x, hw),
                     float_base=_env_max(liq_high, label_x, hw),
                     tie_temps=[
                         T for x0, x1, T in tie_segments if x1 >= label_x - hw and x0 <= label_x + hw
                     ],
+                    horiz=(
+                        None
+                        if 2 * h_hw > (xlim[1] - xlim[0])
+                        else dict(
+                            x=h_cx,
+                            half_w=h_hw,
+                            half_h_frac=h_hh_frac,
+                            float_base=_env_max(liq_high, h_cx, h_hw),
+                        )
+                    ),
                 )
             )
 
-    def _layout_compounds(c0, c1):
-        """Per compound column: ('inband', y) | ('lower', needed_c0) | ('float', half_h_frac).
-        ``inband`` puts the label at the bottom of the lowest two-phase region that fits (with a
-        consistent bottom pad), skipping up past any tie line that would cross it (bugs 1 & 2)."""
-        span = c1 - c0
-        margin, gap, pad = 0.012 * span, 0.004 * span, _BOTTOM_PAD_FRAC * span
-        out = []
-        for col in compound_cols:
-            hh = col["half_h_frac"] * span
-            ceil = (col["ceil_raw"] - margin) if col["ceil_raw"] is not None else c1
-            if col["is_stacked"]:
-                region = (max(col["t_min"], c0), min(col["t_max"], c1))
-                y = _pack_labels([region], [hh], ceil, col["tie_temps"], c0, margin, gap)[0]
-            else:
-                y = _place_compound_y(c0, ceil, col["tie_temps"], hh, pad, margin)
-            if y is not None:
-                out.append(("inband", y))
-                continue
-            # Escalate: lower conds[0] so the bottom region grows enough; else float.
-            cuts = sorted(T for T in col["tie_temps"] if c0 < T < ceil)
-            gap_top = cuts[0] if cuts else ceil
-            needed_c0 = gap_top - 2 * hh - pad - margin
-            if np.isfinite(gap_top) and needed_c0 >= _ABS_ZERO:
-                out.append(("lower", needed_c0))
-            else:
-                out.append(("float", col["half_h_frac"]))
-        return out
-
-    # Fixed point: 'lower' lowers conds[0]; floats + the legend raise conds[1]. Both change the
-    # y-span (hence label heights), so iterate until conds (and placement) are stable.
+    # Iterates until conds and placement are stable.
     legend_params, float_top_by_side = {}, {0: -np.inf, 100: -np.inf}
     for _ in range(8):
         c0_before, c1_before = hsx.conds[0], hsx.conds[1]
         float_top_by_side = {0: -np.inf, 100: -np.inf}
-        for side_comp, d in sides_data.items():
-            placements = _layout_side(side_comp, hsx.conds[0], hsx.conds[1])
+        for side_comp in sides_data:
+            placements = _layout_side(
+                sides_data, side_comp, hsx.conds[0], hsx.conds[1], orient_latch
+            )
             for p in placements:
-                if p[0] == "lower":
-                    hsx.conds[0] = max(min(hsx.conds[0], p[1]), _ABS_ZERO)
-            float_fracs = [p[1] for p in placements if p[0] == "float"]
-            if float_fracs and d["float_base"] is not None:
-                m = clear_frac + sum(2 * hf for hf in float_fracs) + gap_frac * len(float_fracs)
+                if p["kind"] == "lower":
+                    hsx.conds[0] = max(min(hsx.conds[0], p["needed_c0"]), _ABS_ZERO)
+            floats = [p for p in placements if p["kind"] == "float"]
+            base = next((p["float_base"] for p in floats if p["float_base"] is not None), None)
+            if floats and base is not None:
+                m = clear_frac + sum(2 * p["half_h_frac"] for p in floats) + gap_frac * len(floats)
                 if m < 0.95:
-                    side_c1 = (d["float_base"] - m * hsx.conds[0]) / (1.0 - m)
+                    side_c1 = (base - m * hsx.conds[0]) / (1.0 - m)
                     hsx.conds[1] = max(hsx.conds[1], side_c1)
                     float_top_by_side[side_comp] = side_c1
         # Compound columns can also lower conds[0] (region-fit) or raise conds[1] (float).
-        for col, p in zip(compound_cols, _layout_compounds(hsx.conds[0], hsx.conds[1])):
-            if p[0] == "lower":
-                hsx.conds[0] = max(min(hsx.conds[0], p[1]), _ABS_ZERO)
-            elif p[0] == "float" and col["float_base"] is not None:
-                m = clear_frac + 2 * p[1] + gap_frac
+        for p in _layout_compounds(compound_cols, hsx.conds[0], hsx.conds[1], orient_latch):
+            if p["kind"] == "lower":
+                hsx.conds[0] = max(min(hsx.conds[0], p["needed_c0"]), _ABS_ZERO)
+            elif p["kind"] == "float" and p["float_base"] is not None:
+                m = clear_frac + 2 * p["half_h_frac"] + gap_frac
                 if m < 0.95:
                     hsx.conds[1] = max(
-                        hsx.conds[1], (col["float_base"] - m * hsx.conds[0]) / (1.0 - m)
+                        hsx.conds[1], (p["float_base"] - m * hsx.conds[0]) / (1.0 - m)
                     )
         legend_params = _place_legend(
             hsx,
@@ -2274,39 +2437,38 @@ def plot_tx(
     span = hsx.conds[1] - hsx.conds[0]
     clear_d, gap_d = clear_frac * span, gap_frac * span
     for side_comp, d in sides_data.items():
-        placements = _layout_side(side_comp, hsx.conds[0], hsx.conds[1])
+        placements = _layout_side(sides_data, side_comp, hsx.conds[0], hsx.conds[1], orient_latch)
         floated = []
-        for r, text, hf, p in zip(d["side"], d["texts"], d["half_hs_frac"], placements):
-            kind = p[0]
+        for r, text, p in zip(d["side"], d["texts"], placements):
+            kind = p["kind"]
             label = {
                 "text": text,
-                "xanchor": "center",
+                "xanchor": p.get("xanchor", "center"),
                 "yanchor": "middle",
-                "textangle": -90,
+                "textangle": p["angle"],
                 "font_size": 12,
                 "font_color": "black",
                 "pin": True,
             }
-            # Visible extent of this region under the converged conds (raw t_bottom may sit
-            # below conds[0] for a ground-state trace); the home/midpoint use the visible band.
+            # Visible extent of this region under the converged conds.
             vis_bottom = max(r["t_bottom"], hsx.conds[0])
             vis_top = min(r["t_max"], hsx.conds[1])
             mid = 0.5 * (vis_bottom + vis_top)
             home_y = min(max(mid, hsx.conds[0]), hsx.conds[1])
             if kind == "inband":
-                label["x"], label["y"] = d["label_x"], p[1]
+                label["x"], label["y"] = p["x"], p["y"]
             elif kind == "twophase":
                 # In the two-phase region just inside the element, with an arrow to the phase.
-                label["x"], label["y"] = d["fx"], p[1]
+                label["x"], label["y"] = p["x"], p["y"]
                 label["home_x"] = 99.5 if side_comp == 100 else 0.5
                 label["home_y"] = home_y
-            else:  # 'float' (or a 'lower' that could not reach absolute zero)
-                label["x"] = d["fx"]
+            else:  # 'float', or a 'lower' with no resolved y
+                label["x"] = p["x"]
                 label["home_x"] = 99.5 if side_comp == 100 else 0.5
                 label["home_y"] = home_y
                 label["above_liquidus"] = True
-                base = d["float_base"] if d["float_base"] is not None else vis_top
-                floated.append((label, base, hf, mid))
+                base = p.get("float_base") if p.get("float_base") is not None else vis_top
+                floated.append((label, base, p["half_h_frac"], mid))
             label_dicts.append(label)
         # Stack this side's floated labels just above the liquidus (bottom-to-top by temperature).
         cursor = (max(b for _, b, _, _ in floated) + clear_d) if floated else 0.0
@@ -2317,13 +2479,15 @@ def plot_tx(
 
     # --- Emit compound labels with the converged conds (region-fit + bottom pad + escalation). ---
     margin_d, pad_d = 0.012 * span, _BOTTOM_PAD_FRAC * span
-    for col, p in zip(compound_cols, _layout_compounds(hsx.conds[0], hsx.conds[1])):
-        kind = p[0]
+    for col, p in zip(
+        compound_cols, _layout_compounds(compound_cols, hsx.conds[0], hsx.conds[1], orient_latch)
+    ):
+        kind = p["kind"]
         label = {
             "text": col["text"],
             "xanchor": "center",
             "yanchor": "middle",
-            "textangle": -90,
+            "textangle": p["angle"],
             "font_size": 12,
             "font_color": "black",
         }
@@ -2331,18 +2495,18 @@ def plot_tx(
         mid = 0.5 * (vis_bottom + vis_top)
         if kind == "float":
             # Float above the local liquidus with a leader arrow pointing to the compound.
-            label["x"] = col["label_x"]
+            label["x"] = p["x"]
             label["home_x"], label["home_y"] = (
                 col["comp"],
                 min(max(mid, hsx.conds[0]), hsx.conds[1]),
             )
             label["above_liquidus"] = True
-            base = col["float_base"] if col["float_base"] is not None else vis_top
-            label["y"] = base + clear_d + col["half_h_frac"] * span
+            base = p["float_base"] if p["float_base"] is not None else vis_top
+            label["y"] = base + clear_d + p["half_h_frac"] * span
         else:  # 'inband' / 'lower' -> a bottom-region slot under the final conds
             ceil = (col["ceil_raw"] - margin_d) if col["ceil_raw"] is not None else hsx.conds[1]
             y = (
-                p[1]
+                p["y"]
                 if kind == "inband"
                 else _place_compound_y(
                     hsx.conds[0], ceil, col["tie_temps"], col["half_h_frac"] * span, pad_d, margin_d
@@ -2351,8 +2515,7 @@ def plot_tx(
             if y is None:
                 y = hsx.conds[0] + pad_d + col["half_h_frac"] * span
             label["x"], label["y"] = col["label_x"], y
-            # Home at the placed position: a pure vertical de-collision nudge (the bug-3 forced
-            # stacking fallback) must NOT spawn a leader arrow back to an arbitrary point.
+            # Home at the placed position, so a vertical de-collision nudge draws no leader arrow.
             label["home_x"], label["home_y"] = col["label_x"], y
             label["no_arrow"] = True
         label_dicts.append(label)
@@ -2412,9 +2575,8 @@ def plot_tx(
     )
     fig.update_traces(line=dict(width=4), showlegend=False)
 
-    # --- Solid-solution fields: one closed, '/'-hatched polygon per composition branch,
-    # outlined in the phase color over a clear fill. Rendered here, after the global
-    # width/legend reset, with reserved colors and one legend entry each. ---
+    # -- Solid-solution fields: one '/'-hatched polygon per composition branch, outlined in the
+    # phase color, one legend entry each --
     for ss_name in [p for p in hsx.phases if p in ss_regions]:
         color = phase_colors.get(ss_name, "#555555")
         display = format_phase_display_name(ss_name, ss_phases, hsx.comps)
@@ -2456,8 +2618,8 @@ def plot_tx(
                 x=[None],
                 y=[None],
                 mode="lines",
-                line=dict(color="gray", dash="dash"),
-                name="Imputed Phase",
+                line=dict(color="gray", dash=IMPUTED_LINE_DASH),
+                name=non_dft_label or IMPUTED_LEGEND_LABEL,
                 showlegend=True,
             )
         )
@@ -2518,8 +2680,21 @@ def plot_tx(
     )
     fig.update_xaxes(tickformat=".0f", **axes_params_dict)
     fig.update_yaxes(**axes_params_dict)
+    float_spans = [
+        (box[0] - box[2], box[0] + box[2])
+        for box in (
+            _estimate_label_box(lbl, xlim, ylim)
+            for lbl in resolved_labels
+            if lbl.get("above_liquidus")
+        )
+    ]
     l_x, l_y = _place_liquid_label(
-        liq_df, assessed_pts, (0.0, 100.0), (hsx.conds[0], hsx.conds[1]), font_size=14
+        liq_df,
+        assessed_pts,
+        (0.0, 100.0),
+        (hsx.conds[0], hsx.conds[1]),
+        font_size=14,
+        blocked=float_spans,
     )
     fig.add_annotation(x=l_x, y=l_y, text="L", showarrow=False, font=dict(size=14, color="black"))
     fig.add_annotation(
@@ -2545,6 +2720,47 @@ def plot_tx(
         yanchor="middle",
     )
 
+    return fig
+
+
+#: Name of the annotation ``add_corner_note`` places; a caller restyling the figure matches it.
+CORNER_NOTE_NAME = "gliquid-note"
+
+
+def add_corner_note(fig: go.Figure, text: str, fill: str, font_size: float = 13) -> go.Figure:
+    """Put ``text`` on a ``fill``-colored chip just above the top-left corner of the plot frame.
+
+    The chip sits in the top margin, left-aligned with the plot area, so it covers nothing drawn
+    inside the axes and stays clear of the modebar Plotly shows at the top right. Its text is
+    black or white, whichever contrasts more with ``fill``
+    (:func:`gliquid.plotting.style.contrast_text`). The annotation is named
+    ``CORNER_NOTE_NAME``.
+
+    Args:
+        fig: the figure to annotate, modified in place.
+        text: the chip's text.
+        fill: the chip color, as ``"rgb(r,g,b)"``.
+        font_size: the text size in px.
+
+    Returns:
+        go.Figure: ``fig``.
+    """
+    fig.add_annotation(
+        name=CORNER_NOTE_NAME,
+        x=0,
+        y=1,
+        xref="paper",
+        yref="paper",
+        xanchor="left",
+        yanchor="bottom",
+        yshift=3,
+        text=text,
+        showarrow=False,
+        bgcolor=fill,
+        bordercolor=fill,
+        borderpad=3,
+        font=dict(size=font_size, color=contrast_text(fill)),
+    )
     return fig
 
 
@@ -2581,3 +2797,25 @@ def build_polymorph_transitions(sys_obj) -> list[dict]:
                 }
             )
     return transitions
+
+
+def _plot_tx_inputs(bl, refine: int = 1) -> tuple:
+    """The hull and the :func:`plot_tx` keyword arguments a binary system's T-x figure shares.
+
+    Args:
+        bl: a ``BinaryLiquid`` with its ``hsx`` computed.
+        refine: above 1, a system with solid solutions draws ``bl.refined_hsx(refine)``;
+            otherwise ``bl.hsx`` is drawn.
+
+    Returns:
+        tuple: ``(hsx, kwargs)``; ``kwargs`` holds ``polymorph_transitions``,
+        ``imputed_phases``, ``non_dft_label`` and ``ss_phases``.
+    """
+    non_dft = {p.name: non_dft_kind(p) for p in bl.phases if non_dft_kind(p)}
+    hsx = bl.refined_hsx(refine) if refine > 1 and bl.ss_models else bl.hsx
+    return hsx, {
+        "polymorph_transitions": build_polymorph_transitions(bl),
+        "imputed_phases": set(non_dft),
+        "non_dft_label": non_dft_legend_label(non_dft.values()),
+        "ss_phases": set(bl.ss_models),
+    }
