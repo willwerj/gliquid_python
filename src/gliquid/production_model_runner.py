@@ -167,6 +167,47 @@ def _brief(value: object) -> str:
     return repr(value)
 
 
+# -- Compact SHAP figure layout --
+
+#: Saved size of :meth:`ProductionModelRunner.create_compact_prediction_figure`, in inches
+#: (width, height): aspect 1.628 for every system.
+COMPACT_FIGURE_SIZE = (8.0, 4.915)
+#: Font size of the waterfall y-axis labels, in points.
+COMPACT_LABEL_FONTSIZE = 11
+#: The widest string ``f"{value:.2g}"`` produces; sizes the label column for any feature value.
+_WIDEST_LABEL_VALUE = "-8.8e+88"
+#: The widest feature name of the current naming scheme; the label column is never narrower
+#: than its label, so every bundle under that scheme draws its bars at the same place.
+COMPACT_REFERENCE_FEATURE = "comp_skew_therm_exp_rt_ref"
+#: Gap between the canvas edge and the label column, plus the tick-label pad, in inches.
+_LABEL_COLUMN_PAD = 9.5 / 72
+#: Largest fraction of the figure width the label column may take.
+COMPACT_MAX_LABEL_FRACTION = 0.55
+#: Space above the title, as a fraction of the figure height.
+_COMPACT_TITLE_PAD = 0.015
+#: Axes margins as figure fractions: right edge, top edge, bottom edge, gap between panels.
+_COMPACT_RIGHT, _COMPACT_BOTTOM, _COMPACT_HSPACE = 0.9, 0.06, 0.23
+_COMPACT_TOP = 0.95 - _COMPACT_TITLE_PAD
+
+
+def compact_label_column_width(feature_names, fig) -> float:
+    """Width in inches of the compact waterfall's label column for these features.
+
+    The widest of ``"<name> = <value>"`` with the widest ``.2g`` value, over ``feature_names``
+    and :data:`COMPACT_REFERENCE_FEATURE`, and the ``"<n> other features"`` row, at
+    :data:`COMPACT_LABEL_FONTSIZE`. ``fig`` supplies the renderer and DPI.
+    """
+    renderer = fig.canvas.get_renderer()
+    names = [*feature_names, COMPACT_REFERENCE_FEATURE]
+    labels = [f"{name} = {_WIDEST_LABEL_VALUE}" for name in names] + ["99 other features"]
+    widest = 0.0
+    for label in labels:
+        text = fig.text(0, 0, label, fontsize=COMPACT_LABEL_FONTSIZE)
+        widest = max(widest, text.get_window_extent(renderer).width)
+        text.remove()
+    return widest / fig.dpi
+
+
 class _AffineScaler:
     """``(X - center) / scale`` — the portable form of a fitted ``RobustScaler``.
 
@@ -848,7 +889,12 @@ class ProductionModelRunner:
         )
 
     def create_compact_prediction_figure(self, system_name, output_file, max_display_features=6):
-        """Create a compact 300x480 px figure of stacked SHAP waterfall plots for L0_a, L0_b and L1_a.
+        """Create a compact figure of stacked SHAP waterfall plots for L0_a, L0_b and L1_a.
+
+        The figure is :data:`COMPACT_FIGURE_SIZE` for every system. The y labels are the
+        bundle's feature names as written, in a label column sized by
+        :func:`compact_label_column_width`: the width of the
+        :data:`COMPACT_REFERENCE_FEATURE` label, or wider for a bundle with a longer name.
 
         Args:
             system_name (str): Name of the system to analyze.
@@ -862,6 +908,8 @@ class ProductionModelRunner:
 
         Raises:
             ImportError: when ``shap`` is absent.
+            ValueError: when the bundle's widest label would take more than
+                :data:`COMPACT_MAX_LABEL_FRACTION` of the figure width.
         """
         import matplotlib.pyplot as plt
 
@@ -876,12 +924,15 @@ class ProductionModelRunner:
         for param in ["L0_a", "L0_b", "L1_a"]:
             self._ensure_explainer(param)
 
-        fig, axes = plt.subplots(
-            3,
-            1,
-            figsize=(4.8, 3.0),
-            gridspec_kw={"hspace": 0.23, "left": 0.305, "right": 0.955, "top": 0.95, "bottom": 0},
-        )
+        fig, axes = plt.subplots(3, 1, figsize=COMPACT_FIGURE_SIZE)
+        names = [n for frame in self.feature_names.values() for n in frame]
+        left = (compact_label_column_width(names, fig) + _LABEL_COLUMN_PAD) / COMPACT_FIGURE_SIZE[0]
+        if left > COMPACT_MAX_LABEL_FRACTION:
+            plt.close(fig)
+            raise ValueError(
+                f"The widest SHAP label of this bundle needs {left:.0%} of the figure width; "
+                f"at most {COMPACT_MAX_LABEL_FRACTION:.0%} fits beside the bars."
+            )
 
         params = ["L0_a", "L0_b", "L1_a"]
 
@@ -913,17 +964,12 @@ class ProductionModelRunner:
                     value_str = parts[0]
                     value = float(value_str.replace("−", "-"))
                     formatted_value = f"{value:.2g}"
-                    feature_name = feature_name.replace("metastable", "ms")
-                    feature_name = feature_name.replace("valence", "val")
-                    feature_name = feature_name.replace("enthalpy", "enth")
-                    feature_name = feature_name.replace("change", "Δ")
-                    feature_name = feature_name.replace("comp_skew", "skew")
                     new_labels.append(f"{feature_name} = {formatted_value}")
                 else:
                     new_labels.append(label_text)
 
             ax.set_yticklabels(new_labels)
-            ax.tick_params(axis="y", labelsize=11, labelcolor="black")
+            ax.tick_params(axis="y", labelsize=COMPACT_LABEL_FONTSIZE, labelcolor="black")
             ax.set_xlabel("")  # Remove x-axis label
 
             # SHAP value formatting
@@ -1019,14 +1065,31 @@ class ProductionModelRunner:
             )
             # Add figure title in top left corner
             fig.suptitle(
-                "SHAP Analysis", fontsize=14, fontweight="bold", x=0.025, y=1, ha="left", va="top"
+                "SHAP Analysis",
+                fontsize=14,
+                fontweight="bold",
+                x=0.025,
+                y=1 - _COMPACT_TITLE_PAD,
+                ha="left",
+                va="top",
             )
+
+        # shap.plots.waterfall resizes the figure; the fixed size and margins are applied after it.
+        fig.set_size_inches(*COMPACT_FIGURE_SIZE)
+        fig.subplots_adjust(
+            left=left,
+            right=_COMPACT_RIGHT,
+            top=_COMPACT_TOP,
+            bottom=_COMPACT_BOTTOM,
+            hspace=_COMPACT_HSPACE,
+        )
 
         if output_file is None:
             plt.show()
             return None
         else:
-            plt.savefig(output_file, format="svg", bbox_inches="tight", dpi=400)
+            # No bbox_inches="tight": the saved size must not depend on the labels.
+            plt.savefig(output_file, format="svg", dpi=400)
             plt.close()
 
             return output_file
