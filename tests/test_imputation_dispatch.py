@@ -59,8 +59,8 @@ ROUTES = {
 
 IMPUTED_ID = "imputed:Probe"
 
-LADDER_ELEMENT = "Ti"
-LADDER_SPACEGROUPS = [191, 194, 229]
+LADDER_ELEMENT = "Mn"
+LADDER_SPACEGROUPS = [217, 213, 225, 229]
 
 
 @pytest.fixture(scope="module")
@@ -217,8 +217,8 @@ def test_the_ladder_keeps_the_registry_order():
 
 
 def test_the_ladder_applies_the_exclusion():
-    ladder = LADDER(UNARY[LADDER_ELEMENT], {194})
-    assert [p.spacegroup_number for p in ladder] == [191, 229]
+    ladder = LADDER(UNARY[LADDER_ELEMENT], {213})
+    assert [p.spacegroup_number for p in ladder] == [217, 225, 229]
 
 
 def test_the_ladder_returns_copies():

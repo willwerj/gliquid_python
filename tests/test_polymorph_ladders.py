@@ -77,18 +77,16 @@ BINARY_CASES = list(BINARY_ORDER)
 # Ternary rows (x0, x1, S, H, "Phase Name") with solid solutions off, in output order.
 TERNARY_ROWS = {
     "Hf-Ti-Zr": [
-        (1.0, 0.0, 0.0, 0.0, "Ti (hexagonal)"),
         (0.0, 0.0, 0.0, 0.0, "alpha-Hf (hcp)"),
-        (1.0, 0.0, 8.1313, 1463.64, "alpha-Ti (hcp)"),
+        (1.0, 0.0, 0.0, 0.0, "alpha-Ti (hcp)"),
         (0.0, 1.0, 0.0, 0.0, "alpha-Zr (hcp)"),
         (0.0, 0.0, 2.9246, 5896.0, "beta-Hf (bcc)"),
-        (1.0, 0.0, 19.514, 14610.62, "beta-Ti (bcc)"),
+        (1.0, 0.0, 11.3826, 13146.9, "beta-Ti (bcc)"),
         (0.0, 1.0, 3.6585, 4156.0, "beta-Zr (bcc)"),
     ],
 }
 TERNARY_ORDER = {
     "Hf-Ti-Zr": [
-        "Ti (hexagonal)",
         "alpha-Hf (hcp)",
         "alpha-Ti (hcp)",
         "alpha-Zr (hcp)",
@@ -101,11 +99,7 @@ TERNARY_ORDER = {
 TERNARY_STEP = {
     "Hf-Ti-Zr": {
         "Hf": [("alpha-Hf (hcp)", 0.0, 0.0), ("beta-Hf (bcc)", 5896.0, 2.9246)],
-        "Ti": [
-            ("Ti (hexagonal)", 0.0, 0.0),
-            ("alpha-Ti (hcp)", 1463.64, 8.1313),
-            ("beta-Ti (bcc)", 14610.62, 19.514),
-        ],
+        "Ti": [("alpha-Ti (hcp)", 0.0, 0.0), ("beta-Ti (bcc)", 13146.9, 11.3826)],
         "Zr": [("alpha-Zr (hcp)", 0.0, 0.0), ("beta-Zr (bcc)", 4156.0, 3.6585)],
     },
     "Al-Mg-Si": {
@@ -118,12 +112,11 @@ TERNARY_STEP = {
 TERNARY_SS_ON_MODELS = ["BCC", "FCC", "HCP"]
 TERNARY_SS_ON_CORNERS = {
     "Hf": {"ladder": [], "dft_entry": ["Hf"]},
-    "Ti": {"ladder": ["Ti (hexagonal)"], "dft_entry": []},
+    "Ti": {"ladder": [], "dft_entry": ["Ti"]},
     "Zr": {"ladder": [], "dft_entry": ["Zr"]},
 }
 COLOR_MAP_POLYMORPH_NAMES = {
     "Hf-Ti-Zr": [
-        "Ti (hexagonal)",
         "alpha-Hf (hcp)",
         "alpha-Ti (hcp)",
         "alpha-Zr (hcp)",

@@ -30,7 +30,7 @@
     "Sc": 194,
     "Zr": 194,
     "Hf": 194,
-    "Ti": 191,
+    "Ti": 194,
     "Ta": 229,
     "Nb": 229,
     "V": 229,
@@ -214,6 +214,16 @@
         "source": "Atoji, Schirber & Swenson, J. Chem. Phys. 31, 1628 (1959); Schulte & Holzapfel, Phys. Rev. B 48, 14009 (1993); Young, Phase Diagrams of the Elements (1991)",
         "date": "2026-08-04"
       }
+    ],
+    "Ti": [
+      {
+        "material_id": "mp-72",
+        "spacegroup_number": 191,
+        "common_name": "omega-Ti (P6/mmm)",
+        "reason": "High-pressure phase (alpha to omega at several GPa) retained metastably after decompression; at 1 atm Ti is hcp below 1155 K and bcc to melting. GGA places it 15 meV/atom below hcp.",
+        "source": "NIST TN 2312 (2025), Z=22; Sikka, Vohra & Chidambaram, Prog. Mater. Sci. 27, 245 (1982); Mei et al., Phys. Rev. B 80, 104116 (2009)",
+        "date": "2026-10-15"
+      }
     ]
   },
   "compounds": [
@@ -323,6 +333,24 @@
       "reason": "A second ErMg3 polymorph (P6_3/mmc) at the same composition; without this rule it replaces ErMg3 on the hull.",
       "source": "mp-1184313; same composition as the primary cell",
       "date": "2026-08-28"
+    },
+    {
+      "match": {
+        "material_id": "mp-30571"
+      },
+      "common_name": "AuTl2 (Au-Tl hull vertex with no drawn field)",
+      "reason": "Hull vertex at x_Tl = 0.667 that the assessed Au-Tl diagram (a simple eutectic) does not draw; removed together with the polymorph mp-755435.",
+      "source": "mp-30571; no drawn field in the assessed Au-Tl diagram",
+      "date": "2026-10-15"
+    },
+    {
+      "match": {
+        "material_id": "mp-755435"
+      },
+      "common_name": "AuTl2 (polymorph at the same composition)",
+      "reason": "A second AuTl2 polymorph at the same composition; without this rule it replaces mp-30571 on the hull.",
+      "source": "mp-755435; same composition as the primary cell",
+      "date": "2026-10-15"
     }
   ]
 }

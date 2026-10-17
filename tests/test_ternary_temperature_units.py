@@ -11,18 +11,21 @@ z-axis range in ``render_tx_surface``.
 nothing the hull produces can land outside the plotted range.
 
 Runs offline against the two ternary caches that ship for tests. Hf-Ti-Zr is the positive
-control (Ti carries a polymorph whose whole stability window sits below 0 C); Al-Mg-Si is the
-negative control (every solid there is stable at 0 C).
+control: while it is built, Ti's ladder carries a synthetic ground state whose whole stability
+window sits below 0 C. Al-Mg-Si is the negative control (every solid there is stable at 0 C).
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import numpy as np
 import pandas as pd
 import pytest
+from pymatgen.core import Composition
 
+from gliquid.phase import UNARY, ComponentRef, Phase
 from gliquid.plotting import ternary_labels, ternary_surface
 from gliquid.ternary import TLIPlotter
 
@@ -36,6 +39,39 @@ OLD_KELVIN_FLOOR_READ_AS_C = 0.0
 
 
 _make_ti = partial(ideal_ternary, temp_range=(0.0, None))
+
+# Synthetic low-temperature Ti ground state: stable below LOW_T_TRANSITION_K, where the real
+# ladder (shifted up by this step) takes over.
+LOW_T_STEP_H, LOW_T_TRANSITION_K = 1463.64, 180.0
+
+
+def _ti_with_low_t_ground_state():
+    """Ti's registry entry with a synthetic ground state under its real ladder.
+
+    Every real phase is shifted by the same (H, S) step, so their mutual transition
+    temperatures, the melting point included, are unchanged.
+    """
+    real = UNARY["Ti"]
+    step_s = LOW_T_STEP_H / LOW_T_TRANSITION_K
+    ground = Phase(
+        phase_type="solid",
+        name="Ti (low-T test phase)",
+        composition=Composition("Ti"),
+        t_transition=0,
+        enthalpy=0.0,
+        entropy=0.0,
+        delta_h=0.0,
+        delta_s=0.0,
+        spacegroup_number=191,
+    )
+    shifted = [
+        replace(p, enthalpy=p.enthalpy + LOW_T_STEP_H, entropy=p.entropy + step_s, points=[])
+        for p in real.phases
+    ]
+    shifted[0] = replace(
+        shifted[0], t_transition=LOW_T_TRANSITION_K, delta_h=LOW_T_STEP_H, delta_s=step_s
+    )
+    return ComponentRef("Ti", [ground, *shifted], list(real.lattice_stabilities))
 
 
 def _build(sys_name):
@@ -53,7 +89,13 @@ def _build(sys_name):
 
 @pytest.fixture(scope="module")
 def built():
-    return {name: _build(name) for name in SYSTEMS}
+    out = {}
+    for name in SYSTEMS:
+        with pytest.MonkeyPatch.context() as mp:
+            if "Ti" in name.split("-"):
+                mp.setitem(UNARY.elements, "Ti", _ti_with_low_t_ground_state())
+            out[name] = _build(name)
+    return out
 
 
 @pytest.fixture(scope="module")
