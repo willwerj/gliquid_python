@@ -9,8 +9,8 @@ type: software
 # NOTE: this version is a literal and nothing derives it. The distribution version comes from
 # the git tag via hatch-vcs, so this file and `date-released` below must be bumped BY HAND at
 # each release -- see the release checklist in CONTRIBUTING.md.
-version: "0.3.0"
-date-released: "2026-10-13"
+version: "0.3.1"
+date-released: "2026-10-17"
 license: MIT
 repository-code: "https://github.com/willwerj/gliquid_python"
 url: "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"

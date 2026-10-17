@@ -12,7 +12,8 @@ Constructing a runner loads the weights; the feature table is loaded on first us
 :meth:`ProductionModelRunner.predict_from_dataframes` takes the rows from the caller.
 
 The portable bundle is XGBoost UBJSON plus JSON scaler coefficients, checked against a golden
-vector recorded in its manifest. The ``StandardScaler.inverse_transform`` op order is recorded
+vector recorded in its manifest. A seed-averaged bundle (schema 2) holds several models, one per
+subdirectory named by the manifest's ``members``; its predictions are the mean of the members'. The ``StandardScaler.inverse_transform`` op order is recorded
 per target in ``preprocess.json`` and replayed by :class:`_StandardInverse`. A directory
 holding ``model/L0_a_model.joblib`` loads as a legacy joblib bundle with its xlsx corpus.
 
@@ -111,13 +112,19 @@ def _joblib():
 
 #: The bundle that ships in the wheel. L1_b is pinned to zero by the comb-exp fit format, so it
 #: has no model.
-DEFAULT_BUNDLE_ID = "20261013_191431"
+DEFAULT_BUNDLE_ID = "20261017_003407"
 
 #: Bundle layout version; a bundle whose ``manifest.json`` declares a higher one is refused.
-BUNDLE_SCHEMA_VERSION = 1
+#: Schema 2 adds ``members``: one subdirectory per model, each with its own ``preprocess.json``
+#: and ``<target>.ubj`` files.
+BUNDLE_SCHEMA_VERSION = 2
 
-#: Files a portable bundle contains, beyond one ``<target>.ubj`` per target.
+#: Files a single-model portable bundle contains, beyond one ``<target>.ubj`` per target.
 PORTABLE_REQUIRED = ("manifest.json", "preprocess.json", "feature_names.json")
+
+#: Files each member of a seed-averaged portable bundle contains, beyond one ``<target>.ubj``
+#: per target.
+MEMBER_REQUIRED = ("preprocess.json",)
 
 #: Released alias of ``gliquid.cache.ML_FRAMES``, the two feature spaces.
 FRAMES = gliquid_cache.ML_FRAMES
@@ -319,6 +326,12 @@ def detect_standard_inverse_convention(transformer, *, n_probe: int = 4096, seed
     )
 
 
+def _new_member(name: str) -> dict:
+    """An empty bundle member: its subdirectory name (``""`` for a single-model bundle), and its
+    per-target models, target transformers and SHAP explainers."""
+    return {"name": name, "models": {}, "target_transformers": {}, "explainers": {}}
+
+
 class _PortableModel:
     """One target's scaler + booster, shaped like the ``Pipeline`` it replaces.
 
@@ -365,6 +378,7 @@ class ProductionModelRunner:
         self.bundle_id: str = self.bundle_dir.name
         self.targets: list[str] = []
         self.target_frames: dict[str, str] = {}
+        self.members: list[dict] = []
         self.models: dict[str, object] = {}
         self.feature_names: dict[str, list[str]] = {}
         self.target_transformers: dict[str, object] = {}
@@ -388,7 +402,9 @@ class ProductionModelRunner:
         """
         if (bundle_dir / "manifest.json").is_file():
             return "portable"
-        if any((bundle_dir / "model").glob("*_model.joblib")):
+        if any((bundle_dir / "model").glob("*_model.joblib")) or any(
+            (bundle_dir / "model").glob("seed_*/*_model.joblib")
+        ):
             return "legacy"
         raise FileNotFoundError(
             f"{bundle_dir} is not a model bundle: it has neither manifest.json (a portable "
@@ -429,28 +445,40 @@ class ProductionModelRunner:
                 (self.bundle_dir / "feature_names.json").read_text(encoding="utf-8")
             ).items()
         }
-        preprocess = json.loads((self.bundle_dir / "preprocess.json").read_text(encoding="utf-8"))
+        names = [str(m) for m in self.manifest.get("members", [])]
+        member_dirs = [self.bundle_dir / m for m in names] or [self.bundle_dir]
 
-        required = [self.bundle_dir / name for name in PORTABLE_REQUIRED]
-        required += [self.bundle_dir / f"{target}.ubj" for target in self.targets]
+        if names:
+            required = [self.bundle_dir / "manifest.json", self.bundle_dir / "feature_names.json"]
+            for member_dir in member_dirs:
+                required += [member_dir / name for name in MEMBER_REQUIRED]
+                required += [member_dir / f"{target}.ubj" for target in self.targets]
+        else:
+            required = [self.bundle_dir / name for name in PORTABLE_REQUIRED]
+            required += [self.bundle_dir / f"{target}.ubj" for target in self.targets]
         missing = [str(p) for p in required if not p.exists()]
         if missing:
             raise FileNotFoundError("Missing required bundle files:\n" + "\n".join(missing))
 
-        for target in self.targets:
-            booster = _xgboost().Booster()
-            booster.load_model(str(self.bundle_dir / f"{target}.ubj"))
-            feature_block = preprocess["features"][target]
-            scaler = _AffineScaler(feature_block["center"], feature_block["scale"])
-            self.models[target] = _PortableModel(scaler, booster)
-            target_block = preprocess["targets"].get(target)
-            if target_block is not None:
-                self.target_transformers[target] = _StandardInverse(
-                    target_block["mean"],
-                    target_block["scale"],
-                    # Absent in older bundles, which used the default.
-                    target_block.get("convention", DEFAULT_STANDARD_INVERSE_CONVENTION),
-                )
+        for name, member_dir in zip(names or [""], member_dirs):
+            preprocess = json.loads((member_dir / "preprocess.json").read_text(encoding="utf-8"))
+            member = _new_member(name)
+            for target in self.targets:
+                booster = _xgboost().Booster()
+                booster.load_model(str(member_dir / f"{target}.ubj"))
+                feature_block = preprocess["features"][target]
+                scaler = _AffineScaler(feature_block["center"], feature_block["scale"])
+                member["models"][target] = _PortableModel(scaler, booster)
+                target_block = preprocess["targets"].get(target)
+                if target_block is not None:
+                    member["target_transformers"][target] = _StandardInverse(
+                        target_block["mean"],
+                        target_block["scale"],
+                        # Absent in older bundles, which used the default.
+                        target_block.get("convention", DEFAULT_STANDARD_INVERSE_CONVENTION),
+                    )
+            self.members.append(member)
+        self._use_first_member()
 
     def _load_legacy_artifacts(self) -> None:
         """The pre-portable path: joblib pipelines, discovered rather than hardcoded.
@@ -462,30 +490,67 @@ class ProductionModelRunner:
         """
         joblib = _joblib()
         suffix = "_model.joblib"
-        self.targets = sorted(p.name[: -len(suffix)] for p in self.model_dir.glob("*" + suffix))
+        member_dirs = self._legacy_member_dirs()
+        self.targets = sorted(p.name[: -len(suffix)] for p in member_dirs[0].glob("*" + suffix))
         if not self.targets:  # pragma: no cover - _detect_format already required one
-            raise FileNotFoundError(f"No model/*_model.joblib files under {self.model_dir}")
+            raise FileNotFoundError(f"No *_model.joblib files under {member_dirs[0]}")
 
-        required = [self.model_dir / f"{t}_model.joblib" for t in self.targets]
-        required += [
-            self.model_dir / "target_transformers.joblib",
-            self.model_dir / "feature_names_symm.joblib",
-            self.model_dir / "feature_names_anti.joblib",
-        ]
+        required = []
+        for member_dir in member_dirs:
+            required += [member_dir / f"{t}_model.joblib" for t in self.targets]
+            required += [
+                member_dir / "target_transformers.joblib",
+                member_dir / "feature_names_symm.joblib",
+                member_dir / "feature_names_anti.joblib",
+            ]
         missing = [str(p) for p in required if not p.exists()]
         if missing:
             raise FileNotFoundError("Missing required bundle files:\n" + "\n".join(missing))
 
-        self.models = {t: joblib.load(self.model_dir / f"{t}_model.joblib") for t in self.targets}
-        self.feature_names = {
-            "symmetric": list(joblib.load(self.model_dir / "feature_names_symm.joblib")),
-            "antisymmetric": list(joblib.load(self.model_dir / "feature_names_anti.joblib")),
-        }
-        self.target_transformers = joblib.load(self.model_dir / "target_transformers.joblib")
+        for member_dir in member_dirs:
+            names = {
+                "symmetric": list(joblib.load(member_dir / "feature_names_symm.joblib")),
+                "antisymmetric": list(joblib.load(member_dir / "feature_names_anti.joblib")),
+            }
+            if self.feature_names and names != self.feature_names:
+                raise ValueError(
+                    f"{member_dir} was trained on other features than {member_dirs[0]}; the "
+                    f"members of one bundle must share their feature lists."
+                )
+            self.feature_names = names
+            member = _new_member("" if member_dir == self.model_dir else member_dir.name)
+            member["models"] = {
+                t: joblib.load(member_dir / f"{t}_model.joblib") for t in self.targets
+            }
+            member["target_transformers"] = joblib.load(member_dir / "target_transformers.joblib")
+            self.members.append(member)
+        self._use_first_member()
         self.target_frames = {
             target: derive_frame(self._legacy_input_width(model), self.feature_names)
             for target, model in self.models.items()
         }
+
+    def _legacy_member_dirs(self) -> list[Path]:
+        """The saved model directories of a legacy bundle: ``model/`` itself, or for a
+        seed-averaged bundle ``model/seed_<s>/`` for each of ``bundle_manifest.json``'s
+        ``seeds``, in that order."""
+        if any(self.model_dir.glob("*_model.joblib")):
+            return [self.model_dir]
+        manifest_path = self.bundle_dir / "bundle_manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(
+                f"{self.model_dir} holds per-seed model directories but {manifest_path} is "
+                f"missing; its 'seeds' list gives the members and their order."
+            )
+        seeds = json.loads(manifest_path.read_text(encoding="utf-8"))["seeds"]
+        return [self.model_dir / f"seed_{seed}" for seed in seeds]
+
+    def _use_first_member(self) -> None:
+        """Point ``models``, ``target_transformers`` and ``explainers`` at the first member."""
+        first = self.members[0]
+        self.models = first["models"]
+        self.target_transformers = first["target_transformers"]
+        self.explainers = first["explainers"]
 
     @staticmethod
     def _legacy_input_width(model) -> int:
@@ -689,14 +754,25 @@ class ProductionModelRunner:
 
         return row_df[req_features].copy()
 
+    @staticmethod
+    def _member_prediction(member: dict, target: str, X) -> np.ndarray:
+        """One member's prediction of ``target`` for the rows of ``X``, in physical units."""
+        pred = np.asarray(member["models"][target].predict(X)).reshape(-1)
+        if target in member["target_transformers"]:
+            transformer = member["target_transformers"][target]
+            pred = transformer.inverse_transform(pred.reshape(-1, 1)).ravel()
+        return pred
+
+    def _predict_target(self, target: str, X) -> np.ndarray:
+        """``target`` for the rows of ``X``, in physical units: the one model's prediction, or
+        the float64 mean of the members' in member order."""
+        preds = [self._member_prediction(member, target, X) for member in self.members]
+        if len(preds) == 1:
+            return preds[0]
+        return np.mean([np.asarray(p, dtype=np.float64) for p in preds], axis=0)
+
     def _predict_single_target(self, target: str, X_row: pd.DataFrame) -> float:
-        pred = self.models[target].predict(X_row.values)
-        pred = np.asarray(pred).reshape(-1)
-
-        if target in self.target_transformers:
-            pred = self.target_transformers[target].inverse_transform(pred.reshape(-1, 1)).ravel()
-
-        return float(pred[0])
+        return float(self._predict_target(target, X_row.values)[0])
 
     def get_rows_for_system(
         self, system_name: str
@@ -791,12 +867,14 @@ class ProductionModelRunner:
         return X
 
     def _ensure_explainer(self, target: str) -> None:
-        if target in self.explainers:
-            return
-        tree_model = self._get_tree_model(self.models[target])
-        self.explainers[target] = _shap().TreeExplainer(tree_model)
+        for member in self.members:
+            if target not in member["explainers"]:
+                tree_model = self._get_tree_model(member["models"][target])
+                member["explainers"][target] = _shap().TreeExplainer(tree_model)
 
-    def _target_inverse_affine(self, target: str) -> tuple[float, float] | None:
+    def _target_inverse_affine(
+        self, target: str, member: dict | None = None
+    ) -> tuple[float, float] | None:
         """Return ``(intercept, slope)`` of the target's inverse transform ``z -> y``.
 
         The coefficients are recovered by probing ``inverse_transform`` at ``z = 0, 1, 2``, so any
@@ -816,10 +894,11 @@ class ProductionModelRunner:
             If the transformer is non-affine (e.g. ``QuantileTransformer``,
             ``PowerTransformer``).
         """
-        if target not in self.target_transformers:
+        transformers = self.target_transformers if member is None else member["target_transformers"]
+        if target not in transformers:
             return None
 
-        transformer = self.target_transformers[target]
+        transformer = transformers[target]
         probe = np.array([[0.0], [1.0], [2.0]])
         y = np.asarray(transformer.inverse_transform(probe), dtype=float).ravel()
 
@@ -842,6 +921,8 @@ class ProductionModelRunner:
 
         Values in a scaled target space are mapped back through :meth:`_target_inverse_affine`:
         ``values`` are multiplied by ``slope`` and ``base_values`` become ``intercept + slope · base``.
+        For a seed-averaged bundle ``values`` and ``base_values`` are the means over its members,
+        the SHAP values of the members' mean prediction.
 
         Args:
             target (str): Model key, e.g. ``"L0_a"``, ``"L0_b"``, ``"L1_a"``.
@@ -858,28 +939,38 @@ class ProductionModelRunner:
         """
         shap = _shap()
         self._ensure_explainer(target)
-        model = self.models[target]
-        explainer = self.explainers[target]
 
         # The frame this target was trained in, as recorded in the bundle.
         mode = self.target_frames[target]
         feature_names = self.feature_names[mode]
 
-        # Preprocess features through pipeline (minus final estimator)
-        X = self._transform_row_for_explainer(model, features_df)
+        member_values, member_bases = [], []
+        for member in self.members:
+            model = member["models"][target]
+            explainer = member["explainers"][target]
 
-        # Raw SHAP values (z-score space if scaler exists)
-        sv = explainer.shap_values(X)
-        base = float(explainer.expected_value)
+            # Preprocess features through pipeline (minus final estimator)
+            X = self._transform_row_for_explainer(model, features_df)
 
-        values = np.array(sv[0], dtype=float)
+            # Raw SHAP values (z-score space if scaler exists)
+            sv = explainer.shap_values(X)
+            base = float(explainer.expected_value)
 
-        # Inverse-scale into physical units if an affine target transform exists
-        scaling = self._target_inverse_affine(target)
-        if scaling is not None:
-            intercept, slope = scaling
-            values = values * slope
-            base = intercept + slope * base
+            values = np.array(sv[0], dtype=float)
+
+            # Inverse-scale into physical units if an affine target transform exists
+            scaling = self._target_inverse_affine(target, member)
+            if scaling is not None:
+                intercept, slope = scaling
+                values = values * slope
+                base = intercept + slope * base
+            member_values.append(values)
+            member_bases.append(base)
+
+        if len(self.members) == 1:
+            values, base = member_values[0], member_bases[0]
+        else:
+            values, base = np.mean(member_values, axis=0), float(np.mean(member_bases))
 
         return shap.Explanation(
             values=values,
@@ -1142,10 +1233,7 @@ def compute_golden(
     stacked = []
     for target in targets:
         frame = runner.target_frames[target]
-        raw = np.asarray(runner.models[target].predict(rows[frame])).reshape(-1)
-        if target in runner.target_transformers:
-            raw = runner.target_transformers[target].inverse_transform(raw.reshape(-1, 1)).ravel()
-        out = np.asarray(raw, dtype=np.float64)
+        out = np.asarray(runner._predict_target(target, rows[frame]), dtype=np.float64)
         per_target[target] = {
             "sha256": golden_digest(out),
             "first16": [float(v) for v in out[:16]],
