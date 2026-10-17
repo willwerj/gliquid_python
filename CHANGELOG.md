@@ -9,6 +9,18 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-17
+
+### Added
+
+- **Seed-averaged model bundles.** `ProductionModelRunner` loads a bundle of several models
+  trained at different random seeds and predicts their mean, target by target in physical units.
+  A portable bundle declares them as `members` (bundle schema 2, one subdirectory per model with
+  its own `preprocess.json` and `<target>.ubj`); a joblib bundle keeps them in
+  `model/seed_<s>/`, ordered by `bundle_manifest.json`'s `seeds`. SHAP explanations of such a
+  bundle are the mean of its members' explanations, and its golden vector is computed through the
+  same mean. Single-model bundles (schema 1) load and predict exactly as before.
+
 ### Changed
 
 - **Titanium is referenced to alpha-Ti (hcp), not omega-Ti.** omega-Ti (mp-72, P6/mmm) is a
@@ -32,6 +44,13 @@ source tree carries a version literal that could disagree with this file.
   the naming scheme so every bundle draws its bars at the same place, and labels each bar with the
   feature name as written.
 
+- **The packaged model is v29.05** (bundle `20261017_003407`, replacing `20261013_191431`).
+  It is the mean of eight XGBoost models trained at different seeds (bundle schema 2), on the fits
+  refit for the alpha-Ti and Au-Tl changes above, with 49 symmetric and 30 antisymmetric features.
+  On its 100 held-out test systems it predicts the liquidus with a mean absolute percentage error
+  of 11.99 % (median 10.49 %) and a mean absolute error of 178.7 K. Every predicted parameter
+  changes from 0.3.0.
+
 ### Fixed
 
 - **The Au-Tl hull no longer carries AuTl2.** The assessed Au-Tl diagram is a simple eutectic
@@ -43,6 +62,10 @@ source tree carries a version literal that could disagree with this file.
   is in the new API's letter spelling (`mp-aaaaadxv`) is matched against a rule written with the
   classic number (`mp-2647`), whether the id is a bare string or a dict. Such entries used to
   pass the blacklist unfiltered.
+
+- **The Colab notebooks install on current Colab.** Their install cell adds `pymatgen<2026`, which
+  keeps Colab's preinstalled `requests` 2.32.4, and enables Colab's custom widget manager, which
+  the hull editor needs.
 
 ## [0.3.0] - 2026-10-13
 
@@ -660,7 +683,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/willwerj/gliquid_python/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/willwerj/gliquid_python/releases/tag/v0.1.0
