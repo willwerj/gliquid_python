@@ -9,6 +9,35 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Titanium is referenced to alpha-Ti (hcp), not omega-Ti.** omega-Ti (mp-72, P6/mmm) is a
+  high-pressure phase that GGA ranks 15 meV/atom below hcp; it is now in
+  `spurious_structures.json`, and Ti's expected ground state is SG 194. The ladder loses its
+  omega-to-alpha step at 180 K: beta-Ti moves from H = 14610.62 J/mol, S = 19.514 J/(mol K) to
+  H = 13146.9 J/mol, S = 11.3826 J/(mol K), and liquid Ti from H = 28760.62 J/mol,
+  S = 26.7966 J/(mol K) to H = 27296.9 J/mol, S = 18.6652 J/(mol K). The melting point stays at
+  1943 K. Every hull containing Ti changes, since Ti compound formation energies are re-referenced
+  to alpha-Ti. Fitted parameters for Ti binaries made before this change do not carry over and must
+  be refit. Refit with the 0.3.0 campaign settings, the six Ti-containing compounds in the
+  101-compound ternary melting-point benchmark go from 292.5 K to 139.2 K mean absolute error: the
+  RE-Ti-Ge compounds move from a mean error of -332 K to -130 K, while TiAlAu moves from -93 K to
+  -183 K. The full benchmark goes from 151.2 K to 142.1 K. The 32 fitted Ti binaries lose some
+  accuracy, from 81.9 K to 90.6 K mean liquidus error, mostly in refractory compound-forming
+  systems (Ru-Ti, C-Ti, B-Ti, Re-Ti, Fe-Ti).
+
+### Fixed
+
+- **The Au-Tl hull no longer carries AuTl2.** The assessed Au-Tl diagram is a simple eutectic
+  and draws no field at x_Tl = 0.667, but the Materials Project hull has an AuTl2 vertex there
+  (mp-30571). It and its same-composition polymorph mp-755435, which would otherwise take its
+  place on the hull, are now in `spurious_structures.json`.
+
+- **The spurious-structure blacklist matches new-API Materials Project ids.** An entry whose id
+  is in the new API's letter spelling (`mp-aaaaadxv`) is matched against a rule written with the
+  classic number (`mp-2647`), whether the id is a bare string or a dict. Such entries used to
+  pass the blacklist unfiltered.
+
 ## [0.3.0] - 2026-10-13
 
 ### Added

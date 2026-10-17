@@ -37,6 +37,7 @@ from gliquid.cache import (
     USER_ID_PREFIX,
     CacheKey,
     CacheModeError,
+    canonical_entry_id,
     imputed_entry_label,
     is_imputed_entry_dict,
     non_dft_entry_kind,
@@ -418,9 +419,15 @@ def _entry_spacegroup(entry_dict: dict) -> int | None:
 
 
 def _entry_mp_id(entry_dict: dict) -> str | None:
-    """Classic 'mp-xxxx' prefix of an entry dict's id (dict- or string-form); None if absent."""
+    """Classic 'mp-xxxx' prefix of an entry dict's id (dict- or string-form); None if absent.
+
+    A new-API id (``'mp-aaaaacap'``, as a bare identifier, a dict or a dict's ``str()``) reads
+    in its classic spelling (``'mp-1367'``).
+    """
     entry_id = entry_dict.get("entry_id")
-    id_str = entry_id.get("identifier") if isinstance(entry_id, dict) else entry_id
+    id_str = canonical_entry_id(
+        entry_id.get("identifier") if isinstance(entry_id, dict) else entry_id
+    )
     if isinstance(id_str, str):
         m = _MP_ID_RE.match(id_str)
         if m:

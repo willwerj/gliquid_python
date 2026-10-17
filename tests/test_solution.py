@@ -222,12 +222,12 @@ def test_endpoint_melting_point_holds_under_every_ss_subset(el):
 
 
 def test_unary_db_publishes_cumulative_not_step_references():
-    """Ti is the discriminating case: two transitions below melting, so step != cumulative."""
-    _, phase_refs = sd._resolve_refs_db(["Ti"], UNARY.component_data(["Ti"]))
-    beta_ti = UNARY["Ti"].solid_phase(229)
-    assert beta_ti.delta_h != pytest.approx(beta_ti.enthalpy)  # the two really do differ
-    assert phase_refs["BCC"]["Ti"]["delta_h_jmol"] == pytest.approx(beta_ti.enthalpy)
-    assert phase_refs["BCC"]["Ti"]["delta_s_jmol_k"] == pytest.approx(beta_ti.entropy)
+    """La is the discriminating case: two transitions below melting, so step != cumulative."""
+    _, phase_refs = sd._resolve_refs_db(["La"], UNARY.component_data(["La"]))
+    gamma_la = UNARY["La"].solid_phase(229)
+    assert gamma_la.delta_h != pytest.approx(gamma_la.enthalpy)  # the two really do differ
+    assert phase_refs["BCC"]["La"]["delta_h_jmol"] == pytest.approx(gamma_la.enthalpy)
+    assert phase_refs["BCC"]["La"]["delta_s_jmol_k"] == pytest.approx(gamma_la.entropy)
 
 
 def test_duplicate_spacegroup_resolves_to_the_pre_melt_polymorph():
