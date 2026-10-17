@@ -172,8 +172,8 @@ class TestShippedBundle:
         assert runner.feature_source is None
         # A pin on the SHIPPED artifact: it moves when DEFAULT_BUNDLE_ID does.
         assert {f: len(n) for f, n in runner.feature_names.items()} == {
-            "symmetric": 50,
-            "antisymmetric": 31,
+            "symmetric": 49,
+            "antisymmetric": 30,
         }
 
 
@@ -399,7 +399,13 @@ class TestShippedFeatureTable:
     def test_the_manifest_lists_both_feature_tables_and_every_entry_verifies(self):
         manifest = _read_manifest(SHIPPED)
         assert manifest["features"] == FEATURE_FILES
-        assert set(manifest["files"]) == WEIGHT_MEMBERS | set(FEATURE_FILES.values())
+        members = manifest.get("members")
+        if members:
+            per_member = WEIGHT_MEMBERS - {"feature_names.json"}
+            weights = {"feature_names.json"} | {f"{m}/{f}" for m in members for f in per_member}
+        else:
+            weights = WEIGHT_MEMBERS
+        assert set(manifest["files"]) == weights | set(FEATURE_FILES.values())
         for name, entry in sorted(manifest["files"].items()):
             data = (SHIPPED / name).read_bytes()
             assert hashlib.sha256(data).hexdigest() == entry["sha256"], name
@@ -630,6 +636,196 @@ class TestFourTargetBundle:
         assert replayed == recorded
 
 
+#: The member seeds of the synthetic seed-averaged bundle, in manifest order (not sorted).
+BAG_SEEDS = [7, 3]
+
+
+def _fit_member(X, y, seed):
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import RobustScaler
+    from xgboost import XGBRegressor
+
+    model = XGBRegressor(n_estimators=12, max_depth=3, subsample=0.7, random_state=seed)
+    return Pipeline([("scaler", RobustScaler()), ("model", model)]).fit(X, y)
+
+
+@pytest.fixture(scope="module")
+def seed_averaged_legacy(tmp_path_factory):
+    """A two-member seed-averaged joblib bundle (``model/seed_<s>/`` plus
+    ``bundle_manifest.json`` ``seeds``) and, per seed, a single-model bundle of that member."""
+    import joblib
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.default_rng(41)
+    data = {}
+    for target in SYNTH_TARGETS:
+        width = len(SYMM_FEATURES) if SYNTH_FRAMES[target] == "symmetric" else len(ANTI_FEATURES)
+        X = rng.normal(size=(160, width)) * rng.uniform(0.5, 3.0, width)
+        data[target] = (X, X @ rng.normal(size=width) + rng.normal(size=160) * 0.1)
+    root = tmp_path_factory.mktemp("seed_averaged")
+    bag = root / "bag"
+    singles = {}
+    for seed in BAG_SEEDS:
+        singles[seed] = root / f"single_{seed}"
+        for model_dir in (bag / "model" / f"seed_{seed}", singles[seed] / "model"):
+            model_dir.mkdir(parents=True)
+            for target, (X, y) in data.items():
+                joblib.dump(_fit_member(X, y, seed), model_dir / f"{target}_model.joblib")
+            joblib.dump(
+                {t: StandardScaler().fit(y.reshape(-1, 1)) for t, (_, y) in data.items()},
+                model_dir / "target_transformers.joblib",
+            )
+            joblib.dump(SYMM_FEATURES, model_dir / "feature_names_symm.joblib")
+            joblib.dump(ANTI_FEATURES, model_dir / "feature_names_anti.joblib")
+    (bag / "bundle_manifest.json").write_text(json.dumps({"seeds": BAG_SEEDS}), encoding="utf-8")
+    return bag, singles
+
+
+def _write_portable_bag(source: ProductionModelRunner, out_dir: Path, bundle_id: str) -> Path:
+    """Hand-write a schema-2 portable bundle, one subdirectory per member of ``source``."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "feature_names.json").write_text(json.dumps(source.feature_names), encoding="utf-8")
+    names = []
+    for member in source.members:
+        names.append(member["name"])
+        member_dir = out_dir / member["name"]
+        member_dir.mkdir()
+        models = member["models"]
+        for target in source.targets:
+            models[target].steps[-1][1].get_booster().save_model(str(member_dir / f"{target}.ubj"))
+        preprocess = {
+            "schema": BUNDLE_SCHEMA_VERSION,
+            "features": {
+                t: {
+                    "kind": "affine",
+                    "center": list(map(float, models[t].steps[0][1].center_)),
+                    "scale": list(map(float, models[t].steps[0][1].scale_)),
+                }
+                for t in source.targets
+            },
+            "targets": {
+                t: {
+                    "kind": "standard",
+                    "convention": detect_standard_inverse_convention(tr),
+                    "mean": list(map(float, tr.mean_)),
+                    "scale": list(map(float, tr.scale_)),
+                }
+                for t, tr in member["target_transformers"].items()
+            },
+        }
+        (member_dir / "preprocess.json").write_text(json.dumps(preprocess), encoding="utf-8")
+    manifest = {
+        "schema": 2,
+        "bundle_id": bundle_id,
+        "targets": list(source.targets),
+        "target_frames": dict(source.target_frames),
+        "members": names,
+        "files": {},
+    }
+    _write_manifest(out_dir, manifest)
+    return out_dir
+
+
+@pytest.fixture(scope="module")
+def seed_averaged_runners(tmp_path_factory, seed_averaged_legacy):
+    bag, singles = seed_averaged_legacy
+    legacy = ProductionModelRunner(bag)
+    portable_dir = tmp_path_factory.mktemp("portable_bag") / "bag"
+    _write_portable_bag(legacy, portable_dir, "bag")
+    return (
+        legacy,
+        ProductionModelRunner(portable_dir),
+        {seed: ProductionModelRunner(root) for seed, root in singles.items()},
+    )
+
+
+def _random_rows(rng):
+    symm = pd.DataFrame(rng.normal(size=(1, len(SYMM_FEATURES))), columns=SYMM_FEATURES)
+    anti = pd.DataFrame(rng.normal(size=(1, len(ANTI_FEATURES))), columns=ANTI_FEATURES)
+    mirror = pd.DataFrame(rng.normal(size=(1, len(ANTI_FEATURES))), columns=ANTI_FEATURES)
+    return symm, anti, mirror
+
+
+class TestSeedAveragedBundle:
+    def test_legacy_members_follow_the_manifest_seed_order(self, seed_averaged_runners):
+        legacy, portable, _ = seed_averaged_runners
+        assert [m["name"] for m in legacy.members] == ["seed_7", "seed_3"]
+        assert [m["name"] for m in portable.members] == ["seed_7", "seed_3"]
+        assert legacy.models is legacy.members[0]["models"]
+
+    def test_each_target_is_the_float64_mean_of_the_members(self, seed_averaged_runners):
+        legacy, _, singles = seed_averaged_runners
+        rng = np.random.default_rng(8)
+        for _ in range(20):
+            symm, anti, _mirror = _random_rows(rng)
+            for target in SYNTH_TARGETS:
+                frame = SYNTH_FRAMES[target]
+                row = legacy._prepare_row(symm if frame == "symmetric" else anti, frame)
+                each = [singles[s]._predict_single_target(target, row) for s in BAG_SEEDS]
+                assert each[0] != each[1], "the members must differ for the mean to be tested"
+                assert legacy._predict_single_target(target, row) == float(np.mean(each))
+
+    def test_portable_bag_matches_legacy_bag_exactly(self, seed_averaged_runners):
+        legacy, portable, _ = seed_averaged_runners
+        rng = np.random.default_rng(9)
+        for _ in range(30):
+            symm, anti, mirror = _random_rows(rng)
+            assert np.array_equal(
+                legacy.predict_from_dataframes(symm, anti, mirror),
+                portable.predict_from_dataframes(symm, anti, mirror),
+            )
+
+    def test_the_golden_vector_of_a_bag_reproduces_and_differs_from_a_member(
+        self, seed_averaged_runners
+    ):
+        legacy, portable, singles = seed_averaged_runners
+        frames = ["antisymmetric", "symmetric"]
+        recorded = compute_golden(legacy, frames, 128, 3)
+        assert compute_golden(portable, frames, 128, 3) == recorded
+        member = compute_golden(singles[BAG_SEEDS[0]], frames, 128, 3)
+        assert member["combined_sha256"] != recorded["combined_sha256"]
+
+    def test_shap_of_a_bag_is_the_member_mean_and_adds_up_to_the_prediction(
+        self, seed_averaged_runners
+    ):
+        pytest.importorskip("shap")
+        _, portable, singles = seed_averaged_runners
+        symm, _, _ = _random_rows(np.random.default_rng(10))
+        row = portable._prepare_row(symm, "symmetric")
+        bag = portable.get_shap_explanation("L0_a", row)
+        each = [singles[s].get_shap_explanation("L0_a", row) for s in BAG_SEEDS]
+        assert np.allclose(bag.values, np.mean([e.values for e in each], axis=0), rtol=0, atol=1e-9)
+        assert bag.base_values == pytest.approx(np.mean([e.base_values for e in each]), abs=1e-9)
+        predicted = portable._predict_single_target("L0_a", row)
+        assert bag.base_values + bag.values.sum() == pytest.approx(predicted, rel=1e-5)
+
+    def test_a_missing_member_booster_is_named(self, tmp_path, seed_averaged_runners):
+        _, portable, _ = seed_averaged_runners
+        clone = tmp_path / "incomplete"
+        shutil.copytree(portable.bundle_dir, clone)
+        (clone / "seed_3" / "L0_b.ubj").unlink()
+        with pytest.raises(FileNotFoundError, match=r"seed_3.L0_b\.ubj"):
+            ProductionModelRunner(clone)
+
+    def test_per_seed_directories_need_the_bundle_manifest(self, tmp_path, seed_averaged_legacy):
+        bag, _ = seed_averaged_legacy
+        clone = tmp_path / "no_manifest"
+        shutil.copytree(bag, clone)
+        (clone / "bundle_manifest.json").unlink()
+        with pytest.raises(FileNotFoundError, match="'seeds' list"):
+            ProductionModelRunner(clone)
+
+    def test_a_member_on_other_features_is_refused(self, tmp_path, seed_averaged_legacy):
+        import joblib
+
+        bag, _ = seed_averaged_legacy
+        clone = tmp_path / "mixed"
+        shutil.copytree(bag, clone)
+        joblib.dump(SYMM_FEATURES[::-1], clone / "model" / "seed_3" / "feature_names_symm.joblib")
+        with pytest.raises(ValueError, match="share their feature lists"):
+            ProductionModelRunner(clone)
+
+
 class TestLegacyXlsxCorpus:
     """A legacy bundle that ships its own xlsx keeps serving from them."""
 
@@ -749,10 +945,13 @@ class TestStandardInverseConvention:
             _StandardInverse([0.0], [1.0], "float128-vibes")
 
     def test_the_shipped_bundle_records_its_convention(self):
-        preprocess = json.loads((SHIPPED / "preprocess.json").read_text(encoding="utf-8"))
-        for target, block in preprocess["targets"].items():
-            assert block["kind"] == "standard", target
-            assert block["convention"] in STANDARD_INVERSE_CONVENTIONS, target
+        members = _read_manifest(SHIPPED).get("members") or ["."]
+        for member in members:
+            path = SHIPPED / member / "preprocess.json"
+            preprocess = json.loads(path.read_text(encoding="utf-8"))
+            for target, block in preprocess["targets"].items():
+                assert block["kind"] == "standard", (member, target)
+                assert block["convention"] in STANDARD_INVERSE_CONVENTIONS, (member, target)
 
     def test_a_bundle_without_the_field_takes_the_pre_1_9_order(self):
         """Back-compat: the field postdates the format, and only a <=1.7.x export lacks it."""
