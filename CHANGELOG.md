@@ -26,6 +26,12 @@ source tree carries a version literal that could disagree with this file.
   accuracy, from 81.9 K to 90.6 K mean liquidus error, mostly in refractory compound-forming
   systems (Ru-Ti, C-Ti, B-Ti, Re-Ti, Fe-Ti).
 
+- **The compact SHAP figure has a fixed layout.**
+  `ProductionModelRunner.create_compact_prediction_figure` saves at a fixed size
+  (`COMPACT_FIGURE_SIZE`, 8.0 x 4.915 in), sizes its label column for the widest feature name of
+  the naming scheme so every bundle draws its bars at the same place, and labels each bar with the
+  feature name as written.
+
 ### Fixed
 
 - **The Au-Tl hull no longer carries AuTl2.** The assessed Au-Tl diagram is a simple eutectic
