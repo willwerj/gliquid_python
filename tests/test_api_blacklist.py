@@ -278,6 +278,33 @@ class TestCompoundRules:
             {"composition": {"Ag": 1.0, "Au": 1.0}, "entry_id": "mp-264-GGA"}
         )
 
+    def test_material_id_form_matches_the_new_api_spelling_of_the_id(self, tmp_path, monkeypatch):
+        # mp-2647 is mp-aaaaadxv in the new-API (base-26) spelling.
+        _compound_blacklist(
+            tmp_path, monkeypatch, {"compounds": [{"match": {"material_id": "mp-2647"}}]}
+        )
+        new_id = {"identifier": "mp-aaaaadxv", "suffix": "GGA", "separator": "-"}
+        for entry_id in (new_id, str(new_id), "mp-aaaaadxv"):
+            assert api._is_spurious_entry_dict(
+                {"composition": {"Ag": 1.0, "Au": 1.0}, "entry_id": entry_id}
+            )
+        assert not api._is_spurious_entry_dict(
+            {
+                "composition": {"Ag": 1.0, "Au": 1.0},
+                "entry_id": {"identifier": "mp-aaaaadxw", "suffix": "GGA", "separator": "-"},
+            }
+        )
+
+    def test_elements_block_matches_the_new_api_spelling_of_the_id(self, tmp_path, monkeypatch):
+        # mp-72 is mp-aaaaaacu in the new-API spelling.
+        _compound_blacklist(tmp_path, monkeypatch, {"elements": {"Ti": [{"material_id": "mp-72"}]}})
+        assert api._is_spurious_entry_dict(
+            {
+                "composition": {"Ti": 1.0},
+                "entry_id": {"identifier": "mp-aaaaaacu", "suffix": "GGA", "separator": "-"},
+            }
+        )
+
     def test_match_form_precedence_is_material_id_first(self, tmp_path, monkeypatch):
         # A record naming several forms is decided by the highest-precedence one.
         _compound_blacklist(

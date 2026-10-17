@@ -2555,35 +2555,16 @@
       "name": "Titanium",
       "atomic_number": 22,
       "reference_state": {
-        "common_name": "Ti (hexagonal)",
-        "spacegroup_symbol": "P6/mmm",
-        "spacegroup_number": 191,
+        "common_name": "alpha-Ti (hcp)",
+        "spacegroup_symbol": "P6_3/mmc",
+        "spacegroup_number": 194,
         "crystal_system": "Hexagonal",
-        "pearson_symbol": "hP3",
-        "materials_project_id": "mp-72",
-        "dft_energy_eV_per_atom": -12.937757,
+        "pearson_symbol": "hP2",
+        "materials_project_id": "mp-46",
+        "dft_energy_eV_per_atom": -12.922587,
         "note": "DFT ground state (lowest T = 0 K energy per atom). All cumulative enthalpies and entropies are relative to this phase."
       },
       "phases": [
-        {
-          "phase_type": "solid",
-          "common_name": "Ti (hexagonal)",
-          "spacegroup_symbol": "P6/mmm",
-          "spacegroup_number": 191,
-          "crystal_system": "Hexagonal",
-          "pearson_symbol": "hP3",
-          "transition_temperature_K": 0,
-          "enthalpy_J_per_mol": 0.0,
-          "entropy_J_per_mol_K": 0.0,
-          "delta_H_J_per_mol": 0.0,
-          "delta_S_J_per_mol_K": 0.0,
-          "materials_project_id": "mp-72",
-          "metadata": {
-            "enthalpy_source": "DFT (Materials Project, GGA/GGA+U PBE)",
-            "entropy_method": "ΔS = ΔH / T_transition",
-            "transition_temperature_source": "Ground state (0 K by convention)"
-          }
-        },
         {
           "phase_type": "solid",
           "common_name": "alpha-Ti (hcp)",
@@ -2591,16 +2572,16 @@
           "spacegroup_number": 194,
           "crystal_system": "Hexagonal",
           "pearson_symbol": "hP2",
-          "transition_temperature_K": 180,
-          "enthalpy_J_per_mol": 1463.64,
-          "entropy_J_per_mol_K": 8.1313,
-          "delta_H_J_per_mol": 1463.64,
-          "delta_S_J_per_mol_K": 8.1313,
+          "transition_temperature_K": 0,
+          "enthalpy_J_per_mol": 0.0,
+          "entropy_J_per_mol_K": 0.0,
+          "delta_H_J_per_mol": 0.0,
+          "delta_S_J_per_mol_K": 0.0,
           "materials_project_id": "mp-46",
           "metadata": {
             "enthalpy_source": "DFT (Materials Project, GGA/GGA+U PBE)",
             "entropy_method": "ΔS = ΔH / T_transition",
-            "transition_temperature_source": "Young, D.A., 'Phase Diagrams of the Elements', University of California Press, Berkeley (1991); Dinsdale, A.T., 'SGTE data for pure elements', Calphad 15(4), 317-425 (1991); Massalski, T.B. (ed.), 'Binary Alloy Phase Diagrams', 2nd ed., ASM International (1990)."
+            "transition_temperature_source": "Ground state (0 K by convention)"
           }
         },
         {
@@ -2611,10 +2592,10 @@
           "crystal_system": "Cubic",
           "pearson_symbol": "cI2",
           "transition_temperature_K": 1155,
-          "enthalpy_J_per_mol": 14610.62,
-          "entropy_J_per_mol_K": 19.514,
-          "delta_H_J_per_mol": 13146.98,
-          "delta_S_J_per_mol_K": 11.3827,
+          "enthalpy_J_per_mol": 13146.9,
+          "entropy_J_per_mol_K": 11.3826,
+          "delta_H_J_per_mol": 13146.9,
+          "delta_S_J_per_mol_K": 11.3826,
           "materials_project_id": "mp-73",
           "metadata": {
             "enthalpy_source": "DFT (Materials Project, GGA/GGA+U PBE)",
@@ -2626,8 +2607,8 @@
           "phase_type": "liquid",
           "common_name": "Liquid Titanium",
           "transition_temperature_K": 1943.0,
-          "enthalpy_J_per_mol": 28760.62,
-          "entropy_J_per_mol_K": 26.7966,
+          "enthalpy_J_per_mol": 27296.9,
+          "entropy_J_per_mol_K": 18.6652,
           "delta_H_J_per_mol": 14150.0,
           "delta_S_J_per_mol_K": 7.2826,
           "metadata": {
@@ -2640,8 +2621,8 @@
           "phase_type": "gas",
           "common_name": "Gaseous Titanium",
           "transition_temperature_K": 3560.15,
-          "enthalpy_J_per_mol": 453760.62,
-          "entropy_J_per_mol_K": 146.1735,
+          "enthalpy_J_per_mol": 452296.9,
+          "entropy_J_per_mol_K": 138.0421,
           "delta_H_J_per_mol": 425000.0,
           "delta_S_J_per_mol_K": 119.377,
           "metadata": {
@@ -2651,12 +2632,22 @@
           }
         }
       ],
-      "excluded_polymorphs": [],
+      "excluded_polymorphs": [
+        {
+          "common_name": "omega-Ti (P6/mmm)",
+          "spacegroup_number": 191,
+          "materials_project_id": "mp-72",
+          "transition_temperature_K": null,
+          "enthalpy_J_per_mol": -1463.68,
+          "reason": "Tier A blacklist: not experimentally stable at any temperature at 1 atm. High-pressure phase (alpha to omega at several GPa) retained metastably after decompression; at 1 atm Ti is hcp below 1155 K and bcc to melting. GGA places it 15 meV/atom below hcp.",
+          "source": "NIST TN 2312 (2025), Z=22; Sikka, Vohra & Chidambaram, Prog. Mater. Sci. 27, 245 (1982); Mei et al., Phys. Rev. B 80, 104116 (2009)"
+        }
+      ],
       "lattice_stabilities": {
         "FCC": {
           "spacegroup_number": 225,
           "spacegroup_symbol": "Fm-3m",
-          "delta_H_J_per_mol": 6957.631461424986,
+          "delta_H_J_per_mol": 5493.991461424972,
           "delta_S_J_per_mol_K": 0.0,
           "transition_temperature_K": null,
           "materials_project_id": "omegas_hcp",
@@ -2668,7 +2659,7 @@
         }
       },
       "notes": [
-        "DFT ground state is ω-Ti (P6/mmm, SG 191), a high-pressure phase. Used as 0 K reference per convention. α-Ti (hcp, SG 194) is estimated to become stable near 180 K from Mei et al., Phys. Rev. B 80, 104116 (2009), DOI: 10.1103/PhysRevB.80.104116. The database therefore contains three solid polymorphs before melting: ω-Ti (SG 191), α-Ti (SG 194), and β-Ti (SG 229)."
+        "GGA ranks ω-Ti (P6/mmm, SG 191), a high-pressure phase, 15 meV/atom below α-Ti. It is Tier A blacklisted, so α-Ti (hcp, SG 194) is the H = 0, S = 0 anchor."
       ]
     },
     "V": {
