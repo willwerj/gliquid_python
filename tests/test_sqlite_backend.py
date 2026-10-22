@@ -12,6 +12,7 @@
   store.
 """
 
+import copy
 import json
 import math
 import shutil
@@ -365,6 +366,15 @@ class TestProtocol:
         located = SqliteBackend(store).locate(MPDS_KEY)
         assert str(store) in located
         assert located.endswith("Cu-Mg_MPDS_PD_0.json")
+
+    def test_deepcopy_shares_the_open_store(self, store):
+        backend = SqliteBackend(store)
+        assert backend.read_json(DFT_KEY) == ENTRIES  # opens a connection first
+        holder = {"backend": backend, "params": [1.0]}
+        copied = copy.deepcopy(holder)
+        assert copied["backend"] is backend
+        assert copied["params"] is not holder["params"]
+        assert copied["backend"].read_json(DFT_KEY) == ENTRIES
 
     def test_resolve_cache_path_is_None_for_a_single_file_store(self, store):
         import gliquid.api as api
