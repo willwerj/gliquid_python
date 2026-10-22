@@ -316,18 +316,24 @@ def render_tx_surface(
         return name
 
     for n, (label, group) in enumerate(solid_df.groupby("Phase")):
-        line = dict(color=group["Colors"], width=10)
+        # One vertical segment per composition, broken from the next by None.
+        x, y, z, colors = [], [], [], []
+        for _, segment in group.sort_values("T").groupby(["x0", "x1"], sort=False):
+            x += [*segment["x0"], None]
+            y += [*segment["x1"], None]
+            z += [*segment["T"], None]
+            colors += [*segment["Colors"], segment["Colors"].iloc[-1]]
+        x, y, z, colors = x[:-1], y[:-1], z[:-1], colors[:-1]
+        line = dict(color=colors[0] if len(set(colors)) == 1 else colors, width=10)
         if highlight:
-            colors = list(group["Colors"])
-            line["color"] = colors[0] if len(set(colors)) == 1 else colors
             tags.solids[str(label)] = (f"gliquid-solid-{n}", line["color"])
         if label in imputed_phases or label in user_phases:
             line["dash"] = "dash"
         fig.add_trace(
             go.Scatter3d(
-                x=group["x0"],
-                y=group["x1"],
-                z=group["T"],
+                x=x,
+                y=y,
+                z=z,
                 mode="lines",
                 line=line,
                 showlegend=False,
