@@ -1009,6 +1009,9 @@ class SqliteBackend:
         mode = "rw" if self._writable else "ro"
         return f"SqliteBackend(path={str(self._path)!r}, mode={mode!r})"
 
+    def __deepcopy__(self, memo):
+        return self
+
     @property
     def path(self) -> Path:
         return self._path
