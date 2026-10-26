@@ -3,7 +3,7 @@ hulls, figure captures, the constraint-equation readers and the shared fixtures.
 
 Import from a module in ``tests/`` with ``from ._mpds_builders import ...``; a module loaded by
 file path puts ``tests/`` on ``sys.path`` first and imports ``_mpds_builders``. The fixtures
-reach the tests through ``tests/conftest.py`` and ``tests_internal/conftest.py``.
+reach the tests through ``tests/conftest.py``.
 """
 
 from __future__ import annotations

@@ -23,8 +23,7 @@ Ties are also merged: two sources emitting the same horizontal with slightly dif
 extents collapse to one trace spanning their union, and a polymorph tie terminates on any
 SS field boundary in its way instead of crossing it.
 
-No test here draws a figure; the rendering classes live in
-``tests_internal/test_ss_envelope_rendering.py``.
+No test here draws a figure.
 """
 
 import json

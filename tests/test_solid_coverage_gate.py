@@ -10,7 +10,7 @@ Hf-Zr pd0 is the offline full-composition-SS system (MPDS labels '(Hf, Zr)'); wi
 ``ss_models`` loaded it is fully supported, without them it is fully unsupported.
 
 The frozen ground-truth verdicts over the acceptance corpus need the maintainer's per-system
-corpus store and live in ``tests_internal/test_solid_coverage_pins.py``.
+corpus store and live in ``test_solid_coverage_pins.py``.
 """
 
 import json
