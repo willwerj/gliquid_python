@@ -216,7 +216,7 @@ def _validate_dft_type(dft_type: str) -> None:
             f"{cause}. Use dft_type='GGA' (the default) -- it is what this package's data "
             f"corpus and every published result are built on. If the upstream fix has "
             f"landed, drop the '{dft_type}' entry from gliquid.api._BLOCKED_DFT_TYPES and "
-            f"re-run the canaries in tests_internal/test_dft_data_loading.py."
+            f"re-run the canaries in tests/test_dft_data_loading.py."
         )
 
 

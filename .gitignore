@@ -51,5 +51,4 @@ cache/*_ENTRIES_MP_GGA.json
 .env.*
 
 scripts/build_branch_feature_cache.py
-tests_internal/test_branch_feature_cache.py
 tests/_figures/

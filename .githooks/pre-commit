@@ -31,7 +31,7 @@ run_ruff() {
 }
 
 staged=$(git diff --cached --name-only --diff-filter=ACM \
-         | grep -E '^(src/gliquid|tests|tests_internal)/.*\.py$')
+         | grep -E '^(src/gliquid|tests)/.*\.py$')
 [ -n "$staged" ] || exit 0
 
 unstaged=$(git diff --name-only)
