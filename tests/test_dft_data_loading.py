@@ -75,10 +75,8 @@ def test_cache_hit_reuses_api_file_without_calling_api(api_cached_dir, monkeypat
 
 
 # -- The other two dft_type values --
-# Both fail upstream. Each is xfailed with ``raises=`` pinning the failure shape, so an upstream
-# fix shows up as XPASS. The public entry points refuse both names before any network call
-# (pinned offline in tests/test_api.py::TestBlockedDftTypesFailBeforeAnyNetworkCall), so these
-# probe ``_get_dft_entries_from_components``, the deepest point that still reaches the live API.
+# Both fail upstream; each xfails with ``raises=`` so an upstream fix shows as a strict XPASS. They
+# probe ``_get_dft_entries_from_components``, the deepest point reaching the live API.
 
 R2SCAN_CAUSE = (
     "The Materials Project stores the r2SCAN thermo type as the literal 'r2SCAN', while "
@@ -104,7 +102,7 @@ def _require_key():
         pytest.skip("NEW_MP_API_KEY not set")
 
 
-@pytest.mark.xfail(raises=ValueError, reason=R2SCAN_CAUSE, strict=False)
+@pytest.mark.xfail(raises=ValueError, reason=R2SCAN_CAUSE, strict=True)
 def test_cold_r2scan_fetch_returns_entries():
     """Cold R2SCAN: does a live fetch return any r2SCAN entry at all? (Upstream: no.)"""
     _require_key()
@@ -112,7 +110,7 @@ def test_cold_r2scan_fetch_returns_entries():
     assert entries, "an r2SCAN fetch returned nothing"
 
 
-@pytest.mark.xfail(raises=TypeError, reason=MIXED_CAUSE, strict=False)
+@pytest.mark.xfail(raises=TypeError, reason=MIXED_CAUSE, strict=True)
 def test_cold_mixed_fetch_returns_entries():
     """Cold MIXED: the same, plus MaterialsProjectDFTMixingScheme over the cold set."""
     _require_key()

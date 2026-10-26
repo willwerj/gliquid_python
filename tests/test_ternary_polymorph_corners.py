@@ -324,7 +324,7 @@ class TestLadderSurvivesIntoTheFigure:
     def test_negative_control_corner_is_untouched(self, ams_plot, el):
         """No ladder means nothing to keep: exactly one phase, still floored at conds[0].
 
-        This is what protects tests_internal/test_tliplotter_figures.py, whose pins are
+        This is what protects test_tliplotter_figures.py, whose pins are
         frozen on this very system.
         """
         raw, at = _corner_rows(ams_plot, UNAFFECTED, el)

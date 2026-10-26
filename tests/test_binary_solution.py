@@ -2,7 +2,6 @@
 
 Model math is pinned against values frozen in fixtures/ss_characterization_pins.json, built
 through the package BinaryLiquid. from_cache runs offline against the Hf-Zr data/ fixtures.
-The figure-level checks live in ``tests_internal/test_binary_solution_plotting.py``.
 """
 
 import json

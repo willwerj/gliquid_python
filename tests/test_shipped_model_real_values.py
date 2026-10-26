@@ -1,8 +1,8 @@
 """The shipped runner returns real parameter values for the notebook systems.
 
-No test here asserts what the values are. :func:`literal_comparisons` scans ``tests/`` and
-``tests_internal/`` for a comparison between a named system's ``predict_system`` output and
-a numeric literal, and must find none.
+No test here asserts what the values are. :func:`literal_comparisons` scans ``tests/`` for a
+comparison between a named system's ``predict_system`` output and a numeric literal, and must
+find none.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from gliquid.production_model_runner import ProductionModelRunner  # noqa: E402
 from ._mpds_builders import hermetic_mpds  # noqa: E402
 
 SYSTEMS = ("Ga-Ru", "Pb-Tb", "Cu-Mg")
-TEST_ROOTS = ("tests", "tests_internal")
+TEST_ROOTS = ("tests",)
 
 
 @pytest.fixture(scope="module")

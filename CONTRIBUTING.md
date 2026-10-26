@@ -26,24 +26,15 @@ directory is named `gliquid_python`. The store is the first of: `set_cache_dir()
 
 ## Running the tests
 
-Run `pytest` from the repository root. The suite is tiered, and which tier you get depends on
-what you pass:
-
-```bash
-pytest                        # the public tests/ suite -- the default, and what a contributor runs
-pytest tests_internal         # the maintainer tier: value pins, figure goldens, gated families
-pytest tests tests_internal   # everything
-```
-
-A bare `pytest` collects only `tests/` because `testpaths = ["tests"]` says so in
-`pyproject.toml`; `tests_internal/` is tracked in git but never collected implicitly, and it is
-excluded from the sdist.
+Run `pytest` from the repository root. It collects `tests/`, which is excluded from the sdist.
+The value pins, figure goldens and gated families carry markers (below), so `-m "not pins"`
+or `-m "not needs_cache"` deselects them.
 
 The gate is the whole suite in parallel under pytest-xdist. Run it before you push; CI runs the
 same command with `-m "not needs_network"`:
 
 ```bash
-pytest tests tests_internal -n auto --dist worksteal
+pytest -n auto --dist worksteal
 ```
 
 - Use `-n 8` instead of `-n auto` while a fit campaign or another heavy job runs: each worker
@@ -56,8 +47,8 @@ optional and not part of `.[test]`:
 
 ```bash
 pip install pytest-testmon
-pytest tests tests_internal --testmon   # first run: the whole suite, recording what each test executes
-pytest tests tests_internal --testmon   # later runs: only the tests your edits affect
+pytest --testmon   # first run: the whole suite, recording what each test executes
+pytest --testmon   # later runs: only the tests your edits affect
 ```
 
 It keeps its record in `.testmondata` at the repository root (git-ignored), needs the cache
@@ -68,7 +59,7 @@ source as text, are not selected by a change under `src/`, so run the gate befor
 Without testmon, run one module (`pytest tests/test_phase.py`), or rerun the last failures with
 `--lf` (it also needs the cache provider).
 
-Only git-tracked test files are collected from `tests/` and `tests_internal/`. An untracked or
+Only git-tracked test files are collected from `tests/`. An untracked or
 ignored `test_*.py` is skipped and listed in the terminal summary; `git add` it, or name it on
 the command line, to run it.
 
@@ -127,12 +118,12 @@ default, because this codebase already writes to roughly 95–100 characters and
 calls that read fine today.
 
 ```bash
-ruff format src/gliquid tests tests_internal   # before you push
-ruff format --check src/gliquid tests tests_internal
-ruff check src/gliquid tests tests_internal     # CI fails on any finding, as on unformatted code
+ruff format src/gliquid tests   # before you push
+ruff format --check src/gliquid tests
+ruff check src/gliquid tests     # CI fails on any finding, as on unformatted code
 ```
 
-A pre-commit hook in `.githooks/` runs `ruff format` over the staged files in those same three
+A pre-commit hook in `.githooks/` runs `ruff format` over the staged files in those same two
 paths and re-stages them, so a commit records formatted code. It is **not active until you
 switch git's hook path to it** — that setting lives in `.git/config` and is not carried by a
 clone:

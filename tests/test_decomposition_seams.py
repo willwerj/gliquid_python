@@ -1,5 +1,6 @@
 """Exact behaviour at the decision seams of the coverage resolvers, ``fit_parameters``,
-the miscibility-gap walk, the flank bounds and ``plot_tx``.
+the miscibility-gap walk, ``BinaryLiquid.find_invariant_points``, the flank bounds and
+``plot_tx``.
 
 Every observation is compared in :func:`canon` form, which keeps ``int`` / ``float`` /
 ``float64`` apart and never rounds. Each case drives an entry point that stays public (or a
@@ -14,7 +15,7 @@ carry ``latent`` in their names:
   * L3 -- the right-hand miscibility-gap walk skips two segments where the left skips one;
   * L4 -- a vertical liquidus segment on either walk raises ``ZeroDivisionError``;
   * L5 -- ``identify_invariant_points`` retypes the returned phase dicts (pinned in
-    ``tests_internal/test_decomposition_pins.py``);
+    ``test_decomposition_pins.py``);
   * L6 -- ``fit_parameters`` logs a failing attempt and returns ``[]`` however many run;
   * L7 -- the flank fallbacks of ``fit_parameters`` are the ints ``0`` and ``1``.
 
@@ -1187,6 +1188,62 @@ class TestInvariantPassSeams:
     @pytest.mark.parametrize("name", sorted(_PASS_CASES))
     def test_pass_case(self, name):
         assert _PASS_CASES[name]() == EXPECTED["passes"][name]
+
+
+# -- BinaryLiquid.find_invariant_points, the wrapper over identify_invariant_points --
+class TestFindInvariantPointsWrapper:
+    """The wrapper passes the instance's inputs and its keywords through, assigns the returned
+    lists to ``invariants`` and ``low_t_exp_phases`` and returns them, and records a
+    full-composition solid solution on ``full_comp_ss`` with ``init_error`` left unset. The
+    values are pinned in ``test_decomposition_pins.py``."""
+
+    def test_the_wrapper_forwards_its_inputs_and_assigns_the_results(self, monkeypatch):
+        calls = []
+        identify = mpds.identify_invariant_points
+
+        def spy(*args, **kwargs):
+            calls.append((args, kwargs, identify(*args, **kwargs)))
+            return calls[-1][2]
+
+        monkeypatch.setattr(mpds, "identify_invariant_points", spy)
+        for call_kwargs, full_comp_ss in (
+            ({"t_tol": 25, "check_full_ss": False}, False),
+            ({}, True),
+        ):
+            bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
+            inputs = (
+                bl.mpds_json,
+                bl.components,
+                bl.digitized_liq,
+                bl.component_data,
+                bl.temp_range,
+            )
+            invariants, low_t = bl.find_invariant_points(**call_kwargs)
+            ((args, kwargs, result),) = calls
+            calls.clear()
+            assert all(a is b for a, b in zip(args, inputs, strict=True))
+            assert kwargs == {
+                "verbose": False,
+                "t_tol": 15,
+                "check_full_ss": True,
+                **call_kwargs,
+                "liquidus_holes": bl.liquidus_holes,
+            }
+            assert invariants is result[0] is bl.invariants
+            assert low_t is result[1] is bl.low_t_exp_phases
+            assert result[2] is full_comp_ss
+            assert bl.full_comp_ss is full_comp_ss
+            assert not bl.init_error
+
+    def test_no_reference_returns_empty_and_leaves_state_untouched(self, caplog):
+        """mpds_json without a reference: warns, returns ([], []), touches NO attributes."""
+        bl = object.__new__(BinaryLiquid)  # attribute-free shell; only mpds_json is read
+        bl.mpds_json = {"reference": None}
+        assert bl.find_invariant_points() == ([], [])
+        assert not hasattr(bl, "invariants")
+        assert not hasattr(bl, "low_t_exp_phases")
+        assert not hasattr(bl, "init_error")
+        assert "does not contain any data" in caplog.text  # emitted via logger.warning
 
 
 # -- flank_bound on several candidates on one side, and at the SEGMENT_TOL window edge --

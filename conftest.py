@@ -5,7 +5,7 @@ One OpenMP thread. ``OMP_NUM_THREADS`` is set to 1 for the session (XGBoost and 
 every xdist worker and every fresh interpreter a test starts), before anything imports numpy
 or xgboost. A value already in the environment is kept.
 
-Tracked-only collection. Under ``tests/`` and ``tests_internal/`` only the ``test_*.py`` files
+Tracked-only collection. Under ``tests/`` only the ``test_*.py`` files
 that git tracks are collected; an untracked or git-ignored one is skipped and listed in the
 terminal summary. A file named on the command line is always collected. Outside a git work
 tree, or without ``git`` on PATH, every file is collected.
@@ -25,7 +25,7 @@ Single-file store. Set ``GLIQUID_TEST_SQLITE_STORE=<path>.sqlite`` and the whole
 against a SQLite cache store instead of the ``cache/`` directory tree::
 
     python -m gliquid.cache migrate --from cache --to <path>.sqlite
-    GLIQUID_TEST_SQLITE_STORE=<path>.sqlite python -m pytest tests tests_internal
+    GLIQUID_TEST_SQLITE_STORE=<path>.sqlite python -m pytest tests
 
 Unset, the suite runs against the directory store.
 
@@ -52,7 +52,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 _SQLITE_STORE_ENV = "GLIQUID_TEST_SQLITE_STORE"
 _NO_HULL_MEMO_ENV = "GLIQUID_TEST_NO_HULL_MEMO"
 _HULL_MEMO_ENTRIES = 4000  # entries held across all memoised hulls; least recently used go first
-_GATED_DIRS = ("tests", "tests_internal")
+_GATED_DIRS = ("tests",)
 _UNTRACKED_KEY = "gliquid_untracked_test_files"
 _HULL_MEMO_KEY = "gliquid_hull_memo_stats"
 _tracked_key = pytest.StashKey[frozenset | None]()

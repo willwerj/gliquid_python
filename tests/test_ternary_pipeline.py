@@ -3,6 +3,16 @@
 Frozen by freeze_refactor_pins.py into
 fixtures/ternary_pipeline_pins.json. Gates: rtol <= 1e-9 numerics; simplex SETS exact.
 Runs offline (unary registry + shipped omegas_hcp.json + cached Al-Mg-Si MP entries).
+
+``TestDiverseLiquidSurfacePins`` pins triads whose binary L0 terms differ in sign and magnitude:
+
+  * Al-Ca-Ni -- strongly compound-forming (large negative L0 on every edge)
+  * Ag-Cu-Pb -- demixing / monotectic-like (positive L0 on every edge)
+  * Cu-Fe-Si -- mixed-sign, L1-heavy asymmetric edges (linear + Muggianu)
+
+Frozen by freeze_diverse_ternary_pins.py into fixtures/ternary_diverse_pins.json. Each entry
+embeds its construction config (elements, L_dict, delta, interp_type, param_format) beside the
+pinned x0/x1/H/S/phase arrays.
 """
 
 import json
@@ -26,6 +36,11 @@ pytestmark = pytest.mark.pins
 PINS = json.loads(
     (
         Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "ternary_pipeline_pins.json"
+    ).read_text()
+)
+DIVERSE_PINS = json.loads(
+    (
+        Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "ternary_diverse_pins.json"
     ).read_text()
 )
 
@@ -70,6 +85,27 @@ class TestLiquidSurfacePins:
         pu.assert_deep_approx(pin["H"], df["H"].to_numpy(dtype=float))
         pu.assert_deep_approx(pin["S"], df["S"].to_numpy(dtype=float))
         assert df["Phase Name"].tolist() == pin["phase"]
+
+
+class TestDiverseLiquidSurfacePins:
+    @pytest.mark.parametrize("key", sorted(DIVERSE_PINS))
+    def test_liquid_surface(self, key):
+        blk = DIVERSE_PINS[key]
+        cfg = blk["config"]
+        ti = tmod.TernaryLiquidInterpolation(
+            list(cfg["elements"]),
+            xs_mix={k: list(v) for k, v in cfg["L_dict"].items()},
+            delta=cfg["delta"],
+            interp_scheme=cfg["interp_type"],
+            param_format=cfg["param_format"],
+        )
+        ti.interpolate_liquid_surface()
+        df = ti.hsx_df
+        pu.assert_deep_approx(blk["x0"], df["x0"].to_numpy(dtype=float))
+        pu.assert_deep_approx(blk["x1"], df["x1"].to_numpy(dtype=float))
+        pu.assert_deep_approx(blk["H"], df["H"].to_numpy(dtype=float))
+        pu.assert_deep_approx(blk["S"], df["S"].to_numpy(dtype=float))
+        assert df["Phase Name"].tolist() == blk["phase"]
 
 
 class TestSSModelPins:

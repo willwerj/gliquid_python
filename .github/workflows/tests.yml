@@ -56,9 +56,9 @@ jobs:
           pip install -e '.[test]'
 
       - name: Run cached tests
-        # Both tiers, in parallel. The live Materials Project fetches are deselected by marker;
-        # the API job below runs the one in tests_internal.
-        run: pytest tests tests_internal -n auto --dist worksteal -m "not needs_network" --tb=short --durations=25
+        # In parallel. The live Materials Project fetches are deselected by marker; the API
+        # job below runs them.
+        run: pytest tests -n auto --dist worksteal -m "not needs_network" --tb=short --durations=25
 
   test-api:
     name: API Tests
@@ -95,7 +95,7 @@ jobs:
       - name: Run API tests
         env:
           NEW_MP_API_KEY: ${{ secrets.NEW_MP_API_KEY }}
-        run: pytest tests_internal/test_dft_data_loading.py -v --tb=short
+        run: pytest tests/test_dft_data_loading.py -v --tb=short
 
   lint:
     name: Lint and Format
@@ -117,7 +117,7 @@ jobs:
           pip install -e '.[test]'
 
       - name: Ruff lint
-        run: ruff check src/gliquid tests tests_internal
+        run: ruff check src/gliquid tests
 
       - name: Ruff format check
-        run: ruff format --check src/gliquid tests tests_internal
+        run: ruff format --check src/gliquid tests

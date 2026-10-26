@@ -173,7 +173,6 @@ packages = ["src/gliquid"]
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/tests",
-    "/tests_internal",
     # NOT optional, and PATH-ANCHORED -- it must be renamed whenever the directory is.
     # Hatchling's sdist default is "everything not VCS-ignored", which is BROADER than
     # the setuptools default this replaced: setuptools omitted the corpus by accident,
@@ -218,13 +217,8 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-# A bare `pytest` means the PUBLIC suite. The maintainer suite is explicit:
-#   pytest                        -> tests/
-#   pytest tests_internal         -> the pins, figure goldens and gated families
-#   pytest tests tests_internal   -> everything
-#   pytest tests tests_internal -n auto --dist worksteal   -> everything in parallel; the gate CI runs
-# tests/fixtures/, tests/pin_utils.py and tests/conftest.py stay in tests/ even though
-# tests_internal/ reads them: every file there anchors back out through parents[1]/'tests'.
+#   pytest                               -> the whole suite
+#   pytest -n auto --dist worksteal      -> the whole suite in parallel; the gate CI runs
 testpaths = ["tests"]
 markers = [
     "pins: frozen-value characterization pin. Re-freeze deliberately with the freezer script named in the file's docstring -- never edit a pin to make it pass.",

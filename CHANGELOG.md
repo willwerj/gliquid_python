@@ -50,6 +50,9 @@ source tree carries a version literal that could disagree with this file.
   change reports itself stale (`liquid_gibbs` provenance).
 - **`LiquidusSheets` and `Binodal` take a `TstarField`** (the liquid's T*(x)) in place of one
   temperature. `TernaryLiquidInterpolation.liquid_tstar_field()` builds it.
+- **One test suite.** `tests_internal/` is merged into `tests/`, so a bare `pytest` also runs the
+  value pins, figure goldens and cache/network-gated families. Deselect them by marker
+  (`-m "not pins"`, `-m "not needs_cache"`).
 
 ## [0.3.1] - 2026-10-17
 
