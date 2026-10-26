@@ -43,8 +43,8 @@ def test_split_reproduces_the_liquid_model(ams):
     comp = _grid(10)
     comp = comp[(comp.min(axis=1) > 0) & (comp.sum(axis=1) < 1)]
     model = plotter._ti.liquid_model()
-    h, s, _, _ = model.nonideal_h_s_gradients((comp[:, 0], comp[:, 1]), sheets.temp)
-    h_grid, s_grid = model.h_s_grid((comp[:, 0], comp[:, 1]), sheets.temp)
+    h, s, _, _ = sheets.tstar.h_s_gradients(model, comp)
+    h_grid, s_grid = model.h_s_grid((comp[:, 0], comp[:, 1]), sheets.tstar(comp))
     full = np.column_stack([1 - comp.sum(axis=1), comp])
     assert h == pytest.approx(h_grid, rel=1e-9)
     assert s - R * (full * np.log(full)).sum(axis=1) == pytest.approx(s_grid, rel=1e-9)
@@ -54,13 +54,13 @@ def test_gradients_match_finite_differences(ams):
     plotter, sheets = ams
     model = plotter._ti.liquid_model()
     x = np.array([[0.2, 0.3], [0.5, 0.1], [0.1, 0.7]])
-    _, _, dh, ds = model.nonideal_h_s_gradients((x[:, 0], x[:, 1]), sheets.temp)
+    _, _, dh, ds = sheets.tstar.h_s_gradients(model, x)
     step = 1e-6
     for k in range(2):
         shift = np.zeros(2)
         shift[k] = step
-        hi = model.nonideal_h_s_gradients(((x + shift)[:, 0], (x + shift)[:, 1]), sheets.temp)
-        lo = model.nonideal_h_s_gradients(((x - shift)[:, 0], (x - shift)[:, 1]), sheets.temp)
+        hi = sheets.tstar.h_s_gradients(model, x + shift)
+        lo = sheets.tstar.h_s_gradients(model, x - shift)
         assert dh[k] == pytest.approx((hi[0] - lo[0]) / (2 * step), rel=1e-5, abs=1e-3)
         assert ds[k] == pytest.approx((hi[1] - lo[1]) / (2 * step), rel=1e-5, abs=1e-6)
 

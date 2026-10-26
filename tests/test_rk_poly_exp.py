@@ -143,6 +143,17 @@ class TestExpressions:
             assert sp.simplify(h_expr - (l_expr + t_sym * s_expr)) == 0
 
 
+class TestLinearInT:
+    @pytest.mark.parametrize(
+        "fmt, params", [("linear", [100.0, -1.0, 50.0, 0.5]), ("regular", [7000.0])]
+    )
+    def test_linear_and_regular_models_are_linear_in_t(self, fmt, params):
+        assert RKPolyExp(fmt, params).is_linear_in_t()
+
+    def test_comb_exp_is_not_linear_in_t(self):
+        assert not RKPolyExp("comb-exp", [1.0, 0.0, 0.0, 0.0]).is_linear_in_t()
+
+
 class TestSwap:
     def test_linear_swap_negates_l1_only(self):
         """Matches flip_binary_l1: params[2:] negate on component-order swap."""

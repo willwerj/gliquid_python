@@ -72,6 +72,18 @@ DEFAULT_TAU = 8000  # K; decay constant of the exp(-T/tau) excess-enthalpy envel
 
 t_sym = sp.Symbol("t")
 
+# Largest per-node |G_lin(T_liq; T*) - G(T_liq)| (J/mol) at which a binary or ternary liquid is
+# not re-linearized at its liquidus.
+DEFAULT_TSTAR_TOL = 0.2143
+# Largest estimated liquidus shift (K) of a binary row, its |G_lin - G| over the entropy step
+# across its liquidus, at which a binary liquid is not re-linearized.
+DEFAULT_TSTAR_LIQ_TOL = 1.0
+# Most hulls one binary liquid evaluation builds; 1 keeps the x-weighted melting point as T* (the
+# B pass).
+DEFAULT_TSTAR_MAX_HULLS = 60
+# Most hulls one ternary liquid evaluation builds: the B pass and up to two D passes.
+DEFAULT_TERNARY_TSTAR_MAX_HULLS = 3
+
 x_step = 0.01  # Sets composition grid precision; has not been tested for values other than 0.01
 x_prec = len(str(x_step).split(".")[-1])
 x_vals = np.arange(0, 1 + x_step, x_step)
@@ -384,6 +396,10 @@ class RKPolyExp:
         s_expr = -sp.diff(l_expr, t_sym)
         return l_expr + t_sym * s_expr, s_expr
 
+    def is_linear_in_t(self) -> bool:
+        """True when every order's ``L_k(T)`` is at most linear in T."""
+        return all(sp.diff(expr, t_sym, 2) == 0 for expr in self.exprs())
+
     # ------------------------------------------------------------------ swap
     def swapped(self) -> RKPolyExp:
         """This model with the component order reversed.
@@ -620,8 +636,9 @@ class SolutionModel:
         return eqs
 
     # ------------------------------------------------------------------ numeric
-    def h_s_grid(self, x_arrays, temp: float) -> tuple[np.ndarray, np.ndarray]:
-        """H and S evaluated over composition arrays at one temperature.
+    def h_s_grid(self, x_arrays, temp) -> tuple[np.ndarray, np.ndarray]:
+        """H and S evaluated over composition arrays at ``temp``, one temperature (K) or one per
+        point.
 
         ``x_arrays`` is the length-(n-1) sequence of independent-fraction arrays.
         Uses the 'safe' ideal form so edge/corner grid points are exact. The
@@ -659,7 +676,7 @@ class SolutionModel:
             s = np.broadcast_to(s_fn(*x_arrays, temp), shape).astype(float)
         return h, s
 
-    def nonideal_h_s_gradients(self, x_arrays, temp: float) -> tuple[np.ndarray, ...]:
+    def nonideal_h_s_gradients(self, x_arrays, temp) -> tuple[np.ndarray, ...]:
         """H and S of the reference and excess terms, with their composition gradients.
 
         Everything but the ideal mixing term ``R*T*sum(x_i*ln(x_i))``, which carries no
@@ -668,7 +685,7 @@ class SolutionModel:
 
         Args:
             x_arrays: the length-(n-1) sequence of independent-fraction arrays, one shape.
-            temp: temperature, K.
+            temp: temperature, K: one value, or an array of that shape.
 
         Returns:
             tuple: ``(h, s, dh, ds)``. ``h`` and ``s`` have the shape of ``x_arrays[0]``;
@@ -693,6 +710,36 @@ class SolutionModel:
             ]
         k = len(x_syms)
         return values[0], values[1], np.stack(values[2 : 2 + k]), np.stack(values[2 + k :])
+
+    def nonideal_h_s_temperature_derivatives(self, x_arrays, temp) -> tuple[np.ndarray, ...]:
+        """dH/dT and dS/dT of the reference and excess terms (both 0 for a model linear in T).
+
+        Args:
+            x_arrays: the length-(n-1) sequence of independent-fraction arrays, one shape.
+            temp: temperature, K: one value, or an array of that shape.
+
+        Returns:
+            tuple: ``(dh_dt, ds_dt)``, each of the shape of ``x_arrays[0]``.
+        """
+        fns = self._grid_fns.get("nonideal_t")
+        x_syms = comp_symbols(len(self.components))
+        if fns is None:
+            exprs = self.expressions(x_syms=x_syms, ideal="plain", numeric=True)
+            g = exprs["g_ref"] + exprs["g_xs"]
+            s = -sp.diff(g, t_sym)
+            h = g + t_sym * s
+            fns = [
+                sp.lambdify([*x_syms, t_sym], sp.diff(expr, t_sym), modules="numpy")
+                for expr in (h, s)
+            ]
+            self._grid_fns["nonideal_t"] = fns
+        shape = np.shape(x_arrays[0])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dh_dt, ds_dt = (
+                np.broadcast_to(np.asarray(fn(*x_arrays, temp), dtype=float), shape).astype(float)
+                for fn in fns
+            )
+        return dh_dt, ds_dt
 
     # ------------------------------------------------------------------ plumbing
     def __getstate__(self):
