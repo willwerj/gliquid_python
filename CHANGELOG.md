@@ -9,6 +9,48 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **The liquid is linearized at its own liquidus, in binaries and ternaries alike.** A liquid whose
+  excess terms depend on T ('combined', 'comb-exp') takes its H and S at a composition-dependent
+  temperature T*(x), not at the mean component melting point. The first hull takes the
+  x-weighted melting point. Each further hull re-evaluates every row at the previous hull's
+  liquidus, the step halved where it grew, until no row's |G_lin(T_liq; T*) - G(T_liq)| exceeds
+  `DEFAULT_TSTAR_TOL` (0.2143 J/mol, about 2 K of liquidus) or `DEFAULT_TSTAR_MAX_HULLS` (60)
+  hulls are built. A binary also needs every row's estimated liquidus shift, that difference
+  over the entropy step across its liquidus, at most `DEFAULT_TSTAR_LIQ_TOL` (1 K): near the
+  top of a liquid miscibility gap the entropy step vanishes, and a row that meets the energy
+  tolerance can still sit tens of K off its converged liquidus as a one-row spike
+  (`BinaryLiquid.liquidus_shift_estimate`). A binary checks the rows inside its digitized liquidus; a ternary checks
+  every liquid node and stops after `DEFAULT_TERNARY_TSTAR_MAX_HULLS` (3) hulls, the B pass and
+  two D passes. On the 96 ternaries of the melting-point benchmark that cap leaves every node's
+  liquidus within 3.7 K of the converged one and no melting point or eutectic moved, while
+  holding the slowest systems to about 1.7 s per interpolation instead of 2.9 s.
+  - The first pass restricts exactly to each binary on a ternary edge, so a ternary edge no longer
+    depends on the third element.
+  - `liquid_tstar` (on `BinaryLiquid` and `TernaryLiquidInterpolation`) holds the last
+    evaluation's T*.
+  - Parameters fitted before this change, and the v29.05 model's predictions, render
+    differently and should be refit and retrained: the notebook systems' liquidus moves by up to
+    10.5 K (Pb-Tb).
+  - Refit over the 853 SOLIDCOV_Q binaries, the fits' exact comb-exp liquidus matches MPDS with a
+    mean absolute error of 77.4 K, against 79.9 K for fits under the mean melting point, and
+    fitting takes about twice as long.
+- **The unexpected-gap penalty counts only real gaps.** A two-liquid tie of the fitted hull
+  counts only where the liquid's exact Gibbs energy, with the solids, also ties two liquids at
+  that temperature.
+- **Nelder-Mead returns its best vertex at `max_iter`** instead of raising.
+- **Every initial simplex spans at least `DEFAULT_B_SPREAD_MIN` in L*_b.** A small L*_b vertex
+  is moved by the spread rather than scaled by 0.8.
+- **`liquidus_is_continuous` allows one missing grid row**, as its tolerance intends, despite
+  floating-point error in the grid spacing.
+- **Ternary imputation reads the liquid's Gibbs energy at the target temperature.**
+  `TernaryLiquidInterpolation.liquid_gibbs` takes H and S at the temperature asked for, as the
+  binary imputation does. A ternary imputed entry with a T-dependent edge recorded before this
+  change reports itself stale (`liquid_gibbs` provenance).
+- **`LiquidusSheets` and `Binodal` take a `TstarField`** (the liquid's T*(x)) in place of one
+  temperature. `TernaryLiquidInterpolation.liquid_tstar_field()` builds it.
+
 ## [0.3.1] - 2026-10-17
 
 ### Added

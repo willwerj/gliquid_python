@@ -49,6 +49,9 @@ from gliquid.phase import (
 )
 from gliquid.solution import (
     DEFAULT_TAU,
+    DEFAULT_TSTAR_LIQ_TOL,
+    DEFAULT_TSTAR_MAX_HULLS,
+    DEFAULT_TSTAR_TOL,
     ParamFormat,
     RKPolyExp,
     SolutionModel,
@@ -161,8 +164,39 @@ DEFAULT_RESTORE_MAX_HALVINGS = 8
 
 
 def _offset_vertex_value(value: float, spread_min: float, sign_of: float) -> float:
-    """``0.8 * value``, or ``spread_min`` carrying the sign of ``sign_of`` when ``value`` is 0."""
-    return value * 0.8 if value else math.copysign(spread_min, sign_of)
+    """``0.8 * value``, or ``value`` moved ``spread_min`` toward zero when that is the larger
+    move; ``spread_min`` carrying the sign of ``sign_of`` when ``value`` is 0."""
+    if abs(0.2 * value) < spread_min:
+        return value - math.copysign(spread_min, value if value else -sign_of)
+    return value * 0.8
+
+
+def _lower_hull_vertices(xs: np.ndarray, gs: np.ndarray) -> list[int]:
+    """Indices of the strict lower-hull vertices of the points ``(xs, gs)``, in x order."""
+    order = np.lexsort((gs, xs))
+    hull = []
+    for idx in order:
+        x, g = xs[idx], gs[idx]
+        if hull and x == xs[hull[-1]]:
+            continue
+        while len(hull) >= 2:
+            a, b = hull[-2], hull[-1]
+            if (xs[b] - xs[a]) * (g - gs[a]) - (gs[b] - gs[a]) * (x - xs[a]) <= 0:
+                hull.pop()
+            else:
+                break
+        hull.append(int(idx))
+    return hull
+
+
+def _grid_liquidus(points, grid: np.ndarray) -> np.ndarray:
+    """The lowest liquid temperature at each ``grid`` composition among ``points``
+    (``[x, T]`` rows); NaN where the liquid has no point."""
+    lookup = {}
+    for xv, tv in np.asarray(points or [], dtype=float).reshape(-1, 2):
+        key = round(float(xv), 9)
+        lookup[key] = min(lookup.get(key, np.inf), float(tv))
+    return np.array([lookup.get(round(float(xv), 9), np.nan) for xv in grid])
 
 
 def _restore_infeasible_vertices(evaluate, simplex, f_vals, params, max_halvings) -> int:
@@ -462,6 +496,8 @@ class BinaryLiquid:
         components (list): List of component names.
         component_data (dict): Thermodynamic data for components.
         mean_elt_tm (float): Mean elemental melting temperature.
+        liquid_tstar (np.ndarray | None): Linearization temperature (K) of each interior grid
+            row in the last ``update_phase_points``.
         pd_ind (int | None): Index of the MPDS phase diagram used.
         mpds_json (dict): MPDS phase equilibrium data for the system.
         digitized_liq (list): Digitized liquidus data points.
@@ -599,6 +635,7 @@ class BinaryLiquid:
         self._ref_params = None
         self.nmpath = None
         self.hsx = None
+        self.liquid_tstar = None
 
     def __str__(self):
         return f"BinaryLiquid({self.sys_name})"
@@ -656,9 +693,10 @@ class BinaryLiquid:
     def unexpected_gap_width(self, match_tol: float | None = None) -> float:
         """Composition width of the generated two-liquid region the expected gaps do not cover.
 
-        Reads the diagram of the last ``update_phase_points``. For each expected gap with a
-        known isotherm the generated tie line at that temperature is measured; a tie
-        overlapping no expected gap counts in full.
+        Reads the diagram of the last ``update_phase_points``. Its two-liquid ties are replaced
+        by those of the liquid's exact Gibbs energy at their temperatures
+        (``_exact_two_liquid_ties``). For each expected gap with a known isotherm the tie line at
+        that temperature is measured; a tie overlapping no expected gap counts in full.
 
         Args:
             match_tol: composition slack added to each side of every expected range;
@@ -675,6 +713,9 @@ class BinaryLiquid:
         if not ties:
             return 0.0
         expected = self._expected_gaps()
+        ties = self._exact_two_liquid_ties(ties, expected)
+        if not ties:
+            return 0.0
 
         def overlaps(lo, hi, a, b):
             return min(hi, b + tol) - max(lo, a - tol) > 0
@@ -693,6 +734,59 @@ class BinaryLiquid:
                 continue
             width += max(a - tol - span[0], 0.0) + max(span[1] - b - tol, 0.0)
         return float(width)
+
+    def _exact_two_liquid_ties(self, hull_ties: list, expected: list) -> list[list[float]]:
+        """Two-liquid ties of the exact liquid, H and S taken at each temperature, with the solids.
+
+        Temperatures are the hull ties' (rounded to 1 K; at most 12 of them, evenly spread with
+        the lowest and highest kept) and each expected gap's isotherm. A tie joins two liquids
+        more than 0.012 apart in composition.
+
+        Args:
+            hull_ties: ``[lo, hi, T]`` two-liquid ties of the hull.
+            expected: ``[lo, hi, T or None]`` expected gaps (``_expected_gaps``).
+
+        Returns:
+            list: ``[lo, hi, T]`` per tie of the exact lower hull.
+        """
+        data = self.to_hsx()
+        grid = np.asarray(_x_vals, dtype=float)
+        n = len(grid)
+        hull_t = np.unique(np.round([float(t) for _, _, t in hull_ties], 0))
+        if len(hull_t) > 12:
+            keep = np.unique(np.linspace(0, len(hull_t) - 1, 12).round().astype(int))
+            hull_t = hull_t[keep]
+        temps = set(hull_t.tolist()) | {float(t) for _, _, t in expected if t is not None}
+        temps = np.asarray(sorted(temps), dtype=float)
+        xi = grid[1:-1]
+        xx = np.tile(xi, len(temps))
+        tt = np.repeat(temps, len(xi))
+        params = self.xs_mix.values
+        h = np.broadcast_to(
+            np.asarray(self.eqs["h_liq_lambdified"](xx, tt, *params), dtype=float), xx.shape
+        )
+        s = np.broadcast_to(
+            np.asarray(self.eqs["s_liq_lambdified"](xx, tt, *params), dtype=float), xx.shape
+        )
+        big_h = np.asarray(data["H"], dtype=float)
+        big_s = np.asarray(data["S"], dtype=float)
+        big_x = np.asarray(data["X"], dtype=float)
+        solid = np.arange(len(big_x)) >= n
+        g_liq = np.empty((len(temps), n))
+        g_liq[:, 0] = big_h[0] - temps * big_s[0]
+        g_liq[:, -1] = big_h[n - 1] - temps * big_s[n - 1]
+        g_liq[:, 1:-1] = h.reshape(len(temps), len(xi)) - temps[:, None] * s.reshape(
+            len(temps), len(xi)
+        )
+        xs = np.concatenate([grid, big_x[solid]])
+        ties = []
+        for k, temp in enumerate(temps):
+            gs = np.concatenate([g_liq[k], big_h[solid] - temp * big_s[solid]])
+            verts = _lower_hull_vertices(xs, gs)
+            for a, b in zip(verts[:-1], verts[1:]):
+                if a < n and b < n and xs[b] - xs[a] > 0.012:
+                    ties.append([float(xs[a]), float(xs[b]), float(temp)])
+        return ties
 
     def _flag_skip(self, reason: str) -> None:
         """Set ``init_error`` and record ``reason`` unless a skip reason is already set."""
@@ -1151,8 +1245,10 @@ class BinaryLiquid:
         """
         Converts phase data into HSX format.
 
-        The liquid H(x)/S(x) rows are evaluated at ``mean_elt_tm``; the 'combined' and
-        'comb-exp' forms depend on that temperature, 'linear' does not.
+        Each liquid row's H and S are evaluated at its linearization temperature:
+        ``liquid_tstar`` (interpolated onto ``x_vals``), or ``linear_tstar`` before the first
+        ``update_phase_points``. The 'combined' and 'comb-exp' forms depend on it, 'linear' does
+        not.
 
         Args:
             fmt (str): Output format ('dict' or 'dataframe').
@@ -1176,12 +1272,12 @@ class BinaryLiquid:
         h_a = comp_a.h_liq
         h_b = comp_b.h_liq
 
-        liq_h_vals = (
-            self.eqs["h_liq_lambdified"](x_inner, self.mean_elt_tm, *params).flatten().tolist()
-        )
-        liq_s_vals = (
-            self.eqs["s_liq_lambdified"](x_inner, self.mean_elt_tm, *params).flatten().tolist()
-        )
+        if self.liquid_tstar is None:
+            t_star = self.linear_tstar(x_inner)
+        else:
+            t_star = np.interp(x_inner, _x_vals[1:-1], self.liquid_tstar)
+        liq_h_vals = np.ravel(self.eqs["h_liq_lambdified"](x_inner, t_star, *params)).tolist()
+        liq_s_vals = np.ravel(self.eqs["s_liq_lambdified"](x_inner, t_star, *params)).tolist()
 
         data = self._build_hsx_data(
             h_a, h_b, s_a, s_b, liq_h_vals, liq_s_vals, x_vals=grid, ss_x_vals=ss_x_vals
@@ -1198,24 +1294,146 @@ class BinaryLiquid:
         """
         Calculates every phase's points for the current parameters with ``self.hsx``.
 
+        The liquid's H and S are evaluated row by row at a linearization temperature T*(x). The
+        first hull takes ``linear_tstar``. Each further hull re-linearizes every row at the
+        previous hull's liquidus, the step halved where it grew since the last hull, until
+        ``liquid_tstar_error`` is at most ``DEFAULT_TSTAR_TOL`` and ``liquidus_shift_estimate``
+        at most ``DEFAULT_TSTAR_LIQ_TOL`` on every row, or ``DEFAULT_TSTAR_MAX_HULLS`` hulls are
+        built. ``liquid_tstar`` records the last hull's.
+
         ``self.hsx`` is updated in place, and rebuilt only when absent or when the hull's
         phase list changed.
 
         Returns:
             data (dict): A dictionary containing the phase data in HSX format, including phase names and components.
         """
-        data = self.to_hsx()
         phase_names = self._hsx_phase_names()
         conds = [self.temp_range[0] - 273.15, self.temp_range[-1] - 273.15]
-        if self.hsx is None or self.hsx.phases != phase_names:
-            self.hsx = HSX({"data": data, "phases": phase_names, "comps": self.components}, conds)
-        else:
-            self.hsx.conds = conds
-            self.hsx.set_data(data)
-        phase_points = self.hsx.get_phase_points()
+        grid = _x_vals[1:-1]
+        self.liquid_tstar = self.linear_tstar(grid)
+        prev_step = None
+        for k in range(DEFAULT_TSTAR_MAX_HULLS):
+            data = self.to_hsx()
+            if self.hsx is None or self.hsx.phases != phase_names:
+                self.hsx = HSX(
+                    {"data": data, "phases": phase_names, "comps": self.components}, conds
+                )
+            else:
+                self.hsx.conds = conds
+                self.hsx.set_data(data)
+            phase_points = self.hsx.get_phase_points()
+            if k + 1 == DEFAULT_TSTAR_MAX_HULLS:
+                break
+            liq = _grid_liquidus(phase_points.get("L"), grid)
+            errors = self.liquid_tstar_row_errors(liq)
+            if (
+                errors.max() <= DEFAULT_TSTAR_TOL
+                and self.liquidus_shift_estimate(data, liq, errors).max() <= DEFAULT_TSTAR_LIQ_TOL
+            ):
+                break
+            step = np.where(np.isfinite(liq), liq - self.liquid_tstar, 0.0)
+            if prev_step is not None:
+                step = np.where(np.abs(step) > np.abs(prev_step), 0.5 * step, step)
+            self.liquid_tstar = self.liquid_tstar + step
+            prev_step = step
         for phase in self.phases:
             phase.points = phase_points.get(phase.name, [])
         return data
+
+    def linear_tstar(self, x) -> np.ndarray:
+        """The x-weighted component melting point (K) at fractions ``x`` of ``components[1]``."""
+        x = np.asarray(x, dtype=float)
+        t_a, t_b = (float(self.component_data[c].t_fusion) for c in self.components)
+        return (1 - x) * t_a + x * t_b
+
+    def liquid_tstar_error(self, liq: np.ndarray) -> float:
+        """Largest |G_lin(T_liq; T*) - G(T_liq)| (J/mol) of the liquid over the interior rows.
+
+        The largest of ``liquid_tstar_row_errors``.
+
+        Args:
+            liq: liquidus temperature (K) of each interior grid row; NaN where there is none.
+
+        Returns:
+            float: the largest difference; 0 when no row counts.
+        """
+        return float(self.liquid_tstar_row_errors(liq).max())
+
+    def liquid_tstar_row_errors(self, liq: np.ndarray) -> np.ndarray:
+        """|G_lin(T_liq; T*) - G(T_liq)| (J/mol) of the liquid on each interior row.
+
+        ``G_lin`` takes H and S at ``liquid_tstar``, ``G`` at ``liq``. Rows outside the
+        digitized liquidus's composition span, and rows where either temperature is not finite,
+        report 0.
+
+        Args:
+            liq: liquidus temperature (K) of each interior grid row; NaN where there is none.
+
+        Returns:
+            np.ndarray: one difference per interior grid row.
+        """
+        grid = _x_vals[1:-1]
+        t_star = np.asarray(self.liquid_tstar, dtype=float)
+        liq = np.asarray(liq, dtype=float)
+        errors = np.zeros(len(grid))
+        ok = np.isfinite(liq) & np.isfinite(t_star)
+        dig = np.asarray(self.digitized_liq or [], dtype=float).reshape(-1, 2)
+        if len(dig):
+            ok &= (grid >= dig[:, 0].min()) & (grid <= dig[:, 0].max())
+        if not ok.any():
+            return errors
+        xs, ts, tl = grid[ok], t_star[ok], liq[ok]
+        params = self.xs_mix.values
+        h_fn, s_fn = self.eqs["h_liq_lambdified"], self.eqs["s_liq_lambdified"]
+        shape = xs.shape
+        g_lin = np.broadcast_to(np.asarray(h_fn(xs, ts, *params), float), shape) - tl * (
+            np.broadcast_to(np.asarray(s_fn(xs, ts, *params), float), shape)
+        )
+        g_ex = np.broadcast_to(np.asarray(h_fn(xs, tl, *params), float), shape) - tl * (
+            np.broadcast_to(np.asarray(s_fn(xs, tl, *params), float), shape)
+        )
+        errors[ok] = np.abs(g_lin - g_ex)
+        return errors
+
+    def liquidus_shift_estimate(
+        self, data: dict, liq: np.ndarray, errors: np.ndarray, min_error: float = 1e-3
+    ) -> np.ndarray:
+        """Estimated liquidus shift (K) of each interior row when it is re-linearized at ``liq``.
+
+        A row's ``errors`` entry over the entropy step between the row and the hull chord it
+        leaves at its liquidus. The chord joins the lower-hull vertices either side of the row
+        just below ``liq``, from ``data``'s H and S.
+
+        Args:
+            data: the HSX data the hull giving ``liq`` was built from (``to_hsx``).
+            liq: liquidus temperature (K) of each interior grid row; NaN where there is none.
+            errors: ``liquid_tstar_row_errors(liq)``.
+            min_error: rows whose error is at most this (J/mol) report 0.
+
+        Returns:
+            np.ndarray: one shift per interior grid row.
+        """
+        shifts = np.zeros(len(errors))
+        xs = np.asarray(data["X"], dtype=float)
+        hs = np.asarray(data["H"], dtype=float)
+        ss = np.asarray(data["S"], dtype=float)
+        for i in np.flatnonzero((errors > min_error) & np.isfinite(liq)):
+            row = i + 1
+            gs = hs - (liq[i] - 0.01) * ss
+            others = np.arange(len(xs)) != row
+            left = np.flatnonzero(others & (xs <= xs[row]))
+            right = np.flatnonzero(others & (xs >= xs[row]))
+            if not len(left) or not len(right):
+                continue
+            span = xs[right][None, :] - xs[left][:, None]
+            frac = np.divide(
+                xs[row] - xs[left][:, None], span, out=np.zeros(span.shape), where=span > 0
+            )
+            chord = gs[left][:, None] + frac * (gs[right][None, :] - gs[left][:, None])
+            a, b = np.unravel_index(np.argmin(chord), chord.shape)
+            s_chord = (1 - frac[a, b]) * ss[left[a]] + frac[a, b] * ss[right[b]]
+            shifts[i] = errors[i] / max(abs(ss[row] - s_chord), 1e-6)
+        return shifts
 
     def _hsx_phase_names(self) -> list[str]:
         """Phase names entering the hull; SS names drop when ``ss_in_hull`` is off."""
@@ -1658,7 +1876,8 @@ class BinaryLiquid:
         """
         last_coords = None
         for coords in self.phases[-1].points:
-            if last_coords and coords[0] - last_coords[0] > tol:
+            # the slack absorbs float error in grid differences; without it one missing row fails
+            if last_coords and coords[0] - last_coords[0] > tol + 1e-9:
                 return False
             last_coords = coords
         return True
@@ -1827,7 +2046,7 @@ class BinaryLiquid:
         A vertex whose objective is infinite ranks worst; infinite vertices of the INITIAL
         simplex are first moved onto the feasible side of the constraint that rejected them.
         Convergence is ``max|x - centroid| < tol`` over the simplex, the centroid taken over
-        every vertex but the worst.
+        every vertex but the worst; at ``max_iter`` iterations the best vertex is returned.
 
         Args:
             max_iter (int): Maximum number of iterations. Default is 64.
@@ -1891,7 +2110,7 @@ class BinaryLiquid:
             ibest, isecond, iworst = int(order[0]), int(order[-2]), int(order[-1])
             centroid = np.mean(x0[order[:-1]], axis=0)
 
-            if np.max(np.abs(x0 - centroid)) < tol:
+            if np.max(np.abs(x0 - centroid)) < tol or i == max_iter - 1:
                 f_val = self.f(x0[ibest, :], **kwargs)
                 window = self.calculate_deviation_metrics(**kwargs)
                 kwargs["unsupported_range_mode"] = "score"

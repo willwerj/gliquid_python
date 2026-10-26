@@ -177,7 +177,7 @@ def _ternary_imputed_entry_staleness(tli, entry_dict: dict) -> str | None:
     ):
         return "no ternary provenance recorded"
     recorded, current = provenance.get("liquid") or {}, tli.imputation_params()
-    for key in ("param_format", "interp_scheme", "solid_solutions"):
+    for key in ("param_format", "interp_scheme", "solid_solutions", "liquid_gibbs"):
         if recorded.get(key) != current[key]:
             return f"{key} {recorded.get(key)!r} != {current[key]!r}"
     for key in ("tau", "delta"):

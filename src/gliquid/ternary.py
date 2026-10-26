@@ -30,7 +30,7 @@ import gliquid.plotting.ternary_surface as ternary_surface
 import gliquid.solution as solution
 from gliquid.binary import BinaryLiquid, hull_phase_fields
 from gliquid.hsx import HSX, lower_convex_hull
-from gliquid.liquidus_sheets import LiquidusSheets
+from gliquid.liquidus_sheets import LiquidusSheets, TstarField
 from gliquid.phase import (
     EV_ATOM_TO_J_MOL,
     UNARY,
@@ -40,7 +40,14 @@ from gliquid.phase import (
 )
 from gliquid.plotting.binary_tx import _plot_tx_inputs, add_corner_note, plot_tx
 from gliquid.plotting.style import build_phase_color_map, mape_color
-from gliquid.solution import DEFAULT_TAU, RKPolyExp, SolutionModel, t_sym
+from gliquid.solution import (
+    DEFAULT_TAU,
+    DEFAULT_TERNARY_TSTAR_MAX_HULLS,
+    DEFAULT_TSTAR_TOL,
+    RKPolyExp,
+    SolutionModel,
+    t_sym,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +243,8 @@ class TernaryLiquidInterpolation:
         "surface_df",
         "tern_mp_df",
         "proc_df",
+        "liquid_tstar",
+        "_liquid_tx",
         "df_Tgroups",
         "equil_df_list",
         "T_grid",
@@ -517,17 +526,33 @@ class TernaryLiquidInterpolation:
         )
         return self._liquid_model_cache
 
-    def _tm_mean(self) -> float:
-        """Mean component melting point (K): the temperature liquid H and S are taken at."""
+    def linear_tstar(self, x0, x1) -> np.ndarray:
+        """The x-weighted component melting point (K) at independent fractions ``x0``, ``x1`` of
+        ``components[1]`` and ``components[2]``: the liquid's first linearization temperature,
+        which on each edge equals its binary's."""
         if not hasattr(self, "ref_data"):
             self.init_ref_data()
-        return np.mean(self.ref_data["T"])
+        tm = np.asarray(self.ref_data["T"], dtype=float)
+        x0, x1 = np.asarray(x0, dtype=float), np.asarray(x1, dtype=float)
+        return (1 - x0 - x1) * tm[0] + x0 * tm[1] + x1 * tm[2]
+
+    def liquid_tstar_field(self) -> TstarField:
+        """T*(x) over all compositions: ``linear_tstar``, brought to ``liquid_tstar`` at the
+        liquid nodes once :meth:`process_data` has re-linearized them."""
+        if not hasattr(self, "ref_data"):
+            self.init_ref_data()
+        nodes = getattr(self, "liquid_tstar", None)
+        if nodes is None:
+            return TstarField(self.ref_data["T"])
+        return TstarField(
+            self.ref_data["T"], nodes[["x0", "x1"]].to_numpy(float), nodes["tstar"].to_numpy(float)
+        )
 
     def liquid_gibbs(self, x, temp: float):
-        """Liquid Gibbs energy (J/mol-atom) at ``x``, in the frame the ternary hull uses.
+        """Liquid Gibbs energy (J/mol-atom) at ``x`` and ``temp``, H and S taken at ``temp``.
 
-        H and S are evaluated at the mean component melting point, as in ``hsx_df``, and
-        ``G = H - temp * S``.
+        On the processed hull a liquid node's H and S are taken at its own liquidus
+        (``liquid_tstar``), where this is the Gibbs energy it carries.
 
         Args:
             x: independent fractions of ``components[1:]`` -- one ``(2,)`` point or ``(m, 2)``
@@ -539,7 +564,7 @@ class TernaryLiquidInterpolation:
         """
         points = np.atleast_2d(np.asarray(x, dtype=float))
         with np.errstate(divide="ignore", invalid="ignore"):
-            h, s = self.liquid_model().h_s_grid((points[:, 0], points[:, 1]), self._tm_mean())
+            h, s = self.liquid_model().h_s_grid((points[:, 0], points[:, 1]), float(temp))
         g = np.asarray(h, dtype=float) - float(temp) * np.asarray(s, dtype=float)
         return float(g[0]) if np.ndim(x) == 1 else g
 
@@ -549,7 +574,9 @@ class TernaryLiquidInterpolation:
         Returns:
             dict: ``param_format``, ``tau``, ``interp_scheme``, ``delta``, ``solid_solutions``,
             ``edges`` (each edge's parameters keyed by its alphabetical pair, odd orders
-            oriented to that pair) and ``triplet`` (the 'A-B-C' parameters, or ``None``).
+            oriented to that pair), ``triplet`` (the 'A-B-C' parameters, or ``None``) and
+            ``liquid_gibbs`` (``'exact'`` when an edge model is nonlinear in T, so that
+            ``liquid_gibbs`` takes H and S at the temperature asked for, else ``None``).
         """
         edges = {}
         for key, rk in self.xs_mix.items():
@@ -568,18 +595,21 @@ class TernaryLiquidInterpolation:
             "solid_solutions": bool(self.solid_solutions),
             "edges": dict(sorted(edges.items())),
             "triplet": None if triplet is None else [float(v) for v in triplet.values],
+            "liquid_gibbs": None
+            if all(rk.is_linear_in_t() for key, rk in self.xs_mix.items() if key.count("-") == 1)
+            else "exact",
         }
 
     def interpolate_liquid_surface(self):
-        # interpolate the ternary system using the binary-edge mixing models
+        """Fill ``hsx_df`` with the liquid's H and S on the composition grid, each node's taken
+        at ``linear_tstar``."""
         x_B, x_C = self.comp_grid["B"], self.comp_grid["C"]
 
         self._liquid_model_cache = None
         model = self.liquid_model()
 
-        tm_mean = self._tm_mean()  # mean melting point - used for t-dependent H and S forms
         with np.errstate(divide="ignore", invalid="ignore"):
-            h_vals_mesh, s_vals_mesh = model.h_s_grid((x_B, x_C), tm_mean)
+            h_vals_mesh, s_vals_mesh = model.h_s_grid((x_B, x_C), self.linear_tstar(x_B, x_C))
 
         # Replace inf and nan values with finite values if needed
         H = np.where(np.isfinite(h_vals_mesh), h_vals_mesh, 0).flatten()
@@ -1135,6 +1165,7 @@ class TernaryLiquidInterpolation:
 
         self.proc_df = self.proc_df.rename(columns={"Phase Name": "Phase"})
         self.proc_df["Colors"] = self.proc_df["Phase"].map(self.color_map)
+        self._relinearize_liquid()
 
         # One temperature window in three forms: T_grid (rungs, kelvin), temp_range (its ends) and
         # conds (its ends in Celsius). gtx screens the ceiling against the liquidus; hsx starts from
@@ -1152,6 +1183,65 @@ class TernaryLiquidInterpolation:
                 self.proc_df["G"] = self.proc_df["H"] - T * self.proc_df["S"]
                 self.df_Tgroups[T] = self.proc_df[["x0", "x1", "G", "Phase", "Colors"]].copy()
 
+    def _liquid_hull_tx(self) -> pd.DataFrame:
+        """The facets of one HSX hull over ``proc_df``: ``compute_tx``'s frame, ``t`` in K."""
+        table = self.proc_df[["x0", "x1", "S", "H", "Phase"]]
+        hsx_obj = HSX({"data": table, "phases": self.phase_names, "comps": self.components}, [0, 0])
+        return hsx_obj.compute_tx()[0]
+
+    def _relinearize_liquid(self) -> None:
+        """Re-linearize ``proc_df``'s liquid rows at their own liquidus, as
+        ``BinaryLiquid.update_phase_points`` does for a binary.
+
+        The rows enter at ``linear_tstar``. Each HSX hull over ``proc_df`` gives every liquid node
+        its liquidus, the lowest facet temperature it is a liquid vertex of; the rows are then
+        re-evaluated at it, the step halved where it grew since the last hull, until the largest
+        |G_lin(T_liq; T*) - G(T_liq)| over the nodes is at most ``DEFAULT_TSTAR_TOL`` or
+        ``DEFAULT_TERNARY_TSTAR_MAX_HULLS`` hulls are built. Sets ``liquid_tstar`` (``x0``,
+        ``x1``, ``tstar`` per liquid row); the last hull is kept for ``_process_data_hsx``.
+        """
+        rows = np.flatnonzero((self.proc_df["Phase"] == "L").to_numpy())
+        x0 = self.proc_df["x0"].to_numpy(float)[rows]
+        x1 = self.proc_df["x1"].to_numpy(float)[rows]
+        keys = list(zip(x0.round(self.HULL_COMP_DECIMALS), x1.round(self.HULL_COMP_DECIMALS)))
+        h_col, s_col = self.proc_df.columns.get_loc("H"), self.proc_df.columns.get_loc("S")
+        model = self.liquid_model()
+        tstar = self.linear_tstar(x0, x1)
+        prev_step = None
+        for k in range(DEFAULT_TERNARY_TSTAR_MAX_HULLS):
+            df_tx = self._liquid_hull_tx()
+            if k + 1 == DEFAULT_TERNARY_TSTAR_MAX_HULLS:
+                break
+            liq_df = df_tx[df_tx["label"] == "L"]
+            lowest = liq_df.groupby(
+                [
+                    liq_df["x0"].round(self.HULL_COMP_DECIMALS),
+                    liq_df["x1"].round(self.HULL_COMP_DECIMALS),
+                ]
+            )["t"].min()
+            lookup = dict(zip(lowest.index, lowest.to_numpy(float)))
+            liq = np.array([lookup.get(key, np.nan) for key in keys])
+            ok = np.isfinite(liq)
+            if not ok.any():
+                break
+            with np.errstate(divide="ignore", invalid="ignore"):
+                h_lin, s_lin = model.h_s_grid((x0[ok], x1[ok]), tstar[ok])
+                h_ex, s_ex = model.h_s_grid((x0[ok], x1[ok]), liq[ok])
+            error = np.abs((h_lin - liq[ok] * s_lin) - (h_ex - liq[ok] * s_ex))
+            if np.nanmax(error, initial=0.0) <= DEFAULT_TSTAR_TOL:
+                break
+            step = np.where(ok, liq - tstar, 0.0)
+            if prev_step is not None:
+                step = np.where(np.abs(step) > np.abs(prev_step), 0.5 * step, step)
+            tstar = tstar + step
+            prev_step = step
+            with np.errstate(divide="ignore", invalid="ignore"):
+                h, s = model.h_s_grid((x0, x1), tstar)
+            self.proc_df.iloc[rows, h_col] = np.where(np.isfinite(h), h, 0)
+            self.proc_df.iloc[rows, s_col] = np.where(np.isfinite(s), s, 0)
+        self.liquid_tstar = pd.DataFrame({"x0": x0, "x1": x1, "tstar": tstar})
+        self._liquid_tx = df_tx
+
     def _process_data_hsx(self):
         """One (x0, x1, S, H) lower hull with analytic facet temperatures (hull_mode='hsx').
 
@@ -1164,12 +1254,9 @@ class TernaryLiquidInterpolation:
         temperatures, so on this path the window is final here rather than in ``_init_sys``.
         """
         start_time = time.time()
-        table = self.proc_df[["x0", "x1", "S", "H", "Phase"]]
-        hsx_obj = HSX(
-            {"data": table, "phases": self.phase_names, "comps": self.components},
-            conds=list(self.conds),
-        )
-        df_tx = hsx_obj.compute_tx()[0]
+        df_tx = self.__dict__.pop("_liquid_tx", None)
+        if df_tx is None:
+            df_tx = self._liquid_hull_tx()
 
         temp_df = df_tx.rename(columns={"t": "T", "label": "Phase"})
         temp_df["Colors"] = temp_df["Phase"].map(self.color_map)  # keep this system's palette

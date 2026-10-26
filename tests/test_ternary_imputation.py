@@ -551,6 +551,26 @@ class TestStaleness:
         reordered = ti.with_component_order(["Si", "Mg", "Al"])
         assert imp_lifecycle.imputed_entry_staleness(reordered, record.entry_dict) is None
 
+    @pytest.mark.parametrize("param_format, stale", [("comb-exp", True), ("linear", False)])
+    def test_an_entry_without_the_liquid_linearization_record(
+        self, no_persist, param_format, stale
+    ):
+        ti = TernaryLiquidInterpolation(
+            list(COMPONENTS),
+            delta=DELTA,
+            xs_mix=MIXING,
+            param_format=param_format,
+            order="given",
+            hull_mode="hsx",
+            T_incr=T_INCR,
+        )
+        record = ti.impute_phase(TARGET, 1200.0, name="TX", apply=False)
+        assert imp_lifecycle.imputed_entry_staleness(ti, record.entry_dict) is None
+        unrecorded = json.loads(json.dumps(record.entry_dict))
+        del unrecorded["data"][imp_core.PROVENANCE_KEY]["liquid"]["liquid_gibbs"]
+        reason = imp_lifecycle.imputed_entry_staleness(ti, unrecorded)
+        assert (reason is not None and "liquid_gibbs" in reason) is stale
+
 
 # -- Plotting --
 

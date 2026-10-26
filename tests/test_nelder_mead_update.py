@@ -63,7 +63,7 @@ def _tabulated(values, fallback=_bowl):
 
 
 def _run(stub, simplex, max_iter, tol=1e-9):
-    """Drive the update to ``max_iter`` iterations, returning None where it does not converge."""
+    """Drive the update for ``max_iter - 1`` iterations; the last returns the best vertex."""
     try:
         return BinaryLiquid.nelder_mead(stub, max_iter=max_iter, tol=tol, initial_guesses=simplex)
     except RuntimeError as exc:
@@ -78,8 +78,8 @@ class TestReflection:
         accepted reflection neither expands nor contracts."""
         simplex = [[1.0, 0.0], [0.0, 2.0], [2.5, 2.0]]
         stub = _SimplexStub(_bowl)
-        _run(stub, simplex, max_iter=1)
-        assert len(stub.tried) == 4
+        _run(stub, simplex, max_iter=2)
+        assert len(stub.tried) == 5  # the last re-evaluates the best vertex
         reflected, f_reflected = stub.tried[3]
         assert reflected == pytest.approx((-1.5, 0.0))
         # strictly between the best vertex and the second-worst, which is what admits it
@@ -88,8 +88,8 @@ class TestReflection:
     def test_a_reflection_better_than_the_best_expands(self):
         simplex = [[1.0, 0.0], [0.0, 2.0], [2.5, 2.0]]
         stub = _SimplexStub(_tabulated({(-1.5, 0.0): 0.5}))
-        _run(stub, simplex, max_iter=1)
-        assert len(stub.tried) == 5
+        _run(stub, simplex, max_iter=2)
+        assert len(stub.tried) == 6
         expanded, _ = stub.tried[4]
         assert expanded == pytest.approx((-3.5, -1.0))
 
@@ -110,11 +110,21 @@ class TestShrink:
                 }
             )
         )
-        _run(stub, simplex, max_iter=1)
-        assert len(stub.tried) == 7
-        moved = [point for point, _ in stub.tried[5:]]
+        _run(stub, simplex, max_iter=2)
+        assert len(stub.tried) == 8
+        moved = [point for point, _ in stub.tried[5:7]]
         assert moved[0] == pytest.approx((1.0, 0.0))
         assert moved[1] == pytest.approx((0.0, 1.0))
+
+
+class TestIterationLimit:
+    def test_the_limit_returns_the_best_vertex(self):
+        simplex = [[1.0, 0.0], [0.0, 2.0], [2.5, 2.0]]
+        stub = _SimplexStub(_bowl)
+        f_final, metrics, path = _run(stub, simplex, max_iter=3)
+        assert f_final == min(value for _, value in stub.tried[:-1])
+        assert stub.tried[-1][1] == f_final
+        assert metrics["mae"] == 1.0 and path.shape[2] == 3
 
 
 class TestConstraintWall:
@@ -212,8 +222,12 @@ class TestInitialSimplexAnchor:
 
 
 class TestOffsetVertexValue:
-    def test_a_non_zero_value_is_scaled(self):
-        assert _offset_vertex_value(-4.0, 10.0, 1.0) == pytest.approx(-3.2)
+    def test_a_large_value_is_scaled(self):
+        assert _offset_vertex_value(-400.0, 10.0, 1.0) == pytest.approx(-320.0)
+
+    def test_a_small_value_moves_the_spread_toward_zero(self):
+        assert _offset_vertex_value(-4.0, 10.0, 1.0) == pytest.approx(6.0)
+        assert _offset_vertex_value(4.0, 10.0, -1.0) == pytest.approx(-6.0)
 
     def test_a_zero_value_takes_the_spread_in_the_anchor_sign(self):
         assert _offset_vertex_value(0.0, 10.0, -5.0) == pytest.approx(-10.0)

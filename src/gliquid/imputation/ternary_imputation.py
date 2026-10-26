@@ -183,6 +183,19 @@ def _ternary_provenance(tli, record, liquid_fractions, margin_j, base) -> dict:
     }
 
 
+def _liquid_at(tli, table, temp: float):
+    """A copy of ``table`` whose liquid rows carry the liquid's H and S at ``temp`` (K)."""
+    out = table.copy()
+    liquid = (out["Phase Name"] == LIQUID_PHASE).to_numpy()
+    with np.errstate(divide="ignore", invalid="ignore"):
+        h, s = tli.liquid_model().h_s_grid(
+            (out["x0"].to_numpy(float)[liquid], out["x1"].to_numpy(float)[liquid]), float(temp)
+        )
+    out.loc[liquid, "H"] = np.where(np.isfinite(h), h, 0)
+    out.loc[liquid, "S"] = np.where(np.isfinite(s), s, 0)
+    return out
+
+
 def _invert_ternary_phase_energy(
     tli, record, table, liquid_fractions, margin_j, dx
 ) -> float | None:
@@ -199,7 +212,11 @@ def _invert_ternary_phase_energy(
         )
     x_query = np.round(independent_coords(record.fractions, components), tli.HULL_COMP_DECIMALS)
     env = envelope_energy(
-        table, x_query, record.temperature_k, comp_cols=["x0", "x1"], exclude=[record.name]
+        _liquid_at(tli, table, record.temperature_k),
+        x_query,
+        record.temperature_k,
+        comp_cols=["x0", "x1"],
+        exclude=[record.name],
     )
     record.decomposition = tuple(
         (p, float(w)) for p, w in zip(env.phases, env.weights) if w > 1e-12
