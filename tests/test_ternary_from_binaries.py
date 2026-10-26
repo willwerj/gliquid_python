@@ -118,6 +118,38 @@ class TestFromBinaries:
         )
 
 
+COMB_EXP_SETS = {
+    ("Hf", "Ti"): [-30000.0, -8.0, 6000.0, 0.0],
+    ("Hf", "Zr"): [5000.0, -3.0, -2500.0, 0.0],
+    ("Ti", "Zr"): [-12000.0, 4.0, -1500.0, 0.0],
+}
+
+
+@pytest.mark.parametrize("temp", [500.0, 2500.0])
+def test_comb_exp_edges_reproduce_their_binary_b_pass_liquid(dummy_ch, temp):
+    """On each edge the ternary liquid at ``linear_tstar`` (the B pass) equals the liquid its binary
+    puts in a B-pass hull (``to_hsx`` rows), up to the reference frame (an affine function of
+    composition)."""
+    binaries = [
+        _bl(p, dummy_ch, param_format="comb-exp", params=COMB_EXP_SETS[p]) for p in COMB_EXP_SETS
+    ]
+    tli = TernaryLiquidInterpolation.from_binaries(binaries)
+    col = {c: i for i, c in enumerate(tli.components)}
+    x = np.linspace(0.05, 0.95, 19)
+    for bl in binaries:
+        a, b = bl.components
+        rows = bl.to_hsx(x_vals=np.concatenate([[0.0], x, [1.0]]))
+        h = np.asarray(rows["H"][1 : len(x) + 1])
+        s = np.asarray(rows["S"][1 : len(x) + 1])
+        fracs = np.zeros((len(x), 3))
+        fracs[:, col[a]], fracs[:, col[b]] = 1 - x, x
+        y = (fracs[:, 1], fracs[:, 2])
+        h_t, s_t = tli.liquid_model().h_s_grid(y, tli.linear_tstar(*y))
+        diff = (h_t - temp * s_t) - (h - temp * s)
+        residual = diff - np.polyval(np.polyfit(x, diff, 1), x)
+        assert np.max(np.abs(residual)) < 1e-6, bl.sys_name
+
+
 def _swapped(params):
     """Odd RK orders negate under a component-order swap of the 4-vector layout."""
     return [params[0], params[1], -params[2], -params[3]]

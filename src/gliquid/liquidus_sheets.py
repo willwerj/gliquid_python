@@ -1,8 +1,8 @@
 """Per-phase liquidus temperatures of a ternary liquid, from its tangent planes.
 
-Every phase's Gibbs energy is ``G = H - T*S`` with ``H`` and ``S`` fixed; the liquid's are taken at
-the mean component melting point, as on the ternary hull. A solid point at composition ``c``
-touches the plane tangent to the liquid at ``x`` at
+Every phase's Gibbs energy is ``G = H - T*S`` with ``H`` and ``S`` fixed; the liquid's are its model's
+H and S at the composition's linearization temperature ``T*(x)`` (:class:`TstarField`), as on the
+ternary hull. A solid point at composition ``c`` touches the plane tangent to the liquid at ``x`` at
 
     T = dH / dS,
     dH = H_c - [H_L(x) + grad H_L(x) . (c - x)],
@@ -25,6 +25,7 @@ Where the binodal is hotter than every solid's sheet, ``x`` lies in the two-liqu
 from __future__ import annotations
 
 import numpy as np
+from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 from scipy.spatial import cKDTree
 
 from gliquid.solution import R
@@ -63,6 +64,58 @@ _FIT = np.linalg.pinv(
 )
 
 
+class TstarField:
+    """The liquid's linearization temperature T*(x) over ternary compositions.
+
+    T*(x) is the x-weighted melting point ``tm . (1 - x0 - x1, x0, x1)``, plus a correction
+    interpolated linearly between ``nodes`` (nearest node outside them) that brings it to
+    ``values`` there. The composition gradient of T* is taken as that of the x-weighted melting
+    point everywhere.
+
+    Args:
+        tm: (3,) component melting points, K.
+        nodes: (n, 2) independent fractions where T* is known; ``None`` for the x-weighted
+            melting point alone.
+        values: (n,) T* at ``nodes``, K.
+    """
+
+    def __init__(self, tm, nodes=None, values=None):
+        self.tm = np.asarray(tm, dtype=float)
+        self.gradient = self.tm[1:] - self.tm[0]
+        self._linear_fill = None
+        if nodes is not None:
+            nodes = np.asarray(nodes, dtype=float).reshape(-1, 2)
+            correction = np.asarray(values, dtype=float) - self._linear(nodes)
+            self._linear_fill = LinearNDInterpolator(nodes, correction)
+            self._nearest_fill = NearestNDInterpolator(nodes, correction)
+
+    def _linear(self, y) -> np.ndarray:
+        return self.tm[0] + y @ self.gradient
+
+    def __call__(self, y) -> np.ndarray:
+        """(k,) T*, K, at the independent fractions ``y`` (k, 2)."""
+        y = np.asarray(y, dtype=float).reshape(-1, 2)
+        if self._linear_fill is None:
+            return self._linear(y)
+        correction = self._linear_fill(y)
+        missing = ~np.isfinite(correction)
+        if missing.any():
+            correction[missing] = self._nearest_fill(y[missing])
+        return self._linear(y) + correction
+
+    def h_s_gradients(self, liquid_model, y) -> tuple[np.ndarray, ...]:
+        """``liquid_model``'s nonideal H and S at ``(y, T*(y))``, with their composition gradients
+        along T*: ``(h, s, dh, ds)`` as :meth:`~gliquid.solution.SolutionModel.nonideal_h_s_gradients`
+        returns them."""
+        y = np.asarray(y, dtype=float).reshape(-1, 2)
+        t = self(y)
+        h, s, dh, ds = liquid_model.nonideal_h_s_gradients((y[:, 0], y[:, 1]), t)
+        dh_dt, ds_dt = liquid_model.nonideal_h_s_temperature_derivatives((y[:, 0], y[:, 1]), t)
+        dh = dh + dh_dt[None, :] * self.gradient[:, None]
+        ds = ds + ds_dt[None, :] * self.gradient[:, None]
+        return h, s, dh, ds
+
+
 def _inside(points) -> np.ndarray:
     """Which of ``points`` (..., 2) lie in the composition triangle."""
     return (points >= 0).all(axis=-1) & (points.sum(axis=-1) <= 1)
@@ -92,7 +145,7 @@ class Binodal:
 
     Args:
         liquid_model: the liquid :class:`~gliquid.solution.SolutionModel` (3 components).
-        temp: temperature (K) the liquid's H and S are taken at.
+        tstar: the :class:`TstarField` the liquid's H and S are taken at.
         nodes: (n, 2) independent fractions of the liquid grid.
         spacing: the grid step, mole fraction.
 
@@ -101,9 +154,9 @@ class Binodal:
             liquids coexist above it.
     """
 
-    def __init__(self, liquid_model, temp, nodes, spacing):
+    def __init__(self, liquid_model, tstar, nodes, spacing):
         self.liquid_model = liquid_model
-        self.temp = float(temp)
+        self.tstar = tstar
         self.nodes = np.asarray(nodes, dtype=float).reshape(-1, 2)
         self.spacing = float(spacing)
         self._node_h, self._node_s = self._h_s(self.nodes)
@@ -117,7 +170,7 @@ class Binodal:
 
     def _h_s(self, y):
         """The liquid's H and total S at ``y`` (k, 2)."""
-        h, s, _, _ = self.liquid_model.nonideal_h_s_gradients((y[:, 0], y[:, 1]), self.temp)
+        h, s, _, _ = self.tstar.h_s_gradients(self.liquid_model, y)
         full = np.clip(np.column_stack([1 - y.sum(axis=1), y]), 0.0, None)
         logs = np.log(np.where(full > 0, full, 1.0))
         return h, s - R * (full * logs).sum(axis=1)
@@ -125,7 +178,7 @@ class Binodal:
     def _tangent(self, x) -> dict:
         """The planes tangent to the liquid at ``x`` (k, 2): H plane ``a + d . y``, S plane
         ``b + e . y - R sum_i y_i ln x_i``."""
-        h, s, dh, ds = self.liquid_model.nonideal_h_s_gradients((x[:, 0], x[:, 1]), self.temp)
+        h, s, dh, ds = self.tstar.h_s_gradients(self.liquid_model, x)
         dh, ds = np.column_stack(dh), np.column_stack(ds)
         full = np.clip(np.column_stack([1 - x.sum(axis=1), x]), 0.0, None)
         absent = full <= 0
@@ -172,12 +225,8 @@ class Binodal:
             shift = np.zeros(2)
             shift[k] = step
             upper, lower = comp + shift, comp - shift
-            _, _, dh_up, ds_up = self.liquid_model.nonideal_h_s_gradients(
-                (upper[:, 0], upper[:, 1]), self.temp
-            )
-            _, _, dh_lo, ds_lo = self.liquid_model.nonideal_h_s_gradients(
-                (lower[:, 0], lower[:, 1]), self.temp
-            )
+            _, _, dh_up, ds_up = self.tstar.h_s_gradients(self.liquid_model, upper)
+            _, _, dh_lo, ds_lo = self.tstar.h_s_gradients(self.liquid_model, lower)
             hess_h[:, :, k] = ((dh_up - dh_lo) / (2 * step)).T
             hess_s[:, :, k] = ((ds_up - ds_lo) / (2 * step)).T
         hess_h = (hess_h + hess_h.transpose(0, 2, 1)) / 2
@@ -365,7 +414,7 @@ class LiquidusSheets:
 
     Args:
         liquid_model: the liquid :class:`~gliquid.solution.SolutionModel` (3 components).
-        temp: temperature (K) the liquid's H and S are taken at.
+        tstar: the :class:`TstarField` the liquid's H and S are taken at.
         names: (r,) phase name of each solid point.
         comp: (r, 2) independent fractions of each solid point.
         H: (r,) enthalpy of each solid point, J/mol-atom.
@@ -378,10 +427,10 @@ class LiquidusSheets:
             when there is a binodal; the columns of a call.
     """
 
-    def __init__(self, liquid_model, temp, names, comp, H, S, binodal=None):
+    def __init__(self, liquid_model, tstar, names, comp, H, S, binodal=None):
         names = [str(name) for name in names]
         self.liquid_model = liquid_model
-        self.temp = float(temp)
+        self.tstar = tstar
         self.binodal = binodal
         self._solid_phases = tuple(dict.fromkeys(names))
         self.phases = self._solid_phases + ((TWO_LIQUIDS,) if binodal is not None else ())
@@ -399,10 +448,10 @@ class LiquidusSheets:
         comes within :data:`BINODAL_REACH` of the solids' liquidus at some hull node."""
         table = ti.hull_table()
         solids = table[table["Phase Name"] != "L"]
-        model, temp = ti.liquid_model(), ti._tm_mean()
+        model, tstar = ti.liquid_model(), ti.liquid_tstar_field()
         args = (
             model,
-            temp,
+            tstar,
             solids["Phase Name"].to_numpy(),
             solids[["x0", "x1"]].to_numpy(dtype=float),
             solids["H"].to_numpy(dtype=float),
@@ -410,7 +459,7 @@ class LiquidusSheets:
         )
         sheets = cls(*args)
         nodes = table.loc[table["Phase Name"] == "L", ["x0", "x1"]].to_numpy(dtype=float)
-        binodal = Binodal(model, temp, nodes, ti.delta)
+        binodal = Binodal(model, tstar, nodes, ti.delta)
         solid_liquidus = sheets.liquidus(nodes)
         if (binodal(nodes, floor=solid_liquidus) - solid_liquidus).max() > -BINODAL_REACH:
             return cls(*args, binodal=binodal)
@@ -423,7 +472,7 @@ class LiquidusSheets:
         temperature.
         """
         comp = np.atleast_2d(np.asarray(comp, dtype=float))
-        h, s, dh, ds = self.liquid_model.nonideal_h_s_gradients((comp[:, 0], comp[:, 1]), self.temp)
+        h, s, dh, ds = self.tstar.h_s_gradients(self.liquid_model, comp)
         step = self._row_comp[None, :, :] - comp[:, None, :]
         h_tangent = h[:, None] + dh[0][:, None] * step[..., 0] + dh[1][:, None] * step[..., 1]
         s_tangent = s[:, None] + ds[0][:, None] * step[..., 0] + ds[1][:, None] * step[..., 1]
