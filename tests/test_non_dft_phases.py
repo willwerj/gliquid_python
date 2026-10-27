@@ -505,7 +505,8 @@ class TestOmegasHcpStaysOutOfThePhaseList:
     the solid-solution models and never enter ``bl.phases``."""
 
     def test_the_element_carries_one(self):
-        assert any(p.imputed for p in UNARY["Zr"].lattice_stabilities)
+        assert any(p.imputed for p in UNARY["Ga"].lattice_stabilities)
+        assert not any(p.imputed for p in UNARY["Ga"].polymorphs)
 
     def test_no_phase_is_imputed_and_drop_changes_nothing(self):
         bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0, solid_solutions=True)

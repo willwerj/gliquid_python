@@ -91,6 +91,48 @@ def test_binary_cache_mode_matches_dev_pins():
     pu.assert_deep_approx(pin["reconciled"], reconciled, path="binary-cache.reconciled")
 
 
+def test_dft_entries_mode_takes_ladder_step_for_blacklisted_phase():
+    # Tier A keeps every Hf/Zr bcc entry off hulls; from_dft_entries takes the ladder step,
+    # so its bcc refs and reconciled liquid match from_unary_db's.
+    entries = api.get_dft_structure_entries("Hf-Zr")
+    assert not any(
+        sd._safe_spacegroup(e.structure)[0] == 229 for e in entries
+    )  # precondition: no bcc entry survives the blacklist
+    by_mode = {}
+    for mode in ("from_dft_entries", "from_unary_db"):
+        component_data = UNARY.component_data(["Hf", "Zr"])
+        models = sd.load_solid_solution_models(
+            ["Hf", "Zr"], component_data, entries=entries, ref_mode=mode
+        )
+        by_mode[mode] = (models["BCC"]["refs"], component_data)
+    (dft_refs, dft_cd), (db_refs, db_cd) = by_mode["from_dft_entries"], by_mode["from_unary_db"]
+    for el in ("Hf", "Zr"):
+        assert dft_refs[el]["source"] == "from_dft_entries+unary_db"
+        assert dft_refs[el]["material_id"] == db_refs[el]["material_id"]
+        assert dft_refs[el]["delta_h_jmol"] == pytest.approx(db_refs[el]["delta_h_jmol"])
+        # The ladder stores entropies to 4 decimals.
+        assert dft_refs[el]["delta_s_jmol_k"] == pytest.approx(
+            db_refs[el]["delta_s_jmol_k"], abs=1e-4
+        )
+        assert dft_refs[el]["delta_s_jmol_k"] > 0
+        assert dft_cd[el].h_liq == pytest.approx(db_cd[el].h_liq)
+        assert dft_cd[el].s_liq == pytest.approx(db_cd[el].s_liq, abs=1e-4)
+
+
+def test_ladder_step_skipped_when_dft_ground_differs_from_ladder_ground():
+    # Without its hcp entries Hf's DFT ground is another structure, so the ladder's hcp-zero
+    # steps are not placed on it.
+    entries = [
+        e
+        for e in api.get_dft_structure_entries("Hf-Zr")
+        if e.composition.reduced_formula == "Hf" and sd._safe_spacegroup(e.structure)[0] != 194
+    ]
+    ground_refs, phase_refs = sd._resolve_refs_cache(["Hf"], entries, UNARY.component_data(["Hf"]))
+    assert ground_refs["Hf"]["ground_spacegroup"] != 194
+    assert "Hf" not in phase_refs.get("BCC", {})
+    assert "Hf" not in phase_refs.get("HCP", {})
+
+
 def test_lattice_stability_block_supplies_missing_phases():
     # from_unary_db never reads config.omegas_file at runtime: structures the ladder lacks
     # come from the unary DB's lattice_stabilities block.
@@ -101,7 +143,8 @@ def test_lattice_stability_block_supplies_missing_phases():
     # Neither Hf nor Zr has an FCC polymorph on its ladder; the block supplies both refs.
     assert set(models) == {"BCC", "HCP", "FCC"}
     assert "lattice_stability" in models["FCC"]["refs"]["Hf"]["source"]
-    assert models["FCC"]["refs"]["Hf"]["material_id"] == "omegas_hcp"
+    fcc_ls = next(p for p in UNARY["Hf"].lattice_stabilities if p.spacegroup_number == 225)
+    assert models["FCC"]["refs"]["Hf"]["material_id"] == fcc_ls.material_id
     assert "lattice_stability" not in models["BCC"]["refs"]["Hf"].get("source", "")
 
 

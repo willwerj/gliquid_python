@@ -32,6 +32,8 @@ import gliquid.config as config
 # Spacegroup numbers / symbols for the solid-solution phases (single source of truth).
 SS_SPACEGROUPS = {"BCC": 229, "FCC": 225, "HCP": 194}
 SS_SYMBOLS = {"BCC": "Im-3m", "FCC": "Fm-3m", "HCP": "P6_3/mmc"}
+# Prototype Pearson symbols: spacegroup 194 also holds dhcp and graphite.
+SS_PEARSON = {"BCC": "cI2", "FCC": "cF4", "HCP": "hP2"}
 
 # eV/atom -> J/mol conversion used wherever DFT energies enter molar thermodynamics.
 EV_ATOM_TO_J_MOL = 96485.0
@@ -60,6 +62,7 @@ class Phase:
     delta_s: float | None = None  # step delta_S_J_per_mol_K
     spacegroup_number: int | None = None
     spacegroup_symbol: str | None = None
+    pearson_symbol: str | None = None
     material_id: str | None = None
     imputed: bool = False  # phase imputed rather than DFT-computed
     source: str | None = None  # provenance label (e.g. lattice-stability origin)
@@ -115,6 +118,7 @@ class Phase:
             delta_s=phase.get("delta_S_J_per_mol_K"),
             spacegroup_number=phase.get("spacegroup_number"),
             spacegroup_symbol=phase.get("spacegroup_symbol"),
+            pearson_symbol=phase.get("pearson_symbol"),
             material_id=phase.get("materials_project_id"),
         )
 
@@ -194,6 +198,21 @@ class ComponentRef:
             for p in self.phases
             if p.phase_type == "solid" and p.t_transition is not None and p.t_transition >= 0
         ]
+
+    def ss_polymorphs(self, ss_phase: str) -> list[Phase]:
+        """Ladder polymorphs that are the ``ss_phase`` end member.
+
+        A polymorph qualifies by spacegroup and prototype (``SS_PEARSON``); one with no
+        recorded Pearson symbol qualifies by spacegroup alone. When none qualifies and no
+        lattice stability of that spacegroup exists, the spacegroup's polymorphs of another
+        prototype (dhcp or graphite for HCP) stand in.
+        """
+        sg = SS_SPACEGROUPS[ss_phase]
+        same_sg = [p for p in self.polymorphs if p.spacegroup_number == sg]
+        proto = [p for p in same_sg if p.pearson_symbol in (None, SS_PEARSON[ss_phase])]
+        if proto or any(p.spacegroup_number == sg for p in self.lattice_stabilities):
+            return proto
+        return same_sg
 
     def gibbs_ref_expr(self, t_sym):
         """Referenced liquid Gibbs energy of the pure element: ``h_liq - t_sym * s_liq``.
@@ -275,16 +294,27 @@ def polymorph_ladder(
 
     Args:
         component_ref: the component whose ``polymorphs`` to copy.
-        exclude_spacegroups: spacegroup numbers to leave out; ``None`` or empty keeps every
-            polymorph.
+        exclude_spacegroups: spacegroup numbers to leave out. For a solid-solution spacegroup
+            only the polymorphs that are its end member (``ComponentRef.ss_polymorphs``) are
+            left out; any other spacegroup drops every polymorph in it. ``None`` or empty keeps
+            every polymorph.
 
     Returns:
         list[Phase]: one copy per kept polymorph, each with empty ``points``.
     """
+    exclude = exclude_spacegroups or set()
+    excluded = {
+        id(p)
+        for ss_phase, sg in SS_SPACEGROUPS.items()
+        if sg in exclude
+        for p in component_ref.ss_polymorphs(ss_phase)
+    }
+    ss_sgs = set(SS_SPACEGROUPS.values())
     return [
         replace(p, points=[])
         for p in component_ref.polymorphs
-        if not (exclude_spacegroups and p.spacegroup_number in exclude_spacegroups)
+        if id(p) not in excluded
+        and (p.spacegroup_number in ss_sgs or p.spacegroup_number not in exclude)
     ]
 
 
@@ -321,12 +351,13 @@ class UnaryData:
                         composition=Composition(symbol),
                         t_transition=None,
                         enthalpy=entry.get("delta_H_J_per_mol"),
-                        # 0.0 except where the builder recorded a metastable entropy.
+                        # 0.0 except where the table records a metastable entropy.
                         entropy=entry.get("delta_S_J_per_mol_K")
                         if entry.get("delta_S_J_per_mol_K") is not None
                         else 0.0,
                         spacegroup_number=entry.get("spacegroup_number"),
                         spacegroup_symbol=entry.get("spacegroup_symbol"),
+                        pearson_symbol=SS_PEARSON.get(ss_name),
                         material_id=entry.get("materials_project_id"),
                         imputed=entry.get("materials_project_id") == "omegas_hcp",
                         source=(entry.get("metadata") or {}).get("source"),

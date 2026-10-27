@@ -29,7 +29,7 @@ All values are plain JSON-able scalars.
 Reference frame: ``delta_h_jmol`` and ``delta_s_jmol_k`` are cumulative above the element's
 ground state (``Phase.enthalpy``/``Phase.entropy``), on the same zero as the elemental
 polymorph line compounds. The unary DB's ``lattice_stabilities`` values are already in this
-frame; their entropy is 0 except where the builder recorded a metastable entropy, and they
+frame; their entropy is 0 except where the table records a metastable entropy, and they
 have no transition temperature.
 """
 
@@ -51,6 +51,7 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 import gliquid.config as config
 from gliquid.phase import (
     EV_ATOM_TO_J_MOL,
+    SS_PEARSON,
     SS_SPACEGROUPS,
     SS_SYMBOLS,
     ComponentRef,
@@ -917,21 +918,31 @@ def _find_gs_polymorph(ref: ComponentRef) -> Phase | None:
     return next((p for p in ref.polymorphs if p.delta_h == 0), None)
 
 
-def _find_matching_polymorph(ss_phase: str, ref: ComponentRef) -> Phase | None:
-    """The element's polymorph matching an SS phase by spacegroup number.
+_STAND_IN_WARNED: set[tuple[str, str]] = set()
 
-    An element may carry SEVERAL polymorphs of one spacegroup (Fe has alpha-Fe and delta-Fe, both
-    Im-3m/229). Pick the one stable immediately below melting -- the highest transition temperature
-    under ``t_fusion`` -- because that is the solid the liquid is actually in equilibrium with, and
-    ``build_phases_from_chull`` deletes EVERY polymorph of a covered spacegroup from the line
-    compounds.
+
+def _find_matching_polymorph(ss_phase: str, ref: ComponentRef) -> Phase | None:
+    """The element's ladder polymorph that is the SS phase's end member (``ss_polymorphs``).
+
+    An element may carry SEVERAL such polymorphs (Fe has alpha-Fe and delta-Fe, both Im-3m/229).
+    Pick the one stable immediately below melting -- the highest transition temperature under
+    ``t_fusion`` -- because that is the solid the liquid is actually in equilibrium with, and
+    ``build_phases_from_chull`` deletes every one of them from the line compounds.
     """
-    matches = [p for p in ref.polymorphs if p.spacegroup_number == SS_SPACEGROUPS[ss_phase]]
+    matches = ref.ss_polymorphs(ss_phase)
     if not matches:
         return None
     t_melt = ref.t_fusion
     below = [p for p in matches if (p.t_transition or 0) < t_melt] if t_melt else []
     best = max(below or matches, key=lambda p: p.t_transition or 0)
+    if best.pearson_symbol not in (None, SS_PEARSON[ss_phase]) and (
+        (ref.symbol, ss_phase) not in _STAND_IN_WARNED
+    ):
+        _STAND_IN_WARNED.add((ref.symbol, ss_phase))
+        logger.warning(
+            f"{ref.symbol} has no {SS_PEARSON[ss_phase]} {ss_phase} reference; "
+            f"{best.name} ({best.pearson_symbol}) stands in for it."
+        )
     if best.spacegroup_symbol != SS_SYMBOLS[ss_phase]:
         logger.warning(
             f"spacegroup symbol does not match expected for phase "
@@ -1170,9 +1181,11 @@ def _resolve_refs_cache(
 ) -> tuple[dict, dict]:
     """Ground/phase refs from pymatgen ComputedStructureEntries.
 
-    Enthalpies come from DFT (cumulative above the lowest-energy pure entry). Entropies come from
-    the element's own transition ladder via ``_compute_solid_ss_entropy``, exactly as the
-    omegas-file resolver does. Without ``component_data`` the entropies fall back to zero.
+    Enthalpies come from DFT (cumulative above the lowest-energy pure entry). A phase on the
+    element's ladder with no DFT entry (e.g. one the Tier A blacklist keeps off hulls) takes the
+    ladder step via ``_apply_ladder_steps``. Entropies come from the element's own transition
+    ladder via ``_compute_solid_ss_entropy``, exactly as the omegas-file resolver does. Without
+    ``component_data`` the entropies fall back to zero.
     """
     compounds = _compound_components(components)
     if compounds:
@@ -1228,6 +1241,10 @@ def _resolve_refs_cache(
                 symbol=symbol or SS_SYMBOLS[ss_phase],
             )
 
+        ref = (component_data or {}).get(el)
+        if ref is not None:
+            _apply_ladder_steps(el, ref, ground_refs[el], phase_refs)
+
     # Second pass: cumulative transition entropy off the element's own ladder, zero where the
     # element has none.
     for ss_phase, refs in phase_refs.items():
@@ -1239,6 +1256,50 @@ def _resolve_refs_cache(
                 )
 
     return ground_refs, phase_refs
+
+
+def _apply_ladder_steps(
+    el: str, ref: ComponentRef, ground_ref: dict, phase_refs: dict[str, dict[str, dict]]
+) -> None:
+    """Fill SS phases on ``el``'s ladder that the DFT entries lack with the ladder step.
+
+    The ladder enthalpy is cumulative above the ladder ground state, so it is placed on the DFT
+    zero only when the DFT ground state has the ladder ground state's spacegroup; otherwise the
+    phases are left to ``_apply_omegas_fallback`` and the mismatch is logged. Entropy is filled
+    by the caller's entropy pass. ``phase_refs`` is updated in place.
+    """
+    missing = {
+        ss_phase: p
+        for ss_phase in ALL_SS_PHASES
+        if el not in phase_refs.get(ss_phase, {})
+        and (p := _find_matching_polymorph(ss_phase, ref)) is not None
+        and p.enthalpy is not None
+    }
+    if not missing:
+        return
+    p_ground = _find_gs_polymorph(ref)
+    ladder_sg = p_ground.spacegroup_number if p_ground else None
+    if ladder_sg is None or ladder_sg != ground_ref["ground_spacegroup"]:
+        logger.warning(
+            f"DFT ground state of '{el}' (spacegroup {ground_ref['ground_spacegroup']}) is not "
+            f"the ladder ground state (spacegroup {ladder_sg}); leaving {sorted(missing)} to "
+            f"the omegas fallback."
+        )
+        return
+    for ss_phase, p in missing.items():
+        phase_refs.setdefault(ss_phase, {})[el] = _make_phase_ref(
+            ss_phase=ss_phase,
+            material_id=p.material_id or "unknown",
+            energy_ev_per_atom=ground_ref["ground_energy_ev_per_atom"]
+            + p.enthalpy / EV_ATOM_TO_J_MOL,
+            delta_h_jmol=p.enthalpy,
+            delta_s_jmol_k=0.0,
+            spacegroup=(
+                p.spacegroup_number if p.spacegroup_number is not None else SS_SPACEGROUPS[ss_phase]
+            ),
+            symbol=p.spacegroup_symbol or SS_SYMBOLS[ss_phase],
+            source="from_dft_entries+unary_db",
+        )
 
 
 def _resolve_refs_db(
@@ -1314,14 +1375,14 @@ def _resolve_refs_db(
             phase_refs.setdefault(ss_phase, {})[el] = _make_phase_ref(
                 ss_phase=ss_phase,
                 material_id=p_ls.material_id or "lattice_stability",
-                # Raw DFT energy when the builder recorded one.
+                # Raw DFT energy when the table records one.
                 energy_ev_per_atom=(
                     p_ls.energy_per_atom_ev
                     if p_ls.energy_per_atom_ev is not None
                     else p_ls.enthalpy / EV_ATOM_TO_J_MOL
                 ),
                 delta_h_jmol=p_ls.enthalpy,
-                # 0.0 unless the builder recorded a metastable entropy; _ordered_solid_steps skips
+                # 0.0 unless the table records a metastable entropy; _ordered_solid_steps skips
                 # these phases.
                 delta_s_jmol_k=p_ls.entropy if p_ls.entropy is not None else 0.0,
                 spacegroup=p_ls.spacegroup_number,
