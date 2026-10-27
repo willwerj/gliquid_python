@@ -81,7 +81,7 @@ TERNARY_ROWS = {
         (1.0, 0.0, 0.0, 0.0, "alpha-Ti (hcp)"),
         (0.0, 1.0, 0.0, 0.0, "alpha-Zr (hcp)"),
         (0.0, 0.0, 2.9246, 5896.0, "beta-Hf (bcc)"),
-        (1.0, 0.0, 11.3826, 13146.9, "beta-Ti (bcc)"),
+        (1.0, 0.0, 8.9887, 10381.94, "beta-Ti (bcc)"),
         (0.0, 1.0, 3.6585, 4156.0, "beta-Zr (bcc)"),
     ],
 }
@@ -99,7 +99,7 @@ TERNARY_ORDER = {
 TERNARY_STEP = {
     "Hf-Ti-Zr": {
         "Hf": [("alpha-Hf (hcp)", 0.0, 0.0), ("beta-Hf (bcc)", 5896.0, 2.9246)],
-        "Ti": [("alpha-Ti (hcp)", 0.0, 0.0), ("beta-Ti (bcc)", 13146.9, 11.3826)],
+        "Ti": [("alpha-Ti (hcp)", 0.0, 0.0), ("beta-Ti (bcc)", 10381.94, 8.9887)],
         "Zr": [("alpha-Zr (hcp)", 0.0, 0.0), ("beta-Zr (bcc)", 4156.0, 3.6585)],
     },
     "Al-Mg-Si": {

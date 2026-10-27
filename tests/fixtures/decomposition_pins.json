@@ -8651,25 +8651,25 @@
      "per - 0.49 0th",
      "H-S partition 0th order",
      "float:1887.9499999999998",
-     "Equality(Add(Mul(Float('0.24991973631899997', precision=53), Symbol('L0_a')), Mul(Float('471.83596618345592', precision=53), Symbol('L0_b')), Mul(Float('0.0044780618353638391', precision=53), Symbol('L1_a')), Mul(Float('8.4543568420751587', precision=53), Symbol('L1_b')), Float('-28041.611192527202', precision=53)), Float('-101059.83989318754', precision=53))"
+     "Equality(Add(Mul(Float('0.24991973631899997', precision=53), Symbol('L0_a')), Mul(Float('471.83596618345592', precision=53), Symbol('L0_b')), Mul(Float('0.0044780618353638391', precision=53), Symbol('L1_a')), Mul(Float('8.4543568420751587', precision=53), Symbol('L1_b')), Float('-28058.825138099226', precision=53)), Float('-101059.83989318754', precision=53))"
     ],
     [
      "per - 0.71 0th",
      "0th order",
      "float:1524.85",
-     "Equality(Add(Mul(Float('0.22390856518936242', precision=53), Symbol('L0_a')), Mul(Float('341.42697562899923', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.076037416454991458', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('115.94565448139372', precision=53), Symbol('L1_b')), Float('-17066.491134808908', precision=53)), Float('-73361.968050783369', precision=53))"
+     "Equality(Add(Mul(Float('0.22390856518936242', precision=53), Symbol('L0_a')), Mul(Float('341.42697562899923', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.076037416454991458', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('115.94565448139372', precision=53), Symbol('L1_b')), Float('-17089.982851475575', precision=53)), Float('-73361.968050783369', precision=53))"
     ],
     [
      "eut - 0.77 1st",
      "1st order",
      "float:1093.3220000000001",
-     "Equality(Add(Mul(Integer(-1), Float('0.54822799999999994', precision=53), Symbol('L0_a')), Mul(Integer(-1), Float('599.3897334159999', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.049169090024000106', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('53.7576478432199', precision=53), Symbol('L1_b')), Float('22687.960075334966', precision=53)), Float('219093.17419795008', precision=53))"
+     "Equality(Add(Mul(Integer(-1), Float('0.54822799999999994', precision=53), Symbol('L0_a')), Mul(Integer(-1), Float('599.3897334159999', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.049169090024000106', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('53.7576478432199', precision=53), Symbol('L1_b')), Float('22652.506736334966', precision=53)), Float('218967.95218015011', precision=53))"
     ],
     [
      "eut - 0.77 0th",
      "0th order lhs",
      "float:1093.3220000000001",
-     "Equality(Add(Mul(Float('0.23376715166266668', precision=53), Symbol('L0_a')), Mul(Float('255.5827697901301', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.090580891042107495', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('99.034080955939061', precision=53), Symbol('L1_b')), Float('-9589.5783465197965', precision=53)), Float('-73361.968050783369', precision=53))"
+     "Equality(Add(Mul(Float('0.23376715166266668', precision=53), Symbol('L0_a')), Mul(Float('255.5827697901301', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.090580891042107495', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('99.034080955939061', precision=53), Symbol('L1_b')), Float('-9613.2139058531302', precision=53)), Float('-73361.968050783369', precision=53))"
     ]
    ],
    "result": "probe_stop",
@@ -8682,25 +8682,25 @@
      "per - 0.49 0th",
      "H-S partition 0th order",
      "float:1887.9499999999998",
-     "Equality(Add(Mul(Float('0.24991973631899997', precision=53), Symbol('L0_a')), Mul(Float('471.83596618345592', precision=53), Symbol('L0_b')), Mul(Float('0.0044780618353638391', precision=53), Symbol('L1_a')), Mul(Float('8.4543568420751587', precision=53), Symbol('L1_b')), Float('-28041.611192527202', precision=53)), Float('-101059.83989318754', precision=53))"
+     "Equality(Add(Mul(Float('0.24991973631899997', precision=53), Symbol('L0_a')), Mul(Float('471.83596618345592', precision=53), Symbol('L0_b')), Mul(Float('0.0044780618353638391', precision=53), Symbol('L1_a')), Mul(Float('8.4543568420751587', precision=53), Symbol('L1_b')), Float('-28058.825138099226', precision=53)), Float('-101059.83989318754', precision=53))"
     ],
     [
      "per - 0.71 0th",
      "0th order",
      "float:1524.85",
-     "Equality(Add(Mul(Float('0.22390856518936242', precision=53), Symbol('L0_a')), Mul(Float('341.42697562899923', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.076037416454991458', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('115.94565448139372', precision=53), Symbol('L1_b')), Float('-17066.491134808908', precision=53)), Float('-73361.968050783369', precision=53))"
+     "Equality(Add(Mul(Float('0.22390856518936242', precision=53), Symbol('L0_a')), Mul(Float('341.42697562899923', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.076037416454991458', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('115.94565448139372', precision=53), Symbol('L1_b')), Float('-17089.982851475575', precision=53)), Float('-73361.968050783369', precision=53))"
     ],
     [
      "eut - 0.77 1st",
      "1st order",
      "float:1093.3220000000001",
-     "Equality(Add(Mul(Integer(-1), Float('0.54822799999999994', precision=53), Symbol('L0_a')), Mul(Integer(-1), Float('599.3897334159999', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.049169090024000106', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('53.7576478432199', precision=53), Symbol('L1_b')), Float('22687.960075334966', precision=53)), Float('219093.17419795008', precision=53))"
+     "Equality(Add(Mul(Integer(-1), Float('0.54822799999999994', precision=53), Symbol('L0_a')), Mul(Integer(-1), Float('599.3897334159999', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.049169090024000106', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('53.7576478432199', precision=53), Symbol('L1_b')), Float('22652.506736334966', precision=53)), Float('218967.95218015011', precision=53))"
     ],
     [
      "eut - 0.77 0th",
      "0th order lhs",
      "float:1093.3220000000001",
-     "Equality(Add(Mul(Float('0.23376715166266668', precision=53), Symbol('L0_a')), Mul(Float('255.5827697901301', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.090580891042107495', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('99.034080955939061', precision=53), Symbol('L1_b')), Float('-9589.5783465197965', precision=53)), Float('-73361.968050783369', precision=53))"
+     "Equality(Add(Mul(Float('0.23376715166266668', precision=53), Symbol('L0_a')), Mul(Float('255.5827697901301', precision=53), Symbol('L0_b')), Mul(Integer(-1), Float('0.090580891042107495', precision=53), Symbol('L1_a')), Mul(Integer(-1), Float('99.034080955939061', precision=53), Symbol('L1_b')), Float('-9613.2139058531302', precision=53)), Float('-73361.968050783369', precision=53))"
     ]
    ],
    "result": "probe_stop",

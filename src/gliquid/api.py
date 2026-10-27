@@ -336,10 +336,9 @@ def _with_mp2020_adjustments(raw: dict, compat) -> dict:
     return out
 
 
-# Tier A spurious-structure blacklist (``config.spurious_structures_file``), applied at fetch and
-# at cache read: 'elements' lists elemental structures with no stability field at 1 atm,
-# 'compounds' lists non-elemental artifacts. Classic string ids match by material_id; new-API
-# ids match by (element, spacegroup) of their structure (symprec=0.1).
+# Tier A blacklist (``config.spurious_structures_file``), applied at fetch and cache read.
+# String ids match by material_id; new-API ids by (element, spacegroup) of their structure
+# (symprec=0.1).
 _MP_ID_RE = re.compile(r"(mp-[a-z0-9]+)")
 _spurious_cache: tuple | None = None  # (path, mtime, ids, pairs, expected_gs, compounds)
 
