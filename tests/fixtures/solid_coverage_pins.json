@@ -52,7 +52,8 @@
     "n_missing_compounds": 2,
     "ss_models": [
      "BCC",
-     "FCC"
+     "FCC",
+     "HCP"
     ],
     "skipped": false,
     "largest_supported_segment": 0.353067,

@@ -53,6 +53,75 @@ source tree carries a version literal that could disagree with this file.
 - **One test suite.** `tests_internal/` is merged into `tests/`, so a bare `pytest` also runs the
   value pins, figure goldens and cache/network-gated families. Deselect them by marker
   (`-m "not pins"`, `-m "not needs_cache"`).
+- **The unary reference data are anchored on Materials Project GGA/GGA+U energies.**
+  `phase_transitions.json` was built from MP's mixed GGA/GGA+U/r2SCAN energies while every
+  convex hull uses GGA entries; every DFT energy in it is now the GGA/GGA+U thermo energy. Sources
+  are used in a fixed order: MP-GGA for the ground state and every phase it has, the omegas GGA
+  lattice stabilities (Chen et al., Nat. Commun. 14, 2856 (2023)) for BCC/FCC/HCP references MP
+  lacks or places below the ground state, and SGTE or an assessed literature value only where the
+  observed 1 atm phase order needs it or no DFT BCC/FCC/HCP value lands above the ground state.
+  - Ten ground states move to the stable 1 atm structure: K and Cs to bcc, Kr and Xe to fcc,
+    As to rhombohedral, Se to trigonal, Pu to alpha-Pu (monoclinic), N to alpha-N2 (Pa-3), H to
+    solid para-H2 (hcp, mp-24504), and Na to its 9R martensite (R-3m), with bcc from 36 K.
+    `expected_gs_spacegroup` in `spurious_structures.json` now covers 85 elements (62 observed
+    ground states, the rest from SGTE's stable element reference or the existing anchor), so the
+    hull anchor guard covers them too.
+  - Every real phase whose ladder enthalpy is SGTE or assessed (28 MP entries, such as gamma-Fe,
+    fcc-Co, beta-Zr and the Pu allotropes) is in `spurious_structures.json` with
+    `category: "sgte_corrected"`, so no corrected DFT entry reaches a hull; the ladder phase keeps
+    the structure and its id becomes `sgte-<El>-<spacegroup>`. 26 further entries with no 1 atm
+    stability field are blacklisted as `spurious`, each with a literature source, among them the
+    former H anchor (mp-730101, the H sublattice of ammonium dideuterium phosphate); only fibrous
+    red P (mp-1198724) is still marked `status: "derived; literature review pending"`. The 7
+    computational BCC/FCC/HCP prototypes among them carry `ss_structure`.
+  - Liquid references move for fifteen elements: Pu by -47568 J/mol (every Pu step is now SGTE),
+    Ti by -2765 J/mol (beta-Ti from 13146.9 to 10381.94 J/mol), Li by -436 J/mol and
+    -4.955 J/mol/K (the 9R -> bcc step at 74 K instead of 80 K; Maier et al., Phys. Rev. B 55,
+    113 (1997)), Na by +429 J/mol and +11.93 J/mol/K (the 9R -> bcc step at 36 K), Sr by
+    +576 J/mol and +0.628 J/mol/K, Ba by +730 J/mol and +0.73 J/mol/K, and Ca by -31 J/mol and
+    -0.043 J/mol/K. Ca, Sr and Ba take the assessment of Alcock, Chase & Itkin (J. Phys. Chem.
+    Ref. Data 22, 1 (1993)). Ca: fcc -> bcc at 716 K with 930 J/mol instead of an unverified
+    961 J/mol. Sr: fcc -> bcc at 820 K with 850 J/mol, and fusion at 1041 K with 8000 J/mol,
+    instead of SGTE's 844 J/mol at 830 K and CRC's 7430 J/mol at 1050 K. Ba: fusion with
+    7850 J/mol instead of CRC's 7120 J/mol, at the same 1000 K. La, Ce, Sm and Gd take Konings &
+    Beneš (J. Phys. Chem. Ref. Data 39, 043102 (2010)), Mn, Fe and the Be transition take
+    NIST-JANAF (Chase 1998), and Be's fusion takes Alcock et al.: Sm by +1063 J/mol and
+    +1.135 J/mol/K (alpha -> beta at 970 K and beta -> gamma at 1185 K instead of 1190 K and
+    1345 K, with 100, 3170 and 9100 J/mol steps), Be by +1028 J/mol and +0.659 J/mol/K (fusion
+    8000 J/mol instead of 6972 J/mol), Ce by -620 J/mol and -0.579 J/mol/K (fusion 5580 J/mol
+    instead of 6200 J/mol), Gd by +183 J/mol and +0.064 J/mol/K (alpha -> beta at 1534 K with
+    3940 J/mol, fusion at 1591 K with 9800 J/mol), Tl by +171 J/mol and +0.289 J/mol/K (fusion
+    4150 J/mol and SGTE's 360 J/mol beta step), Sn by -124 J/mol and -0.433 J/mol/K (SGTE's
+    1966 J/mol beta step instead of 2090 J/mol), Mn by -81 J/mol and +0.034 J/mol/K (2226, 2122
+    and 1879 J/mol steps at 980, 1361 and 1412 K) and La by -36 J/mol (beta at 566 K, gamma at
+    1140 K, fusion 6140 J/mol at 1192 K).
+  - Solid-solution references (`lattice_stabilities`): 95 change by more than 0.5 J/mol, 21 are
+    new and 7 are dropped. Omegas values are measured from the element's MP-GGA ground-state
+    energy instead of a shared structure, so FCC-Ga becomes +1923 J/mol instead of 0. Mg and Cd
+    FCC come from
+    omegas, and In FCC and Hg FCC/HCP from SGTE, because the DFT values before them land below
+    the ground state. Hg BCC, which no DFT or SGTE source places above the ground state, takes
+    the enthalpy of the fitted end member of the Hg-Tl assessment (Gierlotka, Sopousek &
+    Fitzner, Calphad 30, 425 (2006)): +5540 J/mol, id `assessed-Hg-229`, instead of +336 J/mol.
+    A structure with no source above the ground state is not emitted and is listed under the
+    element's new `excluded_lattice_stabilities` (Eu FCC, Xe BCC).
+  Fitted parameters made before this change do not carry over and must be refit.
+
+- **A ladder phase is a solid solution's end member only if it has that structure's
+  prototype.** Spacegroup 194 holds hcp (hP2), dhcp and graphite (hP4); `Phase` now carries
+  `pearson_symbol`, and `ComponentRef.ss_polymorphs` picks the end member by spacegroup and
+  prototype. A dhcp or graphite ground state stands in for HCP only when no hP2 lattice stability
+  exists, and gliquid logs a warning when it does. Pr's HCP solid solution now uses the hP2
+  lattice stability (+2792.66 J/mol) and alpha-Pr (dhcp) stays a line compound beside it; C, La,
+  Nd and Sm keep their SG 194 phase as a stand-in.
+
+### Fixed
+
+- **The Bi-Sr hull follows the assessed diagram's compounds.** The Materials Project hull has
+  vertices at Sr2Bi3 (mp-31150, x_Sr = 0.400) and Sr4Bi3 (mp-30893, x_Sr = 0.571), which the
+  assessed Bi-Sr diagram does not draw, and takes the P6_3/mcm polymorph of Sr5Bi3 (mp-29620).
+  All three are now in `spurious_structures.json`; the hull becomes SrBi3, Sr11Bi10 and the
+  Pnma Sr5Bi3 (mp-1197242).
 
 ## [0.3.1] - 2026-10-17
 

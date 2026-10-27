@@ -1,70 +1,95 @@
 {
   "metadata": {
-    "description": "Materials Project entries removed from every fetched or cached convex hull. 'elements': elemental structures with no stability field at 1 atm at any temperature (high-pressure, thin-film or purely computational), keyed by element and matched by material_id or by (element, spacegroup_number). 'compounds': rules for non-elemental artifacts, each with one 'match' predicate: 'material_id', 'composition' (exact atom counts in the cell) or 'element_count' (counts of the named elements only). 'expected_gs_spacegroup': each element's 1-atm ground-state space group; an elemental entry below it with another space group is also removed.",
-    "policy": "Each elemental entry has no reported ambient-pressure stability field (NIST TN 2312, D.R. Burgess Jr., 'Phase Transition Temperatures of the Solid Elements at Atmospheric Pressure', 2025). Real low-temperature allotropes are not listed.",
+    "description": "Materials Project entries removed from every fetched or cached convex hull. 'elements': elemental entries keyed by element and matched by material_id or by (element, spacegroup_number); 'category' is 'spurious' (no stability field at 1 atm at any temperature: high-pressure, thin-film, purely computational, or ranked by GGA below the 1 atm ground state; the default when absent) or 'sgte_corrected' (a real 1 atm phase whose enthalpy the unary database takes from SGTE or another assessment, kept off hulls so its DFT energy is never used). 'status' marks records derived from GGA energies whose literature review is pending. 'ss_structure' (BCC, FCC or HCP) marks a computational prototype entry below the ground state whose solid-solution reference the unary database takes from omegas or SGTE. 'compounds': rules for non-elemental artifacts, each with one 'match' predicate: 'material_id', 'composition' (exact atom counts in the cell) or 'element_count' (counts of the named elements only). 'expected_gs_spacegroup': each element's 1-atm ground-state space group, with its basis in 'expected_gs_basis'; an elemental entry below it with another space group is also removed.",
+    "policy": "Literature-verified 'spurious' entries have no reported ambient-pressure stability field (NIST TN 2312, D.R. Burgess Jr., 'Phase Transition Temperatures of the Solid Elements at Atmospheric Pressure', 2025). Real low-temperature allotropes are listed only as 'sgte_corrected'.",
     "created_date": "2026-08-04"
   },
   "expected_gs_spacegroup": {
-    "Rb": 229,
-    "Na": 194,
+    "H": 194,
+    "He": 229,
     "Li": 166,
-    "Ba": 229,
-    "Sr": 225,
+    "Be": 194,
+    "B": 166,
+    "C": 194,
+    "N": 205,
+    "O": 12,
+    "F": 15,
+    "Ne": 225,
+    "Na": 166,
+    "Mg": 194,
+    "Al": 225,
+    "Si": 227,
+    "P": 13,
+    "S": 70,
+    "Cl": 64,
+    "Ar": 225,
+    "K": 229,
     "Ca": 225,
-    "Eu": 229,
-    "Yb": 225,
-    "Lu": 194,
-    "Tm": 194,
-    "Y": 194,
-    "Er": 194,
-    "Ho": 194,
-    "Dy": 194,
-    "Tb": 194,
-    "Gd": 194,
-    "Sm": 166,
-    "Nd": 194,
-    "Pr": 194,
-    "Ce": 225,
-    "La": 194,
-    "Th": 225,
     "Sc": 194,
-    "Zr": 194,
-    "Hf": 194,
     "Ti": 194,
-    "Ta": 229,
-    "Nb": 229,
     "V": 229,
     "Cr": 229,
+    "Mn": 217,
+    "Fe": 229,
+    "Co": 194,
+    "Ni": 225,
+    "Cu": 225,
+    "Zn": 194,
+    "Ga": 64,
+    "Ge": 227,
+    "As": 166,
+    "Se": 152,
+    "Br": 64,
+    "Kr": 225,
+    "Rb": 229,
+    "Sr": 225,
+    "Y": 194,
+    "Zr": 194,
+    "Nb": 229,
     "Mo": 229,
+    "Tc": 194,
+    "Ru": 194,
+    "Rh": 225,
+    "Pd": 225,
+    "Ag": 225,
+    "Cd": 194,
+    "In": 139,
+    "Sn": 227,
+    "Sb": 166,
+    "Te": 152,
+    "I": 64,
+    "Xe": 225,
+    "Cs": 229,
+    "Ba": 229,
+    "La": 194,
+    "Ce": 225,
+    "Pr": 194,
+    "Nd": 194,
+    "Sm": 166,
+    "Eu": 229,
+    "Gd": 194,
+    "Tb": 194,
+    "Dy": 194,
+    "Ho": 194,
+    "Er": 194,
+    "Tm": 194,
+    "Yb": 225,
+    "Lu": 194,
+    "Hf": 194,
+    "Ta": 229,
     "W": 229,
     "Re": 194,
     "Os": 194,
-    "Ru": 194,
-    "Rh": 225,
     "Ir": 225,
-    "Pd": 225,
+    "Pt": 225,
     "Au": 225,
-    "Ag": 225,
-    "Cu": 225,
-    "Ni": 225,
-    "Co": 194,
-    "Fe": 229,
-    "Mn": 217,
-    "Mg": 194,
-    "Zn": 194,
-    "Cd": 194,
     "Hg": 166,
-    "Be": 194,
-    "Al": 225,
-    "Ga": 64,
-    "In": 139,
     "Tl": 194,
     "Pb": 225,
-    "Sn": 227,
-    "Ge": 227,
-    "Si": 227,
-    "B": 166,
-    "C": 194
+    "Bi": 166,
+    "Th": 225,
+    "U": 63,
+    "Pu": 11
   },
   "elements": {
     "Ag": [
@@ -113,6 +138,15 @@
         "reason": "The reported hcp interval is a hydrogen-contamination artifact; pure Sr is fcc, then bcc above 820 K.",
         "source": "Peterson & Colburn, J. Phys. Chem. 70, 468 (1966); NIST TN 2312 (2025), Z=38; Alcock, Chase & Itkin, J. Phys. Chem. Ref. Data 22, 1 (1993)",
         "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-95",
+        "spacegroup_number": 229,
+        "common_name": "beta-Sr (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 820 K). Its GGA enthalpy (643 J/mol above the ground state) is replaced on the phase ladder by the assessed value (850 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Alcock, Chase & Itkin, J. Phys. Chem. Ref. Data 22, 1 (1993)",
+        "date": "2026-10-26"
       }
     ],
     "Eu": [
@@ -131,6 +165,15 @@
         "reason": "Matches no experimentally known Eu phase; a computational structure below the real BCC.",
         "source": "Bi et al., Phys. Rev. B 83, 104106 (2011)",
         "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-623532",
+        "common_name": "Eu (FCC, computational)",
+        "category": "spurious",
+        "ss_structure": "FCC",
+        "reason": "Computational cF4 entry that GGA ranks 4660 J/mol below the expected 1 atm ground state; the FCC solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-623532 summary/provenance via MP API (theoretical=true); D.A. Young, Phase Diagrams of the Elements (UC Press, 1991), Eu chapter; Husband et al., Phys. Rev. Lett. 109, 095503 (2012), Eu high-pressure phases",
+        "date": "2026-10-26"
       }
     ],
     "Lu": [
@@ -167,6 +210,15 @@
         "reason": "Disputed monoclinic phase reported only above ~10 GPa and ruled out by later XRD; no ambient-pressure field.",
         "source": "Chesnut & Vohra, Phys. Rev. B 62, 2965 (2000); Evans et al., Phys. Rev. B 80, 134105 (2009)",
         "date": "2026-08-04"
+      },
+      {
+        "material_id": "mp-63",
+        "spacegroup_number": 229,
+        "common_name": "beta-Pr (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1068 K). Its GGA enthalpy (13085 J/mol above the ground state) is replaced on the phase ladder by SGTE (3208 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
       }
     ],
     "In": [
@@ -210,9 +262,45 @@
         "material_id": "mp-569289",
         "spacegroup_number": 139,
         "common_name": "beta-Hg (I4/mmm, BCT)",
-        "reason": "Pressure-formed phase (above ~1.2 GPa) retained metastably at low temperature; TN 2312 lists alpha-Hg as the only solid at 1 atm (Atoji et al. 1959 report beta-Hg as stable below 79 K).",
-        "source": "Atoji, Schirber & Swenson, J. Chem. Phys. 31, 1628 (1959); Schulte & Holzapfel, Phys. Rev. B 48, 14009 (1993); Young, Phase Diagrams of the Elements (1991)",
-        "date": "2026-08-04"
+        "reason": "Equilibrium phase at 1 atm only below 79 K, where it lies 122 J/mol below alpha-Hg (dS = -1.54 J/(mol K)), but it does not form on cooling: it needs ~0.4-1 GPa or cold work below ~80 K and reverts to alpha-Hg above ~90 K. Kept off hulls because alpha-Hg is the reference above 79 K and GGA misplaces beta-Hg (-1666 J/mol vs alpha, c/a 0.87, against the measured -122 J/mol and c/a 0.707). Body-centred tetragonal, not bcc. TN 2312 lists alpha-Hg as the only solid at 1 atm.",
+        "source": "Atoji, Schirber & Swenson, J. Chem. Phys. 31, 1628 (1959); Swenson, Phys. Rev. 111, 82 (1958); Guminski, J. Phase Equilib. 13, 657 (1992); Schulte & Holzapfel, Phys. Rev. B 48, 14009 (1993); Young, Phase Diagrams of the Elements (1991)",
+        "date": "2026-10-25"
+      },
+      {
+        "material_id": "mp-1077098",
+        "spacegroup_number": 14,
+        "common_name": "Hg (P2_1/c, mP6)",
+        "category": "spurious",
+        "reason": "GGA ranks it 664 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-1077098 provenance (Aurivillius, Acta Chem. Scand. 8, 523 (1954))",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-753304",
+        "common_name": "Hg (FCC, computational)",
+        "category": "spurious",
+        "ss_structure": "FCC",
+        "reason": "Computational cF4 entry that GGA ranks 1208 J/mol below the expected 1 atm ground state; the FCC solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-753304 (theoretical=true); Schulte & Holzapfel, Phys. Rev. B 53, 569 (1996), Zn/Cd/Hg to 75 GPa",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-1017981",
+        "common_name": "Hg (BCC, computational)",
+        "category": "spurious",
+        "ss_structure": "BCC",
+        "reason": "Computational cI2 entry that GGA ranks 2290 J/mol below the expected 1 atm ground state. Hg has no bcc phase at 1 atm: alpha-Hg is the only solid above 79 K and beta-Hg is body-centred tetragonal (tI2), not bcc. The BCC solid-solution reference is the fitted end member of the Hg-Tl assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy (thermo type GGA_GGA+U); Guminski, J. Phase Equilib. 13, 657 (1992); Atoji, Schirber & Swenson, J. Chem. Phys. 31, 1628 (1959); Gierlotka, Sopousek & Fitzner, Calphad 30, 425 (2006)",
+        "date": "2026-10-24"
+      },
+      {
+        "material_id": "mp-1184554",
+        "common_name": "delta-Hg (hcp, high pressure)",
+        "category": "spurious",
+        "ss_structure": "HCP",
+        "reason": "hcp (hP2) Hg is delta-Hg, an experimental high-pressure phase stable above ~37 GPa (Schulte & Holzapfel); MP's entry is unmatched to ICSD. GGA ranks it 2395 J/mol below alpha-Hg (R-3m), but it has no 1 atm stability field; the HCP solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Schulte & Holzapfel, Phys. Rev. B 53, 569 (1996)",
+        "date": "2026-10-26"
       }
     ],
     "Ti": [
@@ -223,6 +311,485 @@
         "reason": "High-pressure phase (alpha to omega at several GPa) retained metastably after decompression; at 1 atm Ti is hcp below 1155 K and bcc to melting. GGA places it 15 meV/atom below hcp.",
         "source": "NIST TN 2312 (2025), Z=22; Sikka, Vohra & Chidambaram, Prog. Mater. Sci. 27, 245 (1982); Mei et al., Phys. Rev. B 80, 104116 (2009)",
         "date": "2026-10-15"
+      }
+    ],
+    "H": [
+      {
+        "material_id": "mp-730101",
+        "common_name": "H (P2_12_12_1, oP8)",
+        "category": "spurious",
+        "reason": "Not a hydrogen allotrope: the H sublattice of ammonium dideuterium phosphate. Solid hydrogen at 1 atm is hcp para-H2 (mp-24504), which GGA ranks 415 J/mol lower.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-730101 provenance (remark 'Ammonium dideuteriumphosphate'); I.F. Silvera, Rev. Mod. Phys. 52, 393 (1980)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-632291",
+        "spacegroup_number": 139,
+        "common_name": "H (I4/mmm, tI4)",
+        "category": "spurious",
+        "reason": "Tetragonal solid deuterium from an unconfirmed 1961 diffraction report; no tetragonal phase appears in the accepted solid-hydrogen phase diagram. GGA ranks it 134 J/mol above hcp para-H2.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-632291 provenance (Ozerov et al., Kristallografiya 6, 631 (1961)); I.F. Silvera, Rev. Mod. Phys. 52, 393 (1980)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Be": [
+      {
+        "material_id": "mp-20",
+        "spacegroup_number": 229,
+        "common_name": "beta-Be (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1543 K). Its GGA enthalpy (9231 J/mol above the ground state) is replaced on the phase ladder by the assessed value (6849 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "NIST-JANAF Thermochemical Tables, Chase (1998)",
+        "date": "2026-10-26"
+      }
+    ],
+    "P": [
+      {
+        "material_id": "mp-1198724",
+        "spacegroup_number": 2,
+        "common_name": "P (P-1, aP42)",
+        "category": "spurious",
+        "status": "derived; literature review pending",
+        "reason": "GGA ranks it 447 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy (thermo type GGA_GGA+U); expected ground state: current database anchor (no usable SGTE reference)",
+        "date": "2026-10-23"
+      }
+    ],
+    "S": [
+      {
+        "material_id": "mp-96",
+        "spacegroup_number": 13,
+        "common_name": "S (P2/c, mP32)",
+        "category": "spurious",
+        "reason": "GGA ranks it 97 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-96 provenance (Watanabe, Acta Cryst. B30, 1396 (1974); Gallacher & Pinkerton, Acta Cryst. C49, 125 (1993)); R. Steudel & B. Eckert, 'Solid Sulfur Allotropes', Top. Curr. Chem. 230, 1 (2003)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-557869",
+        "spacegroup_number": 4,
+        "common_name": "S (P2_1, mP48)",
+        "category": "spurious",
+        "reason": "beta-S (monoclinic S8; this is the ordered P2_1 low-T cell). It is a real 1 atm phase with an equilibrium field only between 368.5 K and melting (~388-393 K), never at low T. GGA ranks it 14 J/mol below alpha-S, which would make it the 0 K reference, so it is excluded to keep alpha-S (Fddd) as the low-T reference.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-557869 provenance (Seidel 2008, private communication); IUCr newsletter: order-disorder transition in monoclinic sulfur, Tc = 198 K; ORNL record: 'Order-disorder transition in monoclinic sulfur: a precise structural study'; R. Steudel & B. Eckert, Top. Curr. Chem. 230, 1 (2003)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-557376",
+        "spacegroup_number": 15,
+        "common_name": "beta-S (monoclinic)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 368.3 K). Its GGA enthalpy (2970 J/mol above the ground state) is replaced on the phase ladder by SGTE (401 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Ca": [
+      {
+        "material_id": "mp-21",
+        "spacegroup_number": 229,
+        "common_name": "beta-Ca (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 716 K). Its GGA enthalpy (2271 J/mol above the ground state) is replaced on the phase ladder by the assessed value (930 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Alcock, Chase & Itkin, J. Phys. Chem. Ref. Data 22, 1 (1993)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Mn": [
+      {
+        "material_id": "mp-542909",
+        "spacegroup_number": 213,
+        "common_name": "beta-Mn (complex cubic A13)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 980 K). Its GGA enthalpy (5109 J/mol above the ground state) is replaced on the phase ladder by the assessed value (2226 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "NIST-JANAF Thermochemical Tables, Chase (1998)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-1055908",
+        "spacegroup_number": 229,
+        "common_name": "delta-Mn (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1412 K). Its GGA enthalpy (14033 J/mol above the ground state) is replaced on the phase ladder by the assessed value (6227 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "NIST-JANAF Thermochemical Tables, Chase (1998); cumulative α→β→γ→δ",
+        "date": "2026-10-26"
+      }
+    ],
+    "Fe": [
+      {
+        "material_id": "mp-150",
+        "spacegroup_number": 225,
+        "common_name": "gamma-Fe (fcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1185 K). Its GGA enthalpy (14315 J/mol above the ground state) is replaced on the phase ladder by the assessed value (900 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "NIST-JANAF Thermochemical Tables, Chase (1998)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Co": [
+      {
+        "material_id": "mp-102",
+        "spacegroup_number": 225,
+        "common_name": "alpha-Co (fcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 695 K). Its GGA enthalpy (1555 J/mol above the ground state) is replaced on the phase ladder by SGTE (428 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE unary v5.0 GFCCCO (Dinsdale 1991): 427.591 - 0.615248*T + GHSERCO",
+        "date": "2026-10-23"
+      }
+    ],
+    "Se": [
+      {
+        "material_id": "mp-570481",
+        "spacegroup_number": 14,
+        "common_name": "Se (P2_1/c, mP64)",
+        "category": "spurious",
+        "reason": "GGA ranks it 685 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-570481 provenance (Foss & Janickis 1980); J. Donohue, The Structures of the Elements (Wiley, 1974), Se chapter; D.A. Young, Phase Diagrams of the Elements (1991), Se chapter",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-542605",
+        "spacegroup_number": 14,
+        "common_name": "Se (P2_1/c, mP32)",
+        "category": "spurious",
+        "reason": "GGA ranks it 132 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-542605 provenance (Marsh et al., Acta Cryst. 6, 71 (1953); Burbank, Acta Cryst. 5, 236 (1952)); J. Donohue, The Structures of the Elements (1974)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-542461",
+        "spacegroup_number": 14,
+        "common_name": "Se (P2_1/c, mP32)",
+        "category": "spurious",
+        "reason": "GGA ranks it 70 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-542461 provenance (Cherin & Unger, Acta Cryst. B28, 313 (1972)); J. Donohue, The Structures of the Elements (1974)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Zr": [
+      {
+        "material_id": "mp-41",
+        "spacegroup_number": 229,
+        "common_name": "beta-Zr (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1136 K). Its GGA enthalpy (7194 J/mol above the ground state) is replaced on the phase ladder by SGTE (4156 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Sn": [
+      {
+        "material_id": "mp-84",
+        "spacegroup_number": 141,
+        "common_name": "beta-Sn (bct)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 286.4 K). Its GGA enthalpy (3426 J/mol above the ground state) is replaced on the phase ladder by SGTE (1966 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE Unary v5.0 (Dinsdale 1991), GHSERSN - GDIAMSN at 286.2 K",
+        "date": "2026-10-26"
+      }
+    ],
+    "Xe": [
+      {
+        "material_id": "mp-570510",
+        "spacegroup_number": 194,
+        "common_name": "Xe (P6_3/mmc, hP2)",
+        "category": "spurious",
+        "reason": "GGA ranks it 543 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-570510 provenance (Sonnenblick et al. 1977); Cynn et al., Phys. Rev. Lett. 86, 4552 (2001), 'Martensitic fcc-to-hcp transformation observed in xenon at high pressure'",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-979285",
+        "common_name": "Xe (BCC, computational)",
+        "category": "spurious",
+        "ss_structure": "BCC",
+        "reason": "Computational cI2 entry that GGA ranks 371 J/mol below the expected 1 atm ground state; the BCC solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-979285 (theoretical=true); Cynn et al., Phys. Rev. Lett. 86, 4552 (2001)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Cs": [
+      {
+        "material_id": "mp-639727",
+        "common_name": "Cs (P6_3/mmc, hP4)",
+        "category": "spurious",
+        "reason": "GGA ranks it 1212 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-639727 provenance; Takemura et al., Phys. Rev. B 61, 14399 (2000)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-11832",
+        "spacegroup_number": 194,
+        "common_name": "Cs (P6_3/mmc, hP2)",
+        "category": "spurious",
+        "reason": "GGA ranks it 354 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-11832 provenance; Takemura et al., Phys. Rev. Lett. 66, 2014 (1991)",
+        "date": "2026-10-26"
+      }
+    ],
+    "La": [
+      {
+        "material_id": "mp-156",
+        "spacegroup_number": 225,
+        "common_name": "beta-La (fcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 566 K). Its GGA enthalpy (64 J/mol above the ground state) is replaced on the phase ladder by the assessed value (400 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Konings & Beneš, J. Phys. Chem. Ref. Data 39, 043102 (2010)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-10023",
+        "spacegroup_number": 229,
+        "common_name": "gamma-La (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1140 K). Its GGA enthalpy (12882 J/mol above the ground state) is replaced on the phase ladder by the assessed value (3560 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Konings & Beneš, J. Phys. Chem. Ref. Data 39, 043102 (2010); cumulative α→β→γ",
+        "date": "2026-10-26"
+      }
+    ],
+    "Ce": [
+      {
+        "material_id": "mp-567332",
+        "spacegroup_number": 12,
+        "common_name": "Ce (C2/m, mC4)",
+        "category": "spurious",
+        "reason": "GGA ranks it 151 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; W.H. Zachariasen, PNAS 75, 1066 (1978); Materials Project mp-567332 provenance; Comment on 'Different results for the equilibrium phases of cerium above 5 GPa', arXiv:cond-mat/9707265",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-10024",
+        "spacegroup_number": 229,
+        "common_name": "delta-Ce (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 999 K). Its GGA enthalpy (21872 J/mol above the ground state) is replaced on the phase ladder by SGTE (3029 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Nd": [
+      {
+        "material_id": "mp-4",
+        "spacegroup_number": 229,
+        "common_name": "beta-Nd (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1128 K). Its GGA enthalpy (13504 J/mol above the ground state) is replaced on the phase ladder by SGTE (3075 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Sm": [
+      {
+        "material_id": "mp-69",
+        "spacegroup_number": 194,
+        "common_name": "beta-Sm (hcp)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 970 K). Its GGA enthalpy (-87 J/mol above the ground state) is replaced on the phase ladder by the assessed value (100 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Konings & Beneš, J. Phys. Chem. Ref. Data 39, 043102 (2010)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Gd": [
+      {
+        "material_id": "mp-11421",
+        "spacegroup_number": 229,
+        "common_name": "beta-Gd (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1534 K). Its GGA enthalpy (8452 J/mol above the ground state) is replaced on the phase ladder by the assessed value (3940 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Konings & Beneš, J. Phys. Chem. Ref. Data 39, 043102 (2010)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Tb": [
+      {
+        "material_id": "mp-11698",
+        "spacegroup_number": 166,
+        "common_name": "Tb (R-3m, hR9)",
+        "category": "spurious",
+        "reason": "GGA ranks it 1825 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; McWhan & Stevens, Phys. Rev. 139, A682 (1965); Tonkov et al., Dokl. Akad. Nauk SSSR 230 (1976), 'Conversion of the metastable high-pressure phase of Gd, Tb, Dy, and Ho into the stable phase' (from MP provenance); Materials Project mp-11698 provenance",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-571249",
+        "common_name": "Tb (P6_3/mmc, hP6)",
+        "category": "spurious",
+        "reason": "Same spacegroup as the hP2 ground state but a hP6 stacking; GGA ranks it 505 J/mol below the ground state. Not a 1 atm phase.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Olsen, Steenstrup & Gerward, Phys. Lett. A 109, 235 (1985); Materials Project mp-571249 provenance",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-7163",
+        "spacegroup_number": 225,
+        "common_name": "Tb (Fm-3m, cF4)",
+        "category": "spurious",
+        "reason": "GGA ranks it 3 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Materials Project mp-7163 provenance (Curzon & Chlebek 1973); D.A. Young, Phase Diagrams of the Elements (1991), lanthanide chapter; M. Gasgnier, 'The intricate world of rare earth thin films', Phys. Status Solidi A 57, 11 (1980)",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-11446",
+        "spacegroup_number": 229,
+        "common_name": "beta-Tb (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1562 K). Its GGA enthalpy (12457 J/mol above the ground state) is replaced on the phase ladder by SGTE (4427 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Dy": [
+      {
+        "material_id": "mp-10658",
+        "spacegroup_number": 166,
+        "common_name": "Dy (R-3m, hR9)",
+        "category": "spurious",
+        "reason": "GGA ranks it 1677 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Nakaue, J. Less-Common Met. 60, 47 (1978); McWhan & Stevens, Phys. Rev. 139, A682 (1965); Materials Project mp-10658 provenance",
+        "date": "2026-10-26"
+      },
+      {
+        "material_id": "mp-10751",
+        "spacegroup_number": 229,
+        "common_name": "beta-Dy (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1654 K). Its GGA enthalpy (12489 J/mol above the ground state) is replaced on the phase ladder by SGTE (4639 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Ho": [
+      {
+        "material_id": "mp-10659",
+        "spacegroup_number": 166,
+        "common_name": "Ho (R-3m, hR9)",
+        "category": "spurious",
+        "reason": "GGA ranks it 997 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; McWhan & Stevens, Phys. Rev. 139, A682 (1965); Materials Project mp-10659 provenance",
+        "date": "2026-10-26"
+      }
+    ],
+    "Tm": [
+      {
+        "material_id": "mp-1018122",
+        "spacegroup_number": 166,
+        "common_name": "Tm (R-3m, hR9)",
+        "category": "spurious",
+        "reason": "GGA ranks it 345 J/mol below the expected 1 atm ground state; no 1 atm stability field in the transition table.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Liu, Bassett & Liu, Science 180, 298 (1973); Materials Project mp-1018122 provenance",
+        "date": "2026-10-26"
+      }
+    ],
+    "Hf": [
+      {
+        "material_id": "mp-100",
+        "spacegroup_number": 229,
+        "common_name": "beta-Hf (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 2016 K). Its GGA enthalpy (16996 J/mol above the ground state) is replaced on the phase ladder by SGTE (5896 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Tl": [
+      {
+        "material_id": "mp-39",
+        "spacegroup_number": 229,
+        "common_name": "beta-Tl (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 507 K). Its GGA enthalpy (-279 J/mol above the ground state) is replaced on the phase ladder by SGTE (360 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-26"
+      }
+    ],
+    "Th": [
+      {
+        "material_id": "mp-11343",
+        "spacegroup_number": 229,
+        "common_name": "beta-Th (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1633 K). Its GGA enthalpy (15298 J/mol above the ground state) is replaced on the phase ladder by SGTE (3636 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE / Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "U": [
+      {
+        "material_id": "mp-93",
+        "spacegroup_number": 136,
+        "common_name": "beta-U (tetragonal)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 942 K). Its GGA enthalpy (9840 J/mol above the ground state) is replaced on the phase ladder by SGTE (2791 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Dinsdale (1991)",
+        "date": "2026-10-23"
+      },
+      {
+        "material_id": "mp-108",
+        "spacegroup_number": 229,
+        "common_name": "gamma-U (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 1049 K). Its GGA enthalpy (25911 J/mol above the ground state) is replaced on the phase ladder by SGTE (7548 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "Dinsdale (1991)",
+        "date": "2026-10-23"
+      }
+    ],
+    "Pu": [
+      {
+        "material_id": "mp-542606",
+        "spacegroup_number": 12,
+        "common_name": "beta-Pu (monoclinic)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 395 K). Its GGA enthalpy (75519 J/mol above the ground state) is replaced on the phase ladder by SGTE (3715 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE Unary v5.0 (Dinsdale 1991) G(BETA_PU,PU) - G(ALPHA_PU,PU), H = G - T dG/dT at 395 K, anchored on the ground state",
+        "date": "2026-10-23"
+      },
+      {
+        "material_id": "mp-571261",
+        "spacegroup_number": 70,
+        "common_name": "gamma-Pu (orthorhombic)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 478 K). Its GGA enthalpy (-790 J/mol above the ground state) is replaced on the phase ladder by SGTE (3863 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE Unary v5.0 (Dinsdale 1991) G(GAMMA_PU,PU) - G(ALPHA_PU,PU), H = G - T dG/dT at 478 K, anchored on the ground state",
+        "date": "2026-10-23"
+      },
+      {
+        "material_id": "mp-114",
+        "spacegroup_number": 225,
+        "common_name": "delta-Pu (fcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 588 K). Its GGA enthalpy (25957 J/mol above the ground state) is replaced on the phase ladder by SGTE (4028 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE Unary v5.0 (Dinsdale 1991) G(FCC_A1,PU) - G(ALPHA_PU,PU), H = G - T dG/dT at 588 K, anchored on the ground state",
+        "date": "2026-10-23"
+      },
+      {
+        "material_id": "mp-107",
+        "spacegroup_number": 229,
+        "common_name": "epsilon-Pu (bcc)",
+        "category": "sgte_corrected",
+        "reason": "Real 1 atm phase (stable from 753 K). Its GGA enthalpy (51866 J/mol above the ground state) is replaced on the phase ladder by SGTE (5089 J/mol); every MP entry of this spacegroup is kept off hulls.",
+        "source": "SGTE Unary v5.0 (Dinsdale 1991) G(BCC_A2,PU) - G(ALPHA_PU,PU), H = G - T dG/dT at 753 K, anchored on the ground state",
+        "date": "2026-10-23"
+      }
+    ],
+    "Mg": [
+      {
+        "material_id": "mp-1056702",
+        "common_name": "Mg (FCC, computational)",
+        "category": "spurious",
+        "ss_structure": "FCC",
+        "reason": "Computational cF4 entry that GGA ranks 895 J/mol below the expected 1 atm ground state; the FCC solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Li et al., J. Phys. Chem. C 114, 21745 (2010); Gorman et al., Nat. Phys. 18, 1307 (2022); Materials Project mp-1056702 provenance",
+        "date": "2026-10-26"
+      }
+    ],
+    "Cd": [
+      {
+        "material_id": "mp-1096861",
+        "common_name": "Cd (FCC, computational)",
+        "category": "spurious",
+        "ss_structure": "FCC",
+        "reason": "Computational cF4 entry that GGA ranks 1313 J/mol below the expected 1 atm ground state; the FCC solid-solution reference comes from omegas, SGTE or a CALPHAD assessment instead.",
+        "source": "Materials Project GGA/GGA+U thermo energy; Schulte & Holzapfel, Phys. Rev. B 53, 569 (1996); Materials Project mp-1096861 (theoretical=true)",
+        "date": "2026-10-26"
       }
     ]
   },
@@ -351,6 +918,120 @@
       "reason": "A second AuTl2 polymorph at the same composition; without this rule it replaces mp-30571 on the hull.",
       "source": "mp-755435; same composition as the primary cell",
       "date": "2026-10-15"
+    },
+    {
+      "match": {
+        "material_id": "mp-31150"
+      },
+      "common_name": "Sr2Bi3 (Bi-Sr hull vertex with no drawn field)",
+      "reason": "Hull vertex at x_Sr = 0.400 that the assessed Bi-Sr diagram does not draw; with it removed, the drawn SrBi3 (mp-23159) is a hull vertex.",
+      "source": "mp-31150; no drawn field in the assessed Bi-Sr diagram",
+      "date": "2026-10-26"
+    },
+    {
+      "match": {
+        "material_id": "mp-30893"
+      },
+      "common_name": "Sr4Bi3 (Bi-Sr hull vertex with no drawn field)",
+      "reason": "Hull vertex at x_Sr = 0.571 that the assessed Bi-Sr diagram does not draw.",
+      "source": "mp-30893; no drawn field in the assessed Bi-Sr diagram",
+      "date": "2026-10-26"
+    },
+    {
+      "match": {
+        "material_id": "mp-29620"
+      },
+      "common_name": "Sr5Bi3 (P6_3/mcm polymorph)",
+      "reason": "The P6_3/mcm polymorph of the drawn Sr5Bi3 field; the Pnma polymorph mp-1197242 stands for Sr5Bi3 on the hull.",
+      "source": "mp-29620; Sr5Bi3 field of the assessed Bi-Sr diagram",
+      "date": "2026-10-26"
     }
-  ]
+  ],
+  "expected_gs_basis": {
+    "H": "observed 1 atm ground state",
+    "He": "current database anchor (no usable SGTE reference)",
+    "Li": "observed 1 atm ground state",
+    "Be": "observed 1 atm ground state",
+    "B": "observed 1 atm ground state",
+    "C": "observed 1 atm ground state",
+    "N": "observed 1 atm ground state",
+    "O": "current database anchor (no usable SGTE reference)",
+    "F": "current database anchor (no usable SGTE reference)",
+    "Ne": "SGTE stable element reference FCC_A1 (solid noble gas)",
+    "Na": "observed 1 atm ground state",
+    "Mg": "observed 1 atm ground state",
+    "Al": "observed 1 atm ground state",
+    "Si": "observed 1 atm ground state",
+    "P": "current database anchor (no usable SGTE reference)",
+    "S": "SGTE stable element reference ORTHORHOMBIC_S",
+    "Cl": "current database anchor (no usable SGTE reference)",
+    "Ar": "SGTE stable element reference FCC_A1 (solid noble gas)",
+    "K": "SGTE stable element reference BCC_A2",
+    "Ca": "observed 1 atm ground state",
+    "Sc": "observed 1 atm ground state",
+    "Ti": "observed 1 atm ground state",
+    "V": "observed 1 atm ground state",
+    "Cr": "observed 1 atm ground state",
+    "Mn": "observed 1 atm ground state",
+    "Fe": "observed 1 atm ground state",
+    "Co": "observed 1 atm ground state",
+    "Ni": "observed 1 atm ground state",
+    "Cu": "observed 1 atm ground state",
+    "Zn": "observed 1 atm ground state",
+    "Ga": "observed 1 atm ground state",
+    "Ge": "observed 1 atm ground state",
+    "As": "SGTE stable element reference RHOMBOHEDRAL_A7",
+    "Se": "SGTE stable element reference HEXAGONAL_A8",
+    "Br": "current database anchor (no usable SGTE reference)",
+    "Kr": "SGTE stable element reference FCC_A1 (solid noble gas)",
+    "Rb": "observed 1 atm ground state",
+    "Sr": "observed 1 atm ground state",
+    "Y": "observed 1 atm ground state",
+    "Zr": "observed 1 atm ground state",
+    "Nb": "observed 1 atm ground state",
+    "Mo": "observed 1 atm ground state",
+    "Tc": "SGTE stable element reference HCP_A3",
+    "Ru": "observed 1 atm ground state",
+    "Rh": "observed 1 atm ground state",
+    "Pd": "observed 1 atm ground state",
+    "Ag": "observed 1 atm ground state",
+    "Cd": "observed 1 atm ground state",
+    "In": "observed 1 atm ground state",
+    "Sn": "observed 1 atm ground state",
+    "Sb": "SGTE stable element reference RHOMBOHEDRAL_A7",
+    "Te": "SGTE stable element reference HEXAGONAL_A8",
+    "I": "current database anchor (no usable SGTE reference)",
+    "Xe": "SGTE stable element reference FCC_A1 (solid noble gas)",
+    "Cs": "SGTE stable element reference BCC_A2",
+    "Ba": "observed 1 atm ground state",
+    "La": "observed 1 atm ground state",
+    "Ce": "observed 1 atm ground state",
+    "Pr": "observed 1 atm ground state",
+    "Nd": "observed 1 atm ground state",
+    "Sm": "observed 1 atm ground state",
+    "Eu": "observed 1 atm ground state",
+    "Gd": "observed 1 atm ground state",
+    "Tb": "observed 1 atm ground state",
+    "Dy": "observed 1 atm ground state",
+    "Ho": "observed 1 atm ground state",
+    "Er": "observed 1 atm ground state",
+    "Tm": "observed 1 atm ground state",
+    "Yb": "observed 1 atm ground state",
+    "Lu": "observed 1 atm ground state",
+    "Hf": "observed 1 atm ground state",
+    "Ta": "observed 1 atm ground state",
+    "W": "observed 1 atm ground state",
+    "Re": "observed 1 atm ground state",
+    "Os": "observed 1 atm ground state",
+    "Ir": "observed 1 atm ground state",
+    "Pt": "SGTE stable element reference FCC_A1",
+    "Au": "observed 1 atm ground state",
+    "Hg": "observed 1 atm ground state",
+    "Tl": "observed 1 atm ground state",
+    "Pb": "observed 1 atm ground state",
+    "Bi": "SGTE stable element reference RHOMBOHEDRAL_A7",
+    "Th": "observed 1 atm ground state",
+    "U": "SGTE stable element reference ORTHORHOMBIC_A20",
+    "Pu": "SGTE stable element reference ALPHA_PU"
+  }
 }

@@ -104,7 +104,7 @@ SUBJECTS = {
                 "imputed_as": "LaBi",
                 "anchor": "per",
                 "dft_h_form_j": -101059.8399,
-                "imputed_h_form_j": -98151.2683,
+                "imputed_h_form_j": -98168.7896,
                 "clamped": False,
             },
             {
@@ -113,7 +113,7 @@ SUBJECTS = {
                 "imputed_as": "La2Bi",
                 "anchor": "per",
                 "dft_h_form_j": -73361.9681,
-                "imputed_h_form_j": -71799.2812,
+                "imputed_h_form_j": -71799.6272,
                 "clamped": True,
             },
         ],
