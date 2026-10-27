@@ -778,9 +778,10 @@ class TernaryLiquidInterpolation:
         on the hull. Without them the liquid crosses the *extrapolated* ground state, so a pure
         corner melts at ``h_liq / s_liq`` instead of ``t_fusion``.
 
-        Polymorphs whose spacegroup a continuous solid-solution surface already covers are
-        excluded (the ternary counterpart of the binary's ``exclude_spacegroups``), so a
-        structure never appears as both an SS surface and a fixed-composition line compound.
+        Polymorphs that are the end member of a modelled solid-solution surface
+        (``ComponentRef.ss_polymorphs``) are excluded (the ternary counterpart of the binary's
+        ``exclude_spacegroups``), so a structure never appears as both an SS surface and a
+        fixed-composition line compound.
 
         ``imputed_entries`` are re-anchored onto this hull and compete on it exactly as a DFT
         phase does; ``ternary_meta['n_imputed_entries']`` and ``['n_imputed_stable']`` record
