@@ -425,8 +425,8 @@ def _endpoint_polymorphs(
     Args:
         components (list): The two component names.
         component_data (dict): Mapping of component symbol to ``ComponentRef``.
-        exclude_spacegroups (set[int] | None): Polymorphs whose spacegroup number is in this
-            set are skipped.
+        exclude_spacegroups (set[int] | None): Spacegroups of the modelled solid solutions; the
+            polymorphs that are those end members (``ComponentRef.ss_polymorphs``) are skipped.
 
     Returns:
         list[Phase]: The polymorphs, unsorted.
@@ -453,8 +453,9 @@ def build_phases_from_chull(
         components (list): List of component names; each phase's evaluation-axis
             fraction derives from its Composition via ``Phase.fraction_in``.
         component_data (dict): Mapping of component symbol to ``ComponentRef``, used to add polymorphs as explicit phases.
-        exclude_spacegroups (set[int] | None): Endpoint polymorphs whose spacegroup number is in
-            this set are skipped.
+        exclude_spacegroups (set[int] | None): Spacegroups of the modelled solid solutions; the
+            endpoint polymorphs that are those end members (``ComponentRef.ss_polymorphs``)
+            are skipped.
 
     Returns:
         list[Phase]: Elemental polymorphs and line compounds sorted by composition,

@@ -1,12 +1,12 @@
 """Tier B lattice-stability block: loader (phase.py) and resolver (solution.py).
 
-All synthetic. For ``from_unary_db`` the block holds builder-baked cumulative enthalpies
+All synthetic. For ``from_unary_db`` the block holds cumulative enthalpies
 above the element anchor, with no transition temperature, kept OUT of
 ``polymorphs``/hull/liquid machinery by construction.
 
 Entropy is 0 by the recalculation convention (nothing to divide by without a
-transition temperature), except where the builder's scoped metastable-entropy
-exception emits a negative SGTE value — see ``TestMetastableEntropyException``.
+transition temperature), except where the table's scoped metastable-entropy
+exception records a negative SGTE value — see ``TestMetastableEntropyException``.
 """
 
 import json
@@ -15,7 +15,7 @@ import pytest
 
 import gliquid.config as config
 import gliquid.solution as sd
-from gliquid.phase import ComponentRef, Phase, UnaryData
+from gliquid.phase import ComponentRef, Phase, UnaryData, polymorph_ladder
 
 SYNTH = {
     "elements": {
@@ -151,11 +151,8 @@ class TestResolver:
 
 
 # -- Scoped metastable-entropy exception --
-# The builder may emit a NEGATIVE delta_S on a lattice stability for a metastable
-# structure, where dS = dH / T_trans is undefined. Both the loader and the resolver
-# must carry that value through instead of re-flattening it to 0, and it must stay out
-# of the ladder machinery exactly as a zero-entropy entry does. Synthetic throughout:
-# which elements are in the exception is the DATABASE's business, not the package's.
+# A NEGATIVE delta_S on a metastable lattice stability passes through the loader and resolver
+# unflattened and stays out of the ladder machinery, like a zero-entropy entry. Synthetic data.
 
 
 def _synth_with_entropy(hcp_entropy):
@@ -221,7 +218,7 @@ class TestMetastableEntropyException:
         The endpoint melting reconstruction is max((h_liq - dH) / (s_liq - dS)) over the
         candidate solids. A NEGATIVE dS only enlarges the denominator, so the metastable
         reference's crossing sits BELOW the ground state's and the element still melts at
-        its own t_fusion. A positive dS would not be safe — hence the builder's sign guard.
+        its own t_fusion. A positive dS would not be safe, so the table carries only negative ones.
         """
         reg = registry_factory(_synth_with_entropy(-1.6))
         ref = reg["Fe"].copy()
@@ -238,13 +235,8 @@ class TestMetastableEntropyException:
 
 
 # -- Virtual ladder phases --
-# A real equilibrium polymorph that Materials Project has no entry for is injected onto
-# the ladder by the builder with a synthetic ``materials_project_id`` ("virtual-Y-beta").
-# From the package's point of view it must behave as an ORDINARY ladder phase: resolved by
-# spacegroup, preferred over any lattice stability of the same structure, kept in the
-# crossing pool as a line compound when no SS model covers it, and never flagged
-# ``imputed`` (that flag means "omegas-file fallback", not "not from MP"). Synthetic
-# throughout: WHICH elements carry a virtual phase is the DATABASE's business.
+# A real polymorph with no MP entry ("virtual-Y-beta") is an ordinary ladder phase: resolved
+# by spacegroup, preferred over a lattice stability, never ``imputed``.
 
 
 def _synth_with_virtual_bcc():
@@ -365,3 +357,96 @@ class TestVirtualLadderPhase:
                 solids += [(v["delta_h_jmol"], v["delta_s_jmol_k"]) for v in kept.values()]
                 crossings = [(h_liq - h) / (s_liq - s) for h, s in solids if s_liq - s > 1e-9]
                 assert max(crossings) == pytest.approx(ref.t_fusion, abs=0.02), subset
+
+
+# -- Prototype matching --
+# SG 194 holds hcp (hP2), dhcp and graphite (hP4). Only hP2, or no Pearson symbol, is the HCP end
+# member; another prototype stands in only when no hP2 lattice stability exists.
+
+HCP_LS = {
+    "spacegroup_number": 194,
+    "spacegroup_symbol": "P6_3/mmc",
+    "delta_H_J_per_mol": 2792.65,
+    "delta_S_J_per_mol_K": 0.0,
+    "transition_temperature_K": None,
+    "materials_project_id": "mp-1059256",
+    "metadata": {"source": "DFT (Materials Project, GGA/GGA+U PBE)"},
+}
+
+
+def _synth_dhcp(pearson="hP4", hcp_block=True):
+    """A Pr-like element: dhcp ground state in SG 194, bcc above it, optional hP2 block."""
+    solid = {"phase_type": "solid", "entropy_J_per_mol_K": 0.0, "delta_S_J_per_mol_K": 0.0}
+    return {
+        "elements": {
+            "Pr": {
+                "symbol": "Pr",
+                "phases": [
+                    {
+                        **solid,
+                        "common_name": "alpha-Pr (dhcp)",
+                        "spacegroup_number": 194,
+                        "spacegroup_symbol": "P6_3/mmc",
+                        "pearson_symbol": pearson,
+                        "transition_temperature_K": 0,
+                        "enthalpy_J_per_mol": 0.0,
+                        "delta_H_J_per_mol": 0.0,
+                    },
+                    {
+                        **solid,
+                        "common_name": "beta-Pr (bcc)",
+                        "spacegroup_number": 229,
+                        "spacegroup_symbol": "Im-3m",
+                        "pearson_symbol": "cI2",
+                        "transition_temperature_K": 1068,
+                        "enthalpy_J_per_mol": 3208.0,
+                        "entropy_J_per_mol_K": 3208.0 / 1068,
+                        "delta_H_J_per_mol": 3208.0,
+                        "delta_S_J_per_mol_K": 3208.0 / 1068,
+                    },
+                    {
+                        "phase_type": "liquid",
+                        "common_name": "Liquid Praseodymium",
+                        "transition_temperature_K": 1204.0,
+                        "enthalpy_J_per_mol": 10108.0,
+                        "entropy_J_per_mol_K": 3208.0 / 1068 + 6900.0 / 1204.0,
+                        "delta_H_J_per_mol": 6900.0,
+                        "delta_S_J_per_mol_K": 6900.0 / 1204.0,
+                    },
+                ],
+                "lattice_stabilities": {"HCP": HCP_LS} if hcp_block else {},
+            }
+        }
+    }
+
+
+class TestPrototypeMatching:
+    def test_hp2_reference_replaces_a_dhcp_ladder_phase(self, registry_factory):
+        ref = registry_factory(_synth_dhcp())["Pr"]
+        _, phase_refs = sd._resolve_refs_db(["Pr"], {"Pr": ref.copy()})
+        assert phase_refs["HCP"]["Pr"]["delta_h_jmol"] == 2792.65
+        assert "lattice_stability" in phase_refs["HCP"]["Pr"]["source"]
+        # dhcp is not the HCP end member, so it stays a line compound beside the HCP model
+        assert [p.name for p in polymorph_ladder(ref, {194, 229})] == ["alpha-Pr (dhcp)"]
+
+    def test_other_prototype_stands_in_without_an_hp2_reference(self, registry_factory, caplog):
+        ref = registry_factory(_synth_dhcp(hcp_block=False))["Pr"]
+        with caplog.at_level("WARNING", logger="gliquid.solution"):
+            sd._STAND_IN_WARNED.discard(("Pr", "HCP"))
+            _, phase_refs = sd._resolve_refs_db(["Pr"], {"Pr": ref.copy()})
+        assert phase_refs["HCP"]["Pr"]["delta_h_jmol"] == 0.0
+        assert "stands in" in caplog.text
+        assert polymorph_ladder(ref, {194}) == [polymorph_ladder(ref)[1]]
+
+    def test_unrecorded_pearson_symbol_matches_by_spacegroup(self, registry_factory):
+        ref = registry_factory(_synth_dhcp(pearson=None))["Pr"]
+        assert [p.name for p in ref.ss_polymorphs("HCP")] == ["alpha-Pr (dhcp)"]
+        assert ref.ss_polymorphs("FCC") == []
+
+    def test_non_ss_spacegroups_still_drop_every_polymorph(self, registry_factory):
+        ref = registry_factory(_synth_dhcp())["Pr"]
+        assert [p.name for p in polymorph_ladder(ref, {229})] == ["alpha-Pr (dhcp)"]
+        assert [p.name for p in polymorph_ladder(ref, {1068})] == [
+            "alpha-Pr (dhcp)",
+            "beta-Pr (bcc)",
+        ]
