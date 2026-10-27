@@ -197,7 +197,7 @@
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": 0.0,
-       "material_id": "mp-100",
+       "material_id": "sgte-Hf-229",
        "spacegroup": 229,
        "symbol": "Im-3m",
        "energy_ev_per_atom": 0.061107944240037314,
@@ -210,7 +210,7 @@
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": 0.0,
-       "material_id": "mp-41",
+       "material_id": "sgte-Zr-229",
        "spacegroup": 229,
        "symbol": "Im-3m",
        "energy_ev_per_atom": 0.043074052961600245,
@@ -264,36 +264,36 @@
     "FCC": {
      "refs": {
       "Hf": {
-       "source": "from_unary_db+omegas_fallback (anchored on HCP)",
+       "source": "from_unary_db:lattice_stability (DFT (Materials Project, GGA/GGA+U PBE))",
        "ground_material_id": "mp-103",
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": 0.0,
-       "material_id": "omegas_fallback",
+       "material_id": "mp-8640",
        "spacegroup": 225,
        "symbol": "Fm-3m",
-       "energy_ev_per_atom": -9.88467491,
-       "delta_h_jmol": 6841.51158477494,
+       "energy_ev_per_atom": -9.884781,
+       "delta_h_jmol": 6986.29,
        "delta_s_jmol_k": 0.0
       },
       "Zr": {
-       "source": "from_unary_db+omegas_fallback (anchored on HCP)",
+       "source": "from_unary_db:lattice_stability (DFT (Materials Project, GGA/GGA+U PBE))",
        "ground_material_id": "mp-131",
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": 0.0,
-       "material_id": "omegas_fallback",
+       "material_id": "mp-8635",
        "spacegroup": 225,
        "symbol": "Fm-3m",
-       "energy_ev_per_atom": -8.50764845,
-       "delta_h_jmol": 3850.1229672499467,
+       "energy_ev_per_atom": -8.508437,
+       "delta_h_jmol": 3788.39,
        "delta_s_jmol_k": 0.0
       }
      },
      "ref_mode": "element-db",
      "omega_jmol": -104.07921374380798,
-     "deltaH_a_jmol": 6841.51158477494,
-     "deltaH_b_jmol": 3850.1229672499467,
+     "deltaH_a_jmol": 6986.29,
+     "deltaH_b_jmol": 3788.39,
      "deltaS_a_jmol_k": 0.0,
      "deltaS_b_jmol_k": 0.0
     }
@@ -314,38 +314,38 @@
     "BCC": {
      "refs": {
       "Hf": {
-       "source": "binary-cache",
+       "source": "from_dft_entries+unary_db",
        "ground_material_id": "mp-103-GGA",
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": -9.95718903,
-       "material_id": "mp-100-GGA",
+       "material_id": "sgte-Hf-229",
        "spacegroup": 229,
        "symbol": "Im-3m",
-       "energy_ev_per_atom": -9.78103403,
-       "delta_h_jmol": 16996.315174999963,
-       "delta_s_jmol_k": 8.430711892361092
+       "energy_ev_per_atom": -9.896081085759963,
+       "delta_h_jmol": 5896,
+       "delta_s_jmol_k": 2.9246031746031744
       },
       "Zr": {
-       "source": "binary-cache",
+       "source": "from_dft_entries+unary_db",
        "ground_material_id": "mp-131-GGA",
        "ground_spacegroup": 194,
        "ground_symbol": "P6_3/mmc",
        "ground_energy_ev_per_atom": -8.54770063,
-       "material_id": "mp-41-GGA",
+       "material_id": "sgte-Zr-229",
        "spacegroup": 229,
        "symbol": "Im-3m",
-       "energy_ev_per_atom": -8.47313825,
-       "delta_h_jmol": 7194.151234299971,
-       "delta_s_jmol_k": 6.332879607658425
+       "energy_ev_per_atom": -8.5046265770384,
+       "delta_h_jmol": 4156,
+       "delta_s_jmol_k": 3.658450704225352
       }
      },
      "ref_mode": "binary-cache",
      "omega_jmol": -14721.750769199614,
-     "deltaH_a_jmol": 16996.315174999963,
-     "deltaH_b_jmol": 7194.151234299971,
-     "deltaS_a_jmol_k": 8.430711892361092,
-     "deltaS_b_jmol_k": 6.332879607658425
+     "deltaH_a_jmol": 5896.0,
+     "deltaH_b_jmol": 4156.0,
+     "deltaS_a_jmol_k": 2.9246031746031744,
+     "deltaS_b_jmol_k": 3.658450704225352
     },
     "FCC": {
      "refs": {
@@ -422,12 +422,12 @@
    },
    "reconciled": {
     "Hf": {
-     "H_liq": 44196.31517499997,
-     "S_liq": 19.28466241111608
+     "H_liq": 33096.0,
+     "S_liq": 13.778553693358162
     },
     "Zr": {
-     "H_liq": 28194.15123429997,
-     "S_liq": 16.205940256459556
+     "H_liq": 25156.0,
+     "S_liq": 13.531511353026481
     }
    }
   }

@@ -25,15 +25,6 @@ FIXTURE_REF_MODE = {  # new API name -> frozen fixture key/label
 _REF_MODE_RELABEL = {old: new for new, old in FIXTURE_REF_MODE.items()}
 
 
-# The element-db pin's provenance labels for the lattice_stabilities block, translated so
-# the byte-frozen pins compare equal. The other modes keep their labels.
-_UNARY_FALLBACK_SOURCE_PREFIX = "from_unary_db+omegas_fallback"
-_LATTICE_STABILITY_SOURCE = (
-    "from_unary_db:lattice_stability (Chen et al., Nat. Commun. 14, 2856 (2023); "
-    "data: Zenodo 10.5281/zenodo.7633180, model_params/omegas.json)"
-)
-
-
 def relabel_ref_modes(obj):
     """Recursively rewrite frozen ref-mode/source label strings to the new API names,
     so a byte-frozen pin compares equal to renamed live output."""
@@ -42,10 +33,6 @@ def relabel_ref_modes(obj):
     if isinstance(obj, list):
         return [relabel_ref_modes(v) for v in obj]
     if isinstance(obj, str):
-        if obj.startswith(_UNARY_FALLBACK_SOURCE_PREFIX):
-            return _LATTICE_STABILITY_SOURCE
-        if obj == "omegas_fallback":
-            return "omegas_hcp"
         return _REF_MODE_RELABEL.get(obj, obj)
     return obj
 
