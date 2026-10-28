@@ -149,10 +149,8 @@ def test_lattice_stability_block_supplies_missing_phases():
 
 
 def test_reconciliation_does_not_corrupt_registry():
-    # from_omegas_file: resolver enthalpies come from the omegas file, so the reconciled
-    # liquid reference genuinely diverges from the stored one. from_unary_db does NOT reconcile
-    # at all -- its refs already ARE the stored ladder, on the same zero (see
-    # load_solid_solution_models); re-deriving from an SS-phase subset could only lose steps.
+    # from_omegas_file reconciles against the omegas file, so the liquid reference diverges;
+    # from_unary_db does not reconcile: its refs already are the stored ladder on the same zero.
     h0, s0 = UNARY["Hf"].h_liq, UNARY["Hf"].s_liq
     component_data = UNARY.component_data(["Hf", "Zr"])
     sd.load_solid_solution_models(
@@ -202,11 +200,8 @@ def test_get_dft_structure_entries_offline_and_typed():
 
 
 # -- Reference-frame invariants --
-# A fitted diagram's pure-element edge is the hull crossing of G_liquid with the lowest endpoint
-# solid, so it lands on t_fusion only while the SS phase references and the elemental polymorph
-# line compounds share one reference frame. Driven off the whole unary registry, sweeping every
-# subset of {BCC, FCC, HCP}: which SS phases survive packaging, and so which polymorphs leave
-# the line compounds, is a property of the partner element.
+# A pure-element edge lands on t_fusion only while SS references and polymorph line compounds share
+# one frame. Swept over the unary registry and every subset of {BCC, FCC, HCP}.
 def _elements_with_ss_polymorphs():
     return sorted(
         el
@@ -311,9 +306,8 @@ def test_reconciled_liquid_ref_two_step_ladder():
 
 
 # -- Omegas fallback --
-# An element with no polymorph entry for a structure takes that SS reference from the omegas
-# file's ``elements`` block instead of dropping the SS phase. Only the from_dft_entries / legacy
-# modes reach this path, so these tests drive it with synthetic refs.
+# A structure with no polymorph entry takes its SS reference from the omegas ``elements`` block.
+# Only the from_dft_entries / legacy modes reach this, so these use synthetic refs.
 def _omegas_elements_block(**per_phase):
     """{phase: {element: eV/atom}} shaped like the omegas file's `elements` block."""
     return {phase: dict(vals) for phase, vals in per_phase.items()}
