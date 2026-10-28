@@ -173,6 +173,26 @@ def guess_scales(guess_symbols, temperature: float) -> list[float]:
     return [float(temperature) if str(sym).endswith("_b") else 1.0 for sym in guess_symbols]
 
 
+def hs_partition_seed_equation(order: int, fmt: ParamFormat, tau: float) -> sp.Eq:
+    """The equation fixing ``L{order}_b`` in the H-S partition seed fit.
+
+    A pinned ``L_b`` keeps its identity constraint, so the seed fit and the candidates fit the
+    same model. Every other ``L_b`` is held at S_xs(0 K) = 0.
+
+    Args:
+        order: The RK order k.
+        fmt: The parameter format.
+        tau: The H-S scale (K) of the ``exp(-T/tau)`` forms.
+
+    Returns:
+        sympy.Eq: One equation in the order's parameter symbols.
+    """
+    pinned = dict(zip(fmt.pinned_params, fmt.identity_constraints()))
+    if f"L{order}_b" in pinned:
+        return pinned[f"L{order}_b"]
+    return sp.Eq(sp.diff(fmt.order_expr(order, tau), t_sym).subs({t_sym: 0}), 0)
+
+
 def _offset_vertex_value(value: float, spread_min: float, sign_of: float) -> float:
     """An ``L*_b`` value moved by ``max(0.2 * |value|, spread_min)`` in the direction that adds
     excess entropy at 0 K of ``sign_of``'s sign (the order's ``L*_a``), so the offset vertex
@@ -2758,17 +2778,12 @@ class BinaryLiquid:
         try:
             L0_a_sym, L0_b_sym = l_sym("L0_a"), l_sym("L0_b")
             L1_a_sym, L1_b_sym = l_sym("L1_a"), l_sym("L1_b")
-            no_L0Sxs_eq = sp.Eq(
-                sp.diff(self.eqs["l0"], t_sym).subs({t_sym: 0}), 0
-            )  # enforce S0xs @0K = 0 -> L0_b != 0 (comb)
-            no_L1Sxs_eq = sp.Eq(
-                sp.diff(self.eqs["l1"], t_sym).subs({t_sym: 0}), 0
-            )  # enforce S1xs @0K = 0 -> L1_b != 0 (comb)
+            seed_eqs = [hs_partition_seed_equation(order, fmt, self.tau) for order in (0, 1)]
             self.update_params([])  # Restore parameter defaults
 
             self.guess_symbols = [L0_a_sym, L1_a_sym]
             self.constraints = sp.solve(
-                [no_L0Sxs_eq, no_L1Sxs_eq], (L0_b_sym, L1_b_sym), rational=False, simplify=False
+                seed_eqs, (L0_b_sym, L1_b_sym), rational=False, simplify=False
             )
             hs_partition_triangle = build_init_triangle(("L0_a", "L1_a"), self.dft_ch)
             if verbose:

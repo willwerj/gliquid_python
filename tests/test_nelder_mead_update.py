@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import sympy as sp
 
 from gliquid.binary import (
     DEFAULT_B_SPREAD_MIN,
@@ -17,8 +18,9 @@ from gliquid.binary import (
     _offset_vertex_value,
     _restore_infeasible_vertices,
     build_init_triangle,
+    hs_partition_seed_equation,
 )
-from gliquid.solution import DEFAULT_TAU, PARAM_FORMATS
+from gliquid.solution import DEFAULT_TAU, PARAM_FORMATS, l_sym
 
 INF = float("inf")
 
@@ -277,3 +279,29 @@ class TestScaledConvergence:
         assert path_plain.shape[2] == 1
         assert path_scaled.shape[2] > 10
         assert f_scaled < 1e-3
+
+
+class TestHsPartitionSeedEquation:
+    """The equation each RK order's ``L*_b`` is solved from in the H-S partition seed fit."""
+
+    @staticmethod
+    def _solve_b(fmt_name, order, tau=DEFAULT_TAU):
+        eq = hs_partition_seed_equation(order, PARAM_FORMATS[fmt_name], tau)
+        (b,) = sp.solve(eq, l_sym(f"L{order}_b"))
+        return b
+
+    @pytest.mark.parametrize("fmt_name", ["combined", "comb-exp"])
+    def test_a_free_exp_term_keeps_zero_excess_entropy_at_0k(self, fmt_name):
+        assert self._solve_b(fmt_name, 0) == l_sym("L0_a") / DEFAULT_TAU
+
+    @pytest.mark.parametrize("order", [0, 1])
+    def test_linear_keeps_zero_excess_entropy_at_0k(self, order):
+        assert self._solve_b("linear", order) == 0
+
+    def test_combined_l1_keeps_zero_excess_entropy_at_0k(self):
+        assert self._solve_b("combined", 1, 3000) == l_sym("L1_a") / 3000
+
+    def test_comb_exp_l1_is_seeded_on_its_pin(self):
+        fmt = PARAM_FORMATS["comb-exp"]
+        assert hs_partition_seed_equation(1, fmt, 3000) == fmt.identity_constraints()[0]
+        assert self._solve_b("comb-exp", 1, 3000) == 0

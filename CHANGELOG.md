@@ -124,6 +124,10 @@ source tree carries a version literal that could disagree with this file.
 
 ### Fixed
 
+- **The H-S partition seed fit honours a pinned `L*_b`.** In `'comb-exp'` it fitted `L1`
+  with `L1_b = L1_a / tau` (zero excess entropy at 0 K) and then handed `L1_a` to candidates that
+  hold `L1_b = 0`; it now fits the pinned model throughout.
+
 - **The Bi-Sr hull follows the assessed diagram's compounds.** The Materials Project hull has
   vertices at Sr2Bi3 (mp-31150, x_Sr = 0.400) and Sr4Bi3 (mp-30893, x_Sr = 0.571), which the
   assessed Bi-Sr diagram does not draw, and takes the P6_3/mcm polymorph of Sr5Bi3 (mp-29620).
