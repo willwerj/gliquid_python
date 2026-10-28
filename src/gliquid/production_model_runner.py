@@ -112,7 +112,7 @@ def _joblib():
 
 #: The bundle that ships in the wheel. L1_b is pinned to zero by the comb-exp fit format, so it
 #: has no model.
-DEFAULT_BUNDLE_ID = "20261017_003407"
+DEFAULT_BUNDLE_ID = "20261028_105725"
 
 #: Bundle layout version; a bundle whose ``manifest.json`` declares a higher one is refused.
 #: Schema 2 adds ``members``: one subdirectory per model, each with its own ``preprocess.json``
