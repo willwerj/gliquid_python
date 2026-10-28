@@ -6,11 +6,9 @@ abstract: >-
   phase boundaries, and for interpolating multicomponent phase diagrams from the fitted binary
   liquid descriptions.
 type: software
-# NOTE: this version is a literal and nothing derives it. The distribution version comes from
-# the git tag via hatch-vcs, so this file and `date-released` below must be bumped BY HAND at
-# each release -- see the release checklist in CONTRIBUTING.md.
-version: "0.3.1"
-date-released: "2026-10-17"
+# A literal: bump `version` and `date-released` by hand at each release (CONTRIBUTING.md).
+version: "0.3.2"
+date-released: "2026-10-29"
 license: MIT
 repository-code: "https://github.com/willwerj/gliquid_python"
 url: "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"

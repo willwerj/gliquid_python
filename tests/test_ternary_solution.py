@@ -42,10 +42,8 @@ def tern_models():
 
 class TestTernarySSModels:
     def test_phases_and_schema(self, tern_models):
-        # Ti carries an HCP-194 polymorph (dH 1463.64 J/mol, T_tr 180 K) above its
-        # spacegroup-191 DFT ground state, so BCC and HCP resolve for all three elements
-        # straight from the element db. None of Hf/Ti/Zr has an FCC polymorph; the unary DB's
-        # lattice_stabilities block supplies the omegas FCC energies.
+        # Ti's HCP-194 polymorph sits above its SG-191 DFT ground state, so BCC and HCP resolve for
+        # all three elements from the element db; FCC comes from the unary DB's lattice_stabilities.
         assert set(tern_models) == {"BCC", "HCP", "FCC"}
         for model in tern_models.values():
             assert set(model["omega"]) == set(PAIRS)

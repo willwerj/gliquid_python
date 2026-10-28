@@ -1,13 +1,7 @@
 #!/bin/sh
-# ruff format gate for staged Python, over the same three paths the CI lint job checks.
-#
-# Reformats the staged files and re-stages them, so the commit records formatted code. A file
-# with unstaged changes alongside its staged ones is left alone and the commit aborts: `git add`
-# on a partially staged file would sweep the unstaged hunks into the commit too.
-#
-# Activate:   git config core.hooksPath .githooks
-# Skip once:  git commit --no-verify
-# `ruff check` is not run here; the CI lint job runs it and fails on any finding.
+# ruff format for staged Python under src/gliquid and tests/, re-staged after formatting.
+# A file that also has unstaged changes aborts the commit instead of being re-staged.
+# Activate: git config core.hooksPath .githooks. `ruff check` runs in CI, not here.
 
 ruff_bin=""
 if [ -n "$GLIQUID_RUFF" ] && [ -x "$GLIQUID_RUFF" ]; then

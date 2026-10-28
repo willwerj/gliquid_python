@@ -845,9 +845,8 @@ class TestLiquidLiquidExemption:
 
 
 # -- The L + S1 + S2 invariant: Cr-W's ('BCC','BCC','L') at ~1932 C --
-# The real Cr-W family, in at.% W, as plot_tx sees it on the FITTED hull: one genuine
-# reaction (BCC pair 42.4 at.% apart) and three collapsed facets of the two-phase L + BCC
-# band whose "pair" is a single 0.2 at.% sampling step. Only the first may be drawn.
+# Cr-W on the fitted hull, in at.% W: one real reaction (a BCC pair 42.4 at.% apart) and three
+# collapsed L + BCC facets one 0.2 at.% step wide. Only the first may be drawn.
 CR_W_REGIONS = {"BCC": [_box_region(0.0, 100.0, 500.0, 3400.0)]}
 CR_W_RANGE = (500.0, 3500.0)
 CR_W_FAMILY = [
@@ -1000,10 +999,8 @@ class TestEdgeInsideSsField:
 
 
 # -- The eutectoid horizontal at a branch's interior temperature minimum --
-# The synthetic field: an 80 at.%-wide band sampled every 1 at.%, flat on top at 900 C,
-# its lower boundary a V bottoming out at 600 C in the middle. Both termini are blunt, so
-# neither terminus anchor covers the V's floor and the branch carries exactly one
-# 'lower_min' anchor -- the shape Y-Zr's and Hf-Y's BCC fields have.
+# An 80 at.%-wide band, flat at 900 C, its lower edge a V bottoming at 600 C. Both termini are
+# blunt, so the branch carries exactly one 'lower_min' anchor, as Y-Zr's and Hf-Y's BCC do.
 _MIN_STEP = 1.0
 _MIN_FLOOR = 600.0
 _MIN_TOP = 900.0
@@ -1017,10 +1014,8 @@ def _v_region(x_min=50.0, x0=10.0, x1=90.0, slope=5.0, step=_MIN_STEP):
     return _ss_regions(xs, lo, hi, grid_step=step)[0]
 
 
-# (temp, x_lo, x_hi, phase set) rows in the shape _facet_assemblages returns. The pair
-# straddling 600 C is what admission rule 1 reads. Both span the whole axis, so every
-# candidate composition below has a KNOWN assemblage on both sides and rule 1 passes --
-# whatever else rejects it is then the clause under test.
+# _facet_assemblages-shaped rows; the pair straddling 600 C feeds admission rule 1. Both span the
+# whole axis, so rule 1 passes everywhere and a rejection comes from the clause under test.
 _BELOW = (500.0, 0.0, 100.0, frozenset({"CA", "CB"}))
 _CHANGED = [_BELOW, (650.0, 0.0, 60.0, frozenset({"CA", "SS"}))]
 _UNCHANGED = [_BELOW, (650.0, 0.0, 100.0, frozenset({"CA", "CB"}))]

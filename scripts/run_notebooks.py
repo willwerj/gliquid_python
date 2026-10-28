@@ -51,10 +51,8 @@ def notebooks_dir() -> Path | None:
     return None
 
 
-# An UNCOMMENTED Colab bootstrap line. colab_demo.ipynb clones the repository into
-# /content/ and installs it there; running that anywhere else either fails on a path that
-# does not exist or, worse, clones into the working tree. Detected before execution so the
-# notebook is never started.
+# An uncommented Colab bootstrap line (git clone, %cd /content): such a notebook is refused
+# before it runs, since outside Colab it would fail or clone into the working tree.
 _COLAB_BOOTSTRAP = re.compile(r"^\s*(![ \t]*git[ \t]+clone|%cd[ \t]+/content)", re.MULTILINE)
 
 # Failure texts that mean "this environment is missing something", not "the notebook is

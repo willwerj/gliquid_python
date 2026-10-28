@@ -9,6 +9,8 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-29
+
 ### Changed
 
 - **The liquid is linearized at its own liquidus, in binaries and ternaries alike.** A liquid whose
@@ -115,6 +117,12 @@ source tree carries a version literal that could disagree with this file.
   lattice stability (+2792.66 J/mol) and alpha-Pr (dhcp) stays a line compound beside it; C, La,
   Nd and Sm keep their SG 194 phase as a stand-in.
 
+- **`ref_mode="from_dft_entries"` takes the ladder step for a real phase with no DFT entry.** A
+  BCC, FCC or HCP phase on the element's ladder that the DFT entries lack, such as one the
+  blacklist keeps off hulls, takes its ladder enthalpy above the DFT ground state when that
+  ground state has the ladder ground state's spacegroup. Otherwise it is left to the omegas
+  fallback and gliquid logs a warning.
+
 - **Candidate Nelder-Mead fits converge on one scale and start Lupis-Elliott-consistent.** The
   convergence test weighs an `L*_b` coordinate by the mean liquidus temperature, so `L*_a` and
   `L*_b` are measured by their contribution to `L_k` (J/mol); the tolerance is
@@ -140,6 +148,13 @@ source tree carries a version literal that could disagree with this file.
   assessed Bi-Sr diagram does not draw, and takes the P6_3/mcm polymorph of Sr5Bi3 (mp-29620).
   All three are now in `spurious_structures.json`; the hull becomes SrBi3, Sr11Bi10 and the
   Pnma Sr5Bi3 (mp-1197242).
+
+- **The ternary T-x figure draws each solid phase as one vertical segment per composition.**
+  `render_tx_surface` joined every point of a phase into one line, which zig-zagged between
+  compositions; the segments are now separate.
+
+- **`copy.deepcopy` of a `SqliteBackend` returns the same backend** instead of copying the open
+  store.
 
 ## [0.3.1] - 2026-10-17
 
@@ -815,7 +830,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/willwerj/gliquid_python/compare/v0.1.0...v0.2.0

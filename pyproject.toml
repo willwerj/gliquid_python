@@ -4,23 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gliquid"
-# Not a static string: the version is derived from the git tag by hatch-vcs. See
-# [tool.hatch.version] below -- tagging v<X.Y.Z> IS the release.
+# The version comes from the git tag (hatch-vcs); see [tool.hatch.version].
 dynamic = ["version"]
 dependencies = [
-    # Floor measured, not guessed: plotly 5.18's express layer calls
-    # grouped.get_group(s[0]), unwrapping a 1-tuple, which pandas 3.x rejects with
-    # KeyError. The compat matrix hit it in every -min env on py311+ (where pandas 3 is
-    # installable) and not on py310-min (pandas 2.3.3). 5.24.1 is measured clean against
-    # pandas 3.0.5. The <6 ceiling is separate and unrelated: plotly 6 moved the
-    # fillpattern semantics the solid-solution envelope depends on.
+    # >=5.24 works with pandas 3; <6 keeps the fill behaviour the solid-solution envelope uses.
     "plotly>=5.24,<6.0.0",
-    # Ceiling restored on evidence. emmet-core 0.87.1 resolves
-    # emmet.core.io.pymatgen.__getattr__ onto pymatgen.core.entries, a module current
-    # pymatgen no longer has, so api.get_dft_convexhull raises ModuleNotFoundError on any
-    # live MP fetch. Measured broken at 0.87.1 (py311/312/313) and clean at 0.85.1
-    # (py310). This bound was removed in an earlier release-prep pass; the matrix shows
-    # that removal was wrong.
+    # <0.86: later emmet-core breaks live Materials Project fetches. Do not lift.
     "emmet-core>=0.84,<0.86",
     "mp-api>=0.45.1",
     "pymatgen>=2024.1.1",
@@ -30,14 +19,7 @@ dependencies = [
     "matplotlib>=3.10.0",
     "sympy>=1.13",
     "tqdm>=4.65",
-    # NO ML STACK HERE, and that is measured rather than tidy-minded. scikit-learn, shap,
-    # joblib and xgboost were base dependencies until they were found to cost ~935 MB of
-    # site-packages on a deployment image that serves the ternary app, uses only the
-    # hull/phase-diagram path, and never constructs a ProductionModelRunner. The image went
-    # 5.08 GB -> 6.45 GB while its own /app payload SHRANK 1.3 G -> 1.1 G. Only
-    # gliquid.production_model_runner and gliquid.shap_compat import any of them, lazily:
-    # xgboost is the `ml` extra, and shap or a legacy bundle's stack is installed by hand. Re-adding one here re-adds it for every consumer of
-    # the library; test_optional_ml_extras.py fails if one reappears.
+    # No ML packages here: they are the `ml` extra (test_optional_ml_extras.py checks this).
 ]
 requires-python = ">=3.10,<3.14"
 authors = [
@@ -63,9 +45,7 @@ keywords = [
     "Materials Project (MP)",
     "Materials Platform for Data Science (MPDS)"
 ]
-# Deliberately no OSI-Approved-License classifier: the license is declared above in the PEP
-# 639 SPDX form (license = "MIT"), and current packaging tooling rejects carrying both. Adding
-# one back is the single easiest way to break the build.
+# No license classifier: the SPDX `license` above and a classifier together fail the build.
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -84,24 +64,8 @@ mpds = [
     "mpds-client"
 ]
 ml = [
-    # Everything the SHIPPED portable bundle needs, and nothing else. Its scalers are
-    # _AffineScaler/_StandardInverse -- plain NumPy replaying recorded coefficients -- so
-    # scikit-learn is NOT here; its weights are UBJSON, not a pickle graph, so joblib is
-    # not either. Booster.load_model + DMatrix is the whole requirement.
-    #
-    # xgboost-cpu, not xgboost. They are the same code and the same import name; the only
-    # difference is that `xgboost` declares `nvidia-nccl-cuXX; platform_system == "Linux"`
-    # and `xgboost-cpu` does not. Measured on PyPI for the linux-x86_64 py312 resolve:
-    # nvidia-nccl-cu13 2.31.2 unpacks to 302 MB (cu12, which xgboost 3.1.3 pulls, to
-    # 476 MB) and the xgboost wheel itself unpacks to 87.5 MB against xgboost-cpu's 12.7 MB.
-    # gliquid has no GPU code path at all -- this is single-row inference over three small
-    # boosted-tree models -- so the CUDA build buys nothing and costs ~380 MB.
-    #
-    # The marker split is because xgboost-cpu publishes manylinux (x86_64/aarch64) and
-    # Windows (amd64/arm64) wheels but NO macOS wheels; on macOS the ordinary xgboost wheel
-    # is 2.5 MB and carries no nvidia dependency anyway, so there is nothing to avoid.
-    # 2.1.1 is xgboost-cpu's FIRST release -- a >=2.0 floor there would name a version that
-    # has never existed.
+    # The shipped bundle needs only xgboost. xgboost-cpu has no CUDA dependencies and no macOS
+    # wheels, so macOS takes plain xgboost.
     "xgboost-cpu>=2.1.1,<4; sys_platform != 'darwin'",
     "xgboost>=2.0,<4; sys_platform == 'darwin'",
 ]
@@ -109,17 +73,7 @@ test = [
     "pytest>=7.0",
     "pytest-xdist[psutil]>=3.5",
     "ruff>=0.16,<0.17",
-    # The compat matrix installs `extras = test`, so the ML stack has to arrive through
-    # here or tests/test_portable_model_bundle.py would collect against no xgboost in all
-    # eight environments. Deliberately the UNPINNED forms, not a legacy bundle's
-    # scikit-learn==1.7.1, which would freeze every env at one version and throw away the
-    # coverage that caught StandardScaler.inverse_transform changing its float32 op order
-    # between 1.7.2 and 1.9.0 -- the reason _StandardInverse records a convention at all.
-    #
-    # `shap` is NOT here. No test exercises a SHAP path, so installing it would add numba +
-    # llvmlite (~200 MB) to eight environments for zero coverage; the absence is itself
-    # covered, by the subprocess tests that assert the guarded imports raise a message
-    # naming the install command.
+    # Unpinned on purpose; shap is left out because no test uses it.
     "gliquid[ml]",
     "scikit-learn>=1.4,<2",
     "joblib>=1.3.0",
@@ -137,88 +91,45 @@ notebook = [
 Homepage = "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
 TernaryInterpolation = "https://viz.whsunresearch.group/gliquid/ternary-interpolation/"
 Repository = "https://github.com/willwerj/gliquid_python"
-# The README is the documentation until a real docs site exists; pointing anywhere else
-# would advertise a page that 404s.
 Documentation = "https://github.com/willwerj/gliquid_python#readme"
 Issues = "https://github.com/willwerj/gliquid_python/issues"
 Changelog = "https://github.com/willwerj/gliquid_python/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 source = "vcs"
-# NOT optional decoration, and it covers two different failures. With no SCM data at all --
-# a source extraction, a vendored copy, anything built outside a clone -- setuptools-scm
-# errors the build out; this makes it emit 0.0.0 instead. With a git history that has no
-# reachable tag (the archived pre-release branches, a shallow CI checkout fetched without
-# tags) it is the base the dev version counts up from: 0.0.1.dev<N>+g<sha>.
-# The value is 0.0.0 ON PURPOSE, not the release version. Setting it to the version being
-# released would make a silent fallback INDISTINGUISHABLE from a correct build: `python -m
-# build` builds the wheel from the extracted sdist, which has no .git, so a broken SCM
-# hand-off would emit exactly the right-looking number and ship. With 0.0.0 the same
-# failure surfaces as 0.0.x -- an obviously wrong artifact that cannot reach an index by
-# accident. Build verification should still run in a `git clone`, never an extracted tree.
+# 0.0.0 on purpose: a build that cannot see the git tag must produce an obviously wrong version.
 fallback-version = "0.0.0"
 
 [tool.hatch.build.hooks.vcs]
-# Written into the source tree at build time and shipped in the wheel; gitignored, never
-# committed. gliquid/__init__.py reads it only when no installed distribution provides
-# metadata.
+# Generated at build time and gitignored.
 version-file = "src/gliquid/_version.py"
 
 [tool.hatch.build.targets.wheel]
-# Maps the src layout to a top-level `gliquid` in the wheel. Every non-VCS-ignored file
-# under src/gliquid/ ships, so the reference tables in src/gliquid/reference/ (and the
-# model bundle in src/gliquid/models/) need no package-data declaration of their own.
+# Ships everything under src/gliquid, including reference/ and models/.
 packages = ["src/gliquid"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/tests",
-    # NOT optional, and PATH-ANCHORED -- it must be renamed whenever the directory is.
-    # Hatchling's sdist default is "everything not VCS-ignored", which is BROADER than
-    # the setuptools default this replaced: setuptools omitted the corpus by accident,
-    # hatchling would ship it. That directory (named data/ until it became cache/) is the
-    # external corpus -- per-system DFT caches and MPDS diagrams -- reached through config.set_cache_dir()/GLIQUID_CACHE_DIR. A distribution
-    # does not carry it.
+    # The external data corpus. Path-anchored: rename this with the directory.
     "/cache",
 ]
 
 [tool.ruff]
-# 100, not the 88 default: this codebase already writes to ~95-100 characters, so 88 would
-# roughly double the reformat diff and split calls that read fine today.
 line-length = 100
-# Must track requires-python's floor -- ruff may not suggest syntax 3.10 cannot run.
+# Keep in step with requires-python's floor.
 target-version = "py310"
 extend-exclude = ["notebooks", ".tox"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
-    "E501",  # line length is the formatter's job, not the linter's
-
-    # B905, zip() without an explicit strict=. Off because the correct value is a per-site
-    # judgement, not a global one, and there are dozens of sites across the hull walk and the plotting
-    # code. strict=True is only right where the two sequences are GUARANTEED equal-length;
-    # where they legitimately differ it converts working code into a ValueError at runtime.
-    # strict=False silences the rule while asserting nothing, so mechanical `strict=False`
-    # insertions would buy zero safety and would then look, to the next reader, like a decision
-    # someone had already made. This is a deferred AUDIT, not a dismissal: the useful pass is to
-    # walk each zip, decide whether equal length is a real invariant of that call, and write
-    # strict=True where it is. Re-enable this rule when someone can spend that pass.
-    "B905",
-
-    # E402, module-level import not at the top of the file. Positional on purpose:
-    #   * src/gliquid/binary.py -- the re-export of the public plot-stack names, placed
-    #     directly above BLPlotter.
-    #   * tests/ -- imports that must follow a sys.path insert or a pytest.importorskip() gate.
-    #     Hoisted, they import the wrong tree or hard-fail a suite that should skip on a
-    #     missing optional dependency.
-    # Per-line `# noqa: E402` markers in tests/ state the same intent.
-    "E402",
+    "E501",  # line length is the formatter's job
+    "B905",  # zip(strict=) is a per-call decision
+    "E402",  # binary.py re-exports above BLPlotter; tests import after sys.path/importorskip gates
 ]
 
 [tool.pytest.ini_options]
-#   pytest                               -> the whole suite
-#   pytest -n auto --dist worksteal      -> the whole suite in parallel; the gate CI runs
 testpaths = ["tests"]
 markers = [
     "pins: frozen-value characterization pin. Re-freeze deliberately with the freezer script named in the file's docstring -- never edit a pin to make it pass.",
@@ -226,6 +137,5 @@ markers = [
     "needs_network: needs NEW_MP_API_KEY and a live Materials Project connection.",
     "directory_only: needs a DIRECTORY cache store (on-disk filenames, dir_structure, the atomic-write or cold-fetch write path). Skipped when GLIQUID_TEST_SQLITE_STORE swaps in a single-file store; see conftest.py.",
 ]
-# Fail on an undeclared marker rather than silently treating the typo as no marker.
-# Never add -n here: single-test and serial attribution runs must stay in one process.
+# Never add -n here: single-test runs must stay in one process.
 addopts = "--strict-markers"

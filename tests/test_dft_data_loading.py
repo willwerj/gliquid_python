@@ -36,10 +36,8 @@ def api_cached_dir(tmp_path_factory):
         pytest.skip("NEW_MP_API_KEY not set")
     cache_dir = tmp_path_factory.mktemp("dft_cache")
     saved_data_dir = config.cache_dir
-    # Pin the mode as well as the location. This fixture IS a directory store -- it exists
-    # to exercise the cold-fetch WRITE path, which a single-file store refuses by design --
-    # and leaving the mode ambient would make it depend on how the session was configured
-    # (the repo-root conftest.py can swap a sqlite store in process-wide).
+    # Pin the mode too: this fixture exercises the directory store's cold-fetch write path, and the
+    # repo-root conftest.py can swap a sqlite store in process-wide.
     saved_cache_mode = config.cache_mode
     config.cache_dir = cache_dir  # flat layout -> entries file lands directly in cache_dir
     config.set_cache_mode("directory")
