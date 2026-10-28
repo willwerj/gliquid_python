@@ -222,13 +222,58 @@ class TestInitialSimplexAnchor:
 
 
 class TestOffsetVertexValue:
-    def test_a_large_value_is_scaled(self):
-        assert _offset_vertex_value(-400.0, 10.0, 1.0) == pytest.approx(-320.0)
+    """The offset ``L*_b`` vertex adds excess entropy at 0 K of the order's ``L*_a`` sign."""
 
-    def test_a_small_value_moves_the_spread_toward_zero(self):
-        assert _offset_vertex_value(-4.0, 10.0, 1.0) == pytest.approx(6.0)
-        assert _offset_vertex_value(4.0, 10.0, -1.0) == pytest.approx(-6.0)
+    @staticmethod
+    def _s0(a, b, exp_form):
+        return a / DEFAULT_TAU - b if exp_form else -b
 
-    def test_a_zero_value_takes_the_spread_in_the_anchor_sign(self):
-        assert _offset_vertex_value(0.0, 10.0, -5.0) == pytest.approx(-10.0)
-        assert _offset_vertex_value(0.0, 10.0, 5.0) == pytest.approx(10.0)
+    @pytest.mark.parametrize("a", [-400_000.0, -80_000.0, -5_000.0, 5_000.0, 300_000.0])
+    @pytest.mark.parametrize(
+        "exp_form, anchor",
+        [
+            (True, lambda a: a / DEFAULT_TAU),
+            (False, lambda a: 0.0),
+            (False, lambda a: -a / DEFAULT_TAU),
+        ],
+        ids=["exp-zero-entropy", "linear-zero-entropy", "linear-tau-line"],
+    )
+    def test_the_offset_satisfies_lupis_elliott(self, a, exp_form, anchor):
+        b = anchor(a)
+        offset = _offset_vertex_value(b, DEFAULT_B_SPREAD_MIN, a)
+        s0 = self._s0(a, offset, exp_form)
+        assert math.copysign(1.0, s0) == math.copysign(1.0, a)
+        assert self._s0(a, offset, exp_form) * a > self._s0(a, b, exp_form) * a
+
+    def test_the_move_is_a_fifth_of_a_large_value(self):
+        assert _offset_vertex_value(-400.0, 10.0, -1.0) == pytest.approx(-320.0)
+
+    def test_the_move_is_floored_at_the_spread(self):
+        assert _offset_vertex_value(-4.0, 10.0, -1.0) == pytest.approx(6.0)
+        assert _offset_vertex_value(0.0, 10.0, -5.0) == pytest.approx(10.0)
+        assert _offset_vertex_value(0.0, 10.0, 5.0) == pytest.approx(-10.0)
+
+
+class TestScaledConvergence:
+    def test_guess_scales_weight_b_coordinates_by_the_temperature(self):
+        from gliquid.binary import guess_scales
+        from gliquid.solution import l_sym
+
+        syms = [l_sym("L0_b"), l_sym("L1_a")]
+        assert guess_scales(syms, 1500.0) == [1500.0, 1.0]
+
+    def test_a_scaled_coordinate_keeps_the_search_running(self):
+        """A simplex already inside ``tol`` stops at once; scaling one coordinate up makes
+        the same ``tol`` demand a finer simplex along it."""
+        simplex = [[1.0, 1.0], [1.5, 1.0], [1.0, 1.5]]
+        plain = _SimplexStub(_bowl)
+        _, _, path_plain = BinaryLiquid.nelder_mead(
+            plain, max_iter=200, tol=5.0, initial_guesses=simplex
+        )
+        scaled = _SimplexStub(_bowl)
+        f_scaled, _, path_scaled = BinaryLiquid.nelder_mead(
+            scaled, max_iter=200, tol=5.0, initial_guesses=simplex, scale=[1000.0, 1000.0]
+        )
+        assert path_plain.shape[2] == 1
+        assert path_scaled.shape[2] > 10
+        assert f_scaled < 1e-3

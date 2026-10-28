@@ -115,6 +115,13 @@ source tree carries a version literal that could disagree with this file.
   lattice stability (+2792.66 J/mol) and alpha-Pr (dhcp) stays a line compound beside it; C, La,
   Nd and Sm keep their SG 194 phase as a stand-in.
 
+- **Candidate Nelder-Mead fits converge on one scale and start Lupis-Elliott-consistent.** The
+  convergence test weighs an `L*_b` coordinate by the mean liquidus temperature, so `L*_a` and
+  `L*_b` are measured by their contribution to `L_k` (J/mol); the tolerance is
+  `CANDIDATE_TOL_J_MOL` (100 J/mol). `BinaryLiquid.nelder_mead` takes the per-coordinate `scale`.
+  The offset vertex of a candidate's initial simplex moves `L*_b` toward excess entropy of the
+  sign of `L*_a` at 0 K, in the linear and `exp(-T/tau)` forms alike.
+
 ### Fixed
 
 - **The Bi-Sr hull follows the assessed diagram's compounds.** The Materials Project hull has

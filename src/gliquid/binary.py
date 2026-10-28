@@ -162,13 +162,23 @@ DEFAULT_B_SPREAD_MIN = 10.0
 # Bisection steps spent placing one infeasible initial simplex vertex.
 DEFAULT_RESTORE_MAX_HALVINGS = 8
 
+# Convergence tolerance (J/mol) of a candidate's Nelder-Mead, on the scale of guess_scales.
+CANDIDATE_TOL_J_MOL = 100.0
+
+
+def guess_scales(guess_symbols, temperature: float) -> list[float]:
+    """Per-coordinate convergence factors for a simplex over ``guess_symbols``: 1 for an
+    ``L*_a`` (J/mol) and ``temperature`` for an ``L*_b`` (J/mol/K), so each coordinate is
+    measured by its contribution to ``L_k`` at ``temperature``."""
+    return [float(temperature) if str(sym).endswith("_b") else 1.0 for sym in guess_symbols]
+
 
 def _offset_vertex_value(value: float, spread_min: float, sign_of: float) -> float:
-    """``0.8 * value``, or ``value`` moved ``spread_min`` toward zero when that is the larger
-    move; ``spread_min`` carrying the sign of ``sign_of`` when ``value`` is 0."""
-    if abs(0.2 * value) < spread_min:
-        return value - math.copysign(spread_min, value if value else -sign_of)
-    return value * 0.8
+    """An ``L*_b`` value moved by ``max(0.2 * |value|, spread_min)`` in the direction that adds
+    excess entropy at 0 K of ``sign_of``'s sign (the order's ``L*_a``), so the offset vertex
+    satisfies the Lupis-Elliott sign rule in the linear and the ``exp(-T/tau)`` forms alike;
+    in both, S_xs(0 K) falls as ``L*_b`` rises."""
+    return value - math.copysign(max(abs(0.2 * value), spread_min), sign_of)
 
 
 def _lower_hull_vertices(xs: np.ndarray, gs: np.ndarray) -> list[int]:
@@ -2036,7 +2046,7 @@ class BinaryLiquid:
         return f_val * gap_factor
 
     def nelder_mead(
-        self, max_iter=64, tol=0.05, verbose=False, initial_guesses=None, **kwargs
+        self, max_iter=64, tol=0.05, verbose=False, initial_guesses=None, scale=None, **kwargs
     ) -> tuple[float, dict, np.ndarray]:
         """
         Nelder-Mead algorithm for fitting the liquid non-ideal mixing parameters.
@@ -2046,14 +2056,17 @@ class BinaryLiquid:
         coefficients 1, 2, 1/2 and 1/2, a shrink moving every vertex but the best halfway to it.
         A vertex whose objective is infinite ranks worst; infinite vertices of the INITIAL
         simplex are first moved onto the feasible side of the constraint that rejected them.
-        Convergence is ``max|x - centroid| < tol`` over the simplex, the centroid taken over
-        every vertex but the worst; at ``max_iter`` iterations the best vertex is returned.
+        Convergence is ``max|(x - centroid) * scale| < tol`` over the simplex, the centroid taken
+        over every vertex but the worst; at ``max_iter`` iterations the best vertex is returned.
 
         Args:
             max_iter (int): Maximum number of iterations. Default is 64.
             tol (float): Tolerance for algorithm convergence. Default is 0.05.
             verbose (bool): If True, print updates during optimization. Default is False.
             initial_guesses (list): Reasonable initial values for guessed parameters, determined by self.guess_symbols.
+            scale (sequence | None): Per-coordinate factors applied to the simplex before the
+                convergence test, putting coordinates of different units on one ``tol``.
+                Default is 1 for every coordinate.
             **kwargs (dict): Additional keyworded arguments passed to f().
 
         Returns:
@@ -2073,6 +2086,7 @@ class BinaryLiquid:
             )
 
         x0 = np.array(initial_guesses, dtype=float)
+        scale = np.ones(x0.shape[1]) if scale is None else np.asarray(scale, dtype=float)
         n_params = self.xs_mix.n_params
         self.nmpath = np.empty((3, n_params + 1, max_iter), dtype=float)
         initial_time = time.time()
@@ -2111,7 +2125,7 @@ class BinaryLiquid:
             ibest, isecond, iworst = int(order[0]), int(order[-2]), int(order[-1])
             centroid = np.mean(x0[order[:-1]], axis=0)
 
-            if np.max(np.abs(x0 - centroid)) < tol or i == max_iter - 1:
+            if np.max(np.abs((x0 - centroid) * scale)) < tol or i == max_iter - 1:
                 f_val = self.f(x0[ibest, :], **kwargs)
                 window = self.calculate_deviation_metrics(**kwargs)
                 kwargs["unsupported_range_mode"] = "score"
@@ -2926,7 +2940,11 @@ def _run_single_optimization_worker(
     bl_copy.constraints = sp.solve(selected_eqs, solve_symbols, rational=False, simplify=False)
     try:
         f, metrics, path = bl_copy.nelder_mead(
-            verbose=verbose, tol=5, initial_guesses=selected_ics["init_tri"], **run_kwargs
+            verbose=verbose,
+            tol=CANDIDATE_TOL_J_MOL,
+            initial_guesses=selected_ics["init_tri"],
+            scale=guess_scales(bl_copy.guess_symbols, mean_liq_temp),
+            **run_kwargs,
         )
     except RuntimeError as e:
         logger.error(f"Nelder-Mead process encountered a fatal error [{bl_copy.sys_name}]: {e}")
