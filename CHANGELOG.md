@@ -122,6 +122,13 @@ source tree carries a version literal that could disagree with this file.
   The offset vertex of a candidate's initial simplex moves `L*_b` toward excess entropy of the
   sign of `L*_a` at 0 K, in the linear and `exp(-T/tau)` forms alike.
 
+- **The packaged model is v29.07** (bundle `20261028_105725`, replacing `20261017_003407`).
+  It is the mean of eight XGBoost models trained at different seeds, on the 854 binaries refit
+  with the liquid linearized at its own liquidus, the GGA-anchored unary references and the
+  Nelder-Mead changes above, with 49 symmetric and 30 antisymmetric features. On its 100 held-out
+  test systems it predicts the liquidus with a mean absolute percentage error of 10.98 % (median
+  8.91 %) and a mean absolute error of 169.6 K. Every predicted parameter changes from 0.3.1.
+
 ### Fixed
 
 - **The H-S partition seed fit honours a pinned `L*_b`.** In `'comb-exp'` it fitted `L1`
