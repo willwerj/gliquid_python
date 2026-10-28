@@ -6,11 +6,7 @@ on:
   push:
     tags: ['v*']
 
-# No API token appears anywhere in this file, by design. Both publish jobs use PyPI Trusted
-# Publishing (OIDC): GitHub mints a short-lived identity token at job runtime from
-# `permissions: id-token: write`, and the index trusts this repository + workflow + GitHub
-# environment. The token-based alternative (a stored __token__ password) is deliberately not
-# used -- a leaked long-lived token is exactly what Trusted Publishing removes.
+# No API token: both publish jobs use PyPI Trusted Publishing (OIDC via id-token: write).
 permissions:
   contents: read
 
@@ -22,11 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # NOT optional, and the single most dangerous thing to get wrong in this file.
-          # hatch-vcs reads the version from git tags; the default shallow clone has none.
-          # The build would NOT fail -- it would silently emit the pyproject
-          # fallback-version (0.0.0) and publish it. That fallback is 0.0.0 rather than the
-          # release version precisely so this failure is visible in the artifact name.
+          # Required: without tags hatch-vcs silently builds and publishes version 0.0.0.
           fetch-depth: 0
 
       - name: Set up Python
@@ -46,8 +38,7 @@ jobs:
         run: twine check dist/*
 
       - name: Show built version
-        # Cheap tripwire for the fetch-depth failure above: a 0.0.0 filename here means the
-        # tag was not visible to hatch-vcs, and nothing downstream should be released.
+        # A 0.0.0 filename means the build missed the tag: release nothing.
         run: ls -l dist/
 
       - name: Upload distributions
@@ -83,13 +74,7 @@ jobs:
     needs: [testpypi]
     runs-on: ubuntu-latest
 
-    # LOAD-BEARING, NOT DECORATION. The `pypi` GitHub environment carries a
-    # required-reviewer protection rule, configured in the repository settings UI and not
-    # expressible in this file. That rule is the entire reason "TestPyPI first, then PyPI"
-    # is real rather than aspirational: the run pauses here until a maintainer has looked at
-    # what TestPyPI accepted and approves the deployment. Removing this line -- or deleting
-    # the environment because it "looks empty" -- turns an irreversible publish into an
-    # unattended one. PyPI cannot un-publish a version.
+    # Required: the `pypi` environment's reviewer rule pauses the run before PyPI. Do not remove.
     environment: pypi
     permissions:
       id-token: write  # OIDC identity for Trusted Publishing; see the note at the top

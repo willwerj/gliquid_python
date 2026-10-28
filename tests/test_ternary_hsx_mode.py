@@ -194,10 +194,9 @@ class TestLiquidusCoexistentPhases:
 
     @pytest.mark.parametrize("mode", ["gtx", "hsx"])
     def test_empty_only_where_no_facet_at_that_node_touches_a_solid(self, request, mode):
-        # The exact contract behind the fraction above: a node reports no assemblage only
-        # when every facet meeting its liquidus vertex is all-liquid. A vertex is shared by
-        # several facets and they differ only in simplex_id, so a node with any
-        # solid-touching facet among them must name one.
+        # A node reports no assemblage only when every facet at its liquidus vertex is all-liquid;
+        # the facets sharing a vertex differ only in simplex_id, so any solid-touching one must be
+        # named.
         plotter = request.getfixturevalue(mode)
         raw, touches_solid = self._facets_touching_a_solid(plotter)
         liq = raw[raw["Phase"] == "L"]

@@ -5,7 +5,7 @@ notebooks/_executed/
 .tox/
 compat-test-phase1.log
 
-# pytest-testmon's record (the optional inner loop in CONTRIBUTING.md)
+# pytest-testmon's record
 .testmondata*
 
 # Python build / cache / packaging artifacts
@@ -13,7 +13,7 @@ __pycache__/
 *.py[cod]
 build/
 *.egg-info/
-# Written by the hatch-vcs build hook from the git tag; regenerated on every build.
+# Written by the hatch-vcs build hook.
 src/gliquid/_version.py
 
 # Logs
@@ -25,25 +25,13 @@ src/gliquid/_version.py
 # Editor/IDE local config
 .vscode/
 
-# Generated data & local config (kept untracked on main)
-# tox.ini is deliberately NOT here: the cross-version compat matrix is part of the project,
-# and a contributor cannot reproduce it if the file is untracked.
+# Local config. Keep tox.ini and requirements/ tracked: the compat matrix needs them.
 .claude/
-# requirements/ is deliberately NOT ignored: tox.ini (tracked) drives the min half of the
-# compat matrix from requirements/min-constraints.txt, so ignoring it would leave the
-# matrix unreproducible from a clone -- the same reason tox.ini itself is tracked.
 CONTEXT.md
-# These two patterns are PATH-ANCHORED to the external cache corpus, which was named data/
-# until it became cache/ (the package's own reference tables moved to src/gliquid/reference/
-# at the same time). A path-anchored pattern stops matching SILENTLY when its directory is
-# renamed -- nothing errors, the repo just starts tracking megabytes of fetched cache. Keep
-# these in step with the directory name.
+# Path-anchored: rename these with the cache directory, or fetched files start being tracked.
 cache/fit_results_cache_*
 figures/benchmark_*/
-# Per-system DFT entry caches fetched on demand from the Materials Project. A hand-picked
-# set of these IS tracked (the fixtures the test suite reads); this pattern only stops
-# NEWLY fetched ones showing up as untracked noise. Ignoring a path does not untrack
-# anything already in the index, so the committed corpus is unaffected.
+# Newly fetched DFT caches; the tracked fixture set is unaffected.
 cache/*_ENTRIES_MP_GGA.json
 
 # Local secrets (API keys) - never commit

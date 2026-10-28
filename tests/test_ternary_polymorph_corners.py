@@ -296,10 +296,8 @@ class TestLadderSurvivesIntoTheFigure:
         assert len(spans) >= 2, f"{el}: only {spans} -- nothing to stack"
         floor = float(htz_plot.conds[0])
 
-        # The stack starts exactly ON the plot floor: conds[0] is the bottom of the temperature
-        # grid in Celsius, at or below every phase's ceiling (test_ternary_temperature_units.py
-        # holds the Celsius/Kelvin contract). Above it the segments tile the corner without
-        # inverting or overlapping.
+        # The stack starts on the plot floor (conds[0], the grid bottom in Celsius) and its segments
+        # tile the corner without inverting or overlapping.
         assert spans[0][0] == pytest.approx(floor, abs=1e-6), (
             f"{el}: stack starts at {spans[0][0]}, not on the plot floor {floor}"
         )

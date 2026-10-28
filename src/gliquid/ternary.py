@@ -298,10 +298,9 @@ class TernaryLiquidInterpolation:
         # 'fit' or 'pred' per binary system, keyed by the cyclic ``binary_systems`` names
         self.fit_or_pred = orient_to_edges(fit_or_pred or {}, self.binary_systems)
 
-        # Excess-mixing models keyed by the cyclic ``binary_systems`` pair names, plus an optional
-        # 'A-B-C' triplet entry keyed in component order. Plain parameter lists coerce through
-        # (param_format, tau) for pairs and 'regular' for the triplet; an inverse-order pair is
-        # re-keyed with odd orders flipped.
+        # Excess models keyed by the cyclic pair names, plus an optional 'A-B-C' triplet in
+        # component order. Plain lists coerce via (param_format, tau) for pairs and 'regular' for
+        # the triplet; an inverse-order pair is re-keyed with odd orders flipped.
         def _coerce(key, val):
             if isinstance(val, RKPolyExp):
                 return val
@@ -1168,10 +1167,9 @@ class TernaryLiquidInterpolation:
         self.proc_df["Colors"] = self.proc_df["Phase"].map(self.color_map)
         self._relinearize_liquid()
 
-        # One temperature window in three forms: T_grid (rungs, kelvin), temp_range (its ends) and
-        # conds (its ends in Celsius). gtx screens the ceiling against the liquidus; hsx starts from
-        # the melting points and widens it in _process_data_hsx. temp_slider widens it ([0] down,
-        # [1] up) and the floor is clamped at absolute zero.
+        # One temperature window as T_grid (K), temp_range (its ends) and conds (its ends in C). gtx
+        # screens the ceiling against the liquidus; hsx widens it in _process_data_hsx. temp_slider
+        # widens it ([0] down, [1] up) and the floor is clamped at 0 K.
         liquidus_floor, liquidus_ceiling = (
             self._liquidus_bracket() if self.hull_mode == "gtx" else (None, None)
         )

@@ -115,10 +115,9 @@ FIT_KWARGS = frozenset(
     }
 )
 
-# How the objective treats composition ranges with no solid free energy behind them:
-#   'ignore' -- drop those points from the mesh and from both curves.
-#   'score'  -- score them like any other point (the default).
-#   'cap'    -- score only the residual above the assessed liquidus.
+# How the objective treats composition ranges with no solid free energy behind them: 'ignore'
+# drops those points, 'score' (the default) scores them like any other, and 'cap' scores only
+# the residual above the assessed liquidus.
 UNSUPPORTED_RANGE_MODES = ("ignore", "cap", "score")
 DEFAULT_UNSUPPORTED_RANGE_MODE = "score"
 

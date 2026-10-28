@@ -116,10 +116,8 @@ class TestDeclaredDependencies:
 
 
 class TestImportsWithoutTheMlStack:
-    #: ``joblib`` is NOT blocked: the newest pymatgen imports it eagerly through
-    #: ``pymatgen.analysis.compatibility``, which ``gliquid.api`` reaches, so ``import gliquid``
-    #: does not survive without it there. gliquid still declares joblib under ``models``,
-    #: since ``_load_legacy_artifacts`` imports it directly.
+    #: ``joblib`` is not blocked: pymatgen imports it eagerly on the ``gliquid.api`` import path, so
+    #: ``import gliquid`` needs it.
     BLOCKED_FOR_FACADE = ("xgboost", "shap", "sklearn", "numba")
 
     def test_importing_gliquid_needs_none_of_it(self, tmp_path):

@@ -186,10 +186,8 @@ _NO_CACHE_NO_OPENPYXL = textwrap.dedent(
     import numpy as np, pandas as pd
     import gliquid.config as config
 
-    # Unset explicitly rather than relying on the environment: config finds a corpus by
-    # walking out from the PACKAGE's own __file__, so a source checkout adopts its cache/
-    # no matter what cwd or GLIQUID_CACHE_DIR say. The claim under test is that no corpus
-    # is needed, and this is how you get "no corpus" here.
+    # A source checkout finds its cache/ from the package's __file__ whatever cwd or
+    # GLIQUID_CACHE_DIR say; unset it to test that no corpus is needed.
     config.set_cache_dir(None)
     assert config.cache_dir is None, f"cache still configured: {config.cache_dir}"
 

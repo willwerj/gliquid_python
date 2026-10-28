@@ -32,12 +32,9 @@ def _make_json(regions, elements=("Hf", "Zr"), temp=(0, 2600)):
     return liquidus_record([_shape(r) for r in regions], elements, temp)
 
 
-# One liquid field drawn as two 'L' shapes: a narrow left wedge (0-10 at.%), an
-# UNDIGITIZED hole (10-35 at.%), and a wide right region (35-100 at.%). Asymmetric, so a frame
-# flip moves the hole somewhere unmistakably different, and discontinuous across the hole
-# (2033 C -> 1500 C), so a flat step across it is large. The hole is 0.25 wide and 75% of the
-# span is locally sampled, so this passes from_cache's interior-coverage gate (0.45 / 0.50)
-# and reaches the fit.
+# One liquid field as two 'L' shapes around an undigitized hole (10-35 at.%), asymmetric and
+# discontinuous across it, so a frame flip or a flat step is unmistakable. It still passes
+# from_cache's interior-coverage gate and reaches the fit.
 LEFT_REGION = [[x, 2233 - 20 * x] for x in range(0, 11, 2)]
 RIGHT_REGION = [[x, 1500 + (1855 - 1500) * (x - 35) / 65] for x in range(35, 101, 5)]
 HOLE = [0.10, 0.35]

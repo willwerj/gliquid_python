@@ -1,8 +1,6 @@
 name: Run Tests
 
-# Every branch, not just main. This workflow previously triggered on main only, while the
-# code being released lived ~90 commits ahead of it -- so it had never actually run against
-# the package it guards.
+# Every branch, and pull requests into main.
 on:
   push:
     branches: ['**']
@@ -28,10 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # NOT optional. hatch-vcs derives the version from the git tag, and the default
-          # shallow clone fetches none. Getting this wrong does not fail the checkout -- it
-          # silently produces the pyproject fallback-version (0.0.0), which is why that
-          # fallback is deliberately not the release version.
+          # Required: without tags hatch-vcs silently builds version 0.0.0.
           fetch-depth: 0
 
       - name: Set up Python
@@ -49,8 +44,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Install package and test extra
-        # Install the declared extra rather than a bare `pip install pytest`, so CI
-        # exercises the same dependency set a contributor gets from CONTRIBUTING.md.
+        # The test extra, as CONTRIBUTING.md installs it.
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[test]'
