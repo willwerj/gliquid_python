@@ -9,6 +9,8 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-09
+
 ### Added
 
 - `generate_comp_grid(..., edge_rows=0)`: with `edge_rows` > 0, each side of the composition
@@ -960,7 +962,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/willwerj/gliquid_python/compare/v0.2.0...v0.3.0
