@@ -37,6 +37,7 @@ from gliquid.cache import (
     non_dft_entry_label,
 )
 from gliquid.hsx import HSX
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import (
     EV_ATOM_TO_J_MOL,
     UNARY,
@@ -528,22 +529,15 @@ class BinaryLiquid:
         mean_elt_tm (float): Mean elemental melting temperature.
         liquid_tstar (np.ndarray | None): Linearization temperature (K) of each interior grid
             row in the last ``update_phase_points``.
-        pd_ind (int | None): Index of the MPDS phase diagram used.
-        mpds_json (dict): MPDS phase equilibrium data for the system.
-        digitized_liq (list): Digitized liquidus data points.
+        mpds_json, digitized_liq, temp_range, pd_ind, liq_coverage, undigitized_comp_ranges:
+            the fields of the :class:`~gliquid.mpds.LiquidusReference` the system was built
+            from, in its component frame (:attr:`reference` collects them again).
         max_liq_temp (float | None): Maximum temperature on the liquidus line.
         min_liq_temp (float | None): Minimum temperature on the liquidus line.
-        temp_range (list): Temperature range for calculations.
         assessed_crange_floor (float): Minimum fraction of the composition axis that must
-            carry digitized liquidus for the system to be considered fittable.
-        liq_coverage (dict | None): ``mpds.liquidus_coverage`` metrics of the pre-fill
-            digitized liquidus (``max_gap``, ``covered_fraction``, ``holes``, ...), in this
-            object's component frame. A dict measured on a reversed-frame json is mirrored
-            first (``mpds.mirror_liquidus_coverage``).
+            carry digitized liquidus, outside ``undigitized_comp_ranges``, for the system to be
+            considered fittable.
         liquidus_holes (list): Read-only view of ``liq_coverage['holes']``.
-        undigitized_comp_ranges (list): ``[lo, hi]`` intervals of the whole composition axis
-            with no digitized liquidus: outside the digitized endpoints, or inside a hole.
-            ``assessed_crange_floor`` gates on their complement.
         unsupported_comp_ranges (list): ``[lo, hi]`` composition intervals whose conjugate
             solid has no evaluable free energy. ``fit_parameters`` fills it from
             ``coverage_report.unsupported_ranges`` and its own invariant walk.
@@ -587,6 +581,18 @@ class BinaryLiquid:
         {
             "ignored_comp_ranges": "unsupported_comp_ranges",
             "comp_range_fit_lim": "assessed_crange_floor",
+            **{
+                name: f"reference=LiquidusReference({name}=...)"
+                for name in (
+                    "mpds_json",
+                    "digitized_liq",
+                    "temp_range",
+                    "pd_ind",
+                    "liq_coverage",
+                    "undigitized_comp_ranges",
+                )
+            },
+            "invariants": "find_invariant_points()",
         }
     )
     def __init__(
@@ -597,13 +603,8 @@ class BinaryLiquid:
         *,
         skip_reason=None,
         component_data=None,
-        pd_ind=None,
-        mpds_json=None,
-        digitized_liq=None,
-        temp_range=None,
+        reference: LiquidusReference | None = None,
         assessed_crange_floor=None,
-        undigitized_comp_ranges=None,
-        liq_coverage=None,
         unsupported_comp_ranges=None,
         dft_type="GGA",
         dft_ch=None,
@@ -615,7 +616,6 @@ class BinaryLiquid:
         params=(),
         tau=DEFAULT_TAU,
         eqs=None,
-        invariants=None,
     ):
         self.init_error = init_error
         self.skip_reason = skip_reason
@@ -625,21 +625,22 @@ class BinaryLiquid:
         self.components = components
         self.component_data = {} if component_data is None else component_data
         self.mean_elt_tm = np.mean([self.component_data[comp].t_fusion for comp in self.components])
-        self.pd_ind = pd_ind
-        self.mpds_json = {} if mpds_json is None else mpds_json
-        self.digitized_liq = [] if digitized_liq is None else digitized_liq
+        ref = LiquidusReference() if reference is None else reference
+        self.pd_ind = ref.pd_ind
+        self.mpds_json = {} if ref.mpds_json is None else ref.mpds_json
+        self.digitized_liq = [] if ref.digitized_liq is None else ref.digitized_liq
         self.max_liq_temp = (
             max(self.digitized_liq, key=lambda x: x[1])[1] if self.digitized_liq else None
         )
         self.min_liq_temp = (
             min(self.digitized_liq, key=lambda x: x[1])[1] if self.digitized_liq else None
         )
-        self.temp_range = [] if temp_range is None else temp_range
+        self.temp_range = [] if ref.temp_range is None else ref.temp_range
         self.assessed_crange_floor = (
             config.assessed_crange_floor if assessed_crange_floor is None else assessed_crange_floor
         )
-        self.undigitized_comp_ranges = undigitized_comp_ranges or []
-        self.liq_coverage = liq_coverage
+        self.undigitized_comp_ranges = ref.undigitized_comp_ranges or []
+        self.liq_coverage = ref.liq_coverage
         self.unsupported_comp_ranges = (
             [] if unsupported_comp_ranges is None else unsupported_comp_ranges
         )
@@ -658,7 +659,7 @@ class BinaryLiquid:
             self.xs_mix.format.guess_params, self.dft_ch, tau=self.tau, fmt=self.xs_mix.format
         )
         self.eqs = eqs if eqs is not None else self._build_eqs()
-        self.invariants = invariants
+        self.invariants = None
         self.low_t_exp_phases = None
         self.guess_symbols = None
         self.constraints = None
@@ -666,6 +667,18 @@ class BinaryLiquid:
         self.nmpath = None
         self.hsx = None
         self.liquid_tstar = None
+
+    @property
+    def reference(self) -> LiquidusReference:
+        """The :class:`~gliquid.mpds.LiquidusReference` of the current reference attributes."""
+        return LiquidusReference(
+            mpds_json=self.mpds_json,
+            digitized_liq=self.digitized_liq,
+            temp_range=self.temp_range,
+            pd_ind=self.pd_ind,
+            liq_coverage=self.liq_coverage,
+            undigitized_comp_ranges=self.undigitized_comp_ranges,
+        )
 
     def __str__(self):
         return f"BinaryLiquid({self.sys_name})"
@@ -1099,19 +1112,21 @@ class BinaryLiquid:
                 skip_reason = SKIP_SPARSE_LIQUIDUS
 
         kwargs = {
-            "mpds_json": mpds_json,
             "component_data": component_data,
-            "digitized_liq": digitized_liq,
-            "temp_range": temp_range,
+            "reference": LiquidusReference(
+                mpds_json=mpds_json,
+                digitized_liq=digitized_liq,
+                temp_range=temp_range,
+                pd_ind=pd_ind,
+                liq_coverage=liq_coverage,
+                undigitized_comp_ranges=ignored_ranges,
+            ),
             "dft_type": dft_type,
             "dft_ch": ch,
             "phases": phases,
             "xs_mix": xs_mix,
             "eqs": eqs,
-            "pd_ind": pd_ind,
             "assessed_crange_floor": assessed_crange_floor,
-            "undigitized_comp_ranges": ignored_ranges,
-            "liq_coverage": liq_coverage,
             "skip_reason": skip_reason,
             "ss_models": ss_models,
         }
@@ -1147,7 +1162,6 @@ class BinaryLiquid:
         order = resolve_component_order(order, self.components)
         if list(order) == list(self.components):
             return self
-        mirrored_liq = mpds.mirror_liquidus(self.digitized_liq) if self.digitized_liq else []
         ch = self.dft_ch
         if ch is not None:
             ch = PhaseDiagram(ch.all_entries, elements=[Element(c) for c in order])
@@ -1157,21 +1171,11 @@ class BinaryLiquid:
             init_error=self.init_error,
             skip_reason=self.skip_reason,
             component_data={c: ref.copy() for c, ref in self.component_data.items()},
-            mpds_json=self.mpds_json,
-            digitized_liq=mirrored_liq,
-            temp_range=list(self.temp_range),
+            reference=self.reference.mirrored(),
             assessed_crange_floor=self.assessed_crange_floor,
-            undigitized_comp_ranges=[
-                [1 - b, 1 - a] for a, b in reversed(self.undigitized_comp_ranges or [])
-            ],
             unsupported_comp_ranges=[
                 [1 - hi, 1 - lo] for lo, hi in reversed(self.unsupported_comp_ranges or [])
             ],
-            liq_coverage=(
-                mpds.mirror_liquidus_coverage(self.liq_coverage)
-                if self.liq_coverage
-                else self.liq_coverage
-            ),
             dft_type=self.dft_type,
             dft_ch=ch,
             removed_entry_ids=self.removed_entry_ids,
@@ -1179,7 +1183,6 @@ class BinaryLiquid:
             phases=[replace(p, points=[]) for p in self.phases if p.name not in self.ss_models],
             ss_models=self.ss_models,
             xs_mix=self.xs_mix.swapped(),
-            pd_ind=self.pd_ind,
         )
         clone._rebuild_thermodynamic_expressions()
         clone.fit_unsupported_range_mode = self.fit_unsupported_range_mode

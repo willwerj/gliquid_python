@@ -15,6 +15,7 @@ from pymatgen.core import Composition
 
 from gliquid.binary import BinaryLiquid, BLPlotter
 from gliquid.hull_editor import J_PER_MOL_PER_EV, ConvexHullEditor
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase
 
 from ._mpds_builders import compound_hull
@@ -43,7 +44,7 @@ def _bl(sys_name, components):
         component_data=UNARY.component_data(components),
         dft_ch=_hull(components),
         phases=phases,
-        temp_range=[300, 3000],
+        reference=LiquidusReference(temp_range=[300, 3000]),
     )
 
 

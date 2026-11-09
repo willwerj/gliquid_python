@@ -9,6 +9,7 @@ import pytest
 
 import gliquid.api as api
 from gliquid.binary import BinaryLiquid
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase
 from gliquid.solution import RKPolyExp
 from gliquid.ternary import TernaryLiquidInterpolation
@@ -33,7 +34,7 @@ def _bl(pair, dummy_ch, params=None, param_format="linear", tau=8000):
         component_data=UNARY.component_data(list(pair)),
         dft_ch=dummy_ch,
         phases=[Phase(phase_type="liquid", name="L")],
-        temp_range=[300, 3000],
+        reference=LiquidusReference(temp_range=[300, 3000]),
         params=list(L_SETS[tuple(pair)]) if params is None else params,
         param_format=param_format,
         tau=tau,

@@ -22,6 +22,7 @@ from pymatgen.core import Composition
 import gliquid.api as api
 import gliquid.config as config
 from gliquid.binary import BinaryLiquid, _x_vals
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase
 from gliquid.solution import t_sym
 from gliquid.ternary import TernaryLiquidInterpolation
@@ -37,7 +38,7 @@ def _direct_bl(sys_name, components, ch):
         component_data=UNARY.component_data(components),
         dft_ch=ch,
         phases=[Phase(phase_type="liquid", name="L")],
-        temp_range=[300, 3000],
+        reference=LiquidusReference(temp_range=[300, 3000]),
     )
 
 

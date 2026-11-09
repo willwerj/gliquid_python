@@ -72,6 +72,21 @@ class TestTheNameIsTheMeasurement:
         with pytest.raises(TypeError, match="use unsupported_comp_ranges"):
             BinaryLiquid("A-B", ["Cu", "Mg"], ignored_comp_ranges=[[0.2, 0.4]])
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "mpds_json",
+            "digitized_liq",
+            "temp_range",
+            "pd_ind",
+            "liq_coverage",
+            "undigitized_comp_ranges",
+        ],
+    )
+    def test_a_reference_keyword_names_the_reference_record(self, name):
+        with pytest.raises(TypeError, match=rf"reference=LiquidusReference\({name}="):
+            BinaryLiquid("A-B", ["Cu", "Mg"], **{name: None})
+
 
 class TestTheModeReplacesTheBool:
     def test_the_default_is_score(self):
