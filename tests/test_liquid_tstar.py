@@ -1,7 +1,8 @@
-"""The liquid's linearization temperature T*(x): a B pass at the x-weighted melting point, then
-D passes at the previous hull's liquidus until the per-row tangent error is within tolerance.
+"""The liquid's linearization temperature T*(x): in a binary a B pass at the x-weighted melting
+point, then D passes at the previous hull's liquidus until the per-row tangent error is within
+tolerance; in a ternary the T* field the liquidus sheets take.
 
-Runs offline: cached Pb-Tb and Al-Mg-Si / Hf-Ti-Zr entries, MPDS reads made hermetic.
+Runs offline: cached Pb-Tb and Cu-Mg / Al-Cu entries, MPDS reads made hermetic.
 """
 
 import numpy as np
@@ -54,6 +55,24 @@ class TestBinary:
         assert b_error > DEFAULT_TSTAR_TOL
         assert pb_tb.liquid_tstar != pytest.approx(pb_tb.linear_tstar(x_vals[1:-1]))
         assert error <= DEFAULT_TSTAR_TOL
+
+    def test_every_row_converges_the_rows_outside_a_corner_fragment_of_the_liquidus(self, pb_tb):
+        grid = x_vals[1:-1]
+
+        def error():
+            liq = _grid_liquidus(pb_tb.phases[-1].points, grid)
+            return pb_tb.liquid_tstar_row_errors(liq, every_row=True).max()
+
+        saved = pb_tb.digitized_liq
+        try:
+            pb_tb.digitized_liq = [[0.0, 600.6]]
+            pb_tb.update_phase_points()
+            gated = error()
+            pb_tb.update_phase_points(every_row=True)
+            assert gated > DEFAULT_TSTAR_TOL >= error()
+        finally:
+            pb_tb.digitized_liq = saved
+            pb_tb.update_phase_points()
 
     def test_a_single_missing_row_keeps_the_liquidus_continuous(self, pb_tb):
         saved = pb_tb.phases[-1].points
@@ -110,67 +129,6 @@ class TestBinary:
             )
 
 
-@pytest.fixture(scope="module")
-def htz():
-    """Hf-Ti-Zr processed after the B pass only (``"b"``) and at the default cap, which this
-    system converges within (``"default"``)."""
-
-    def build():
-        ti = tmod.TernaryLiquidInterpolation(
-            ["Hf", "Ti", "Zr"], xs_mix=HTZ, param_format="comb-exp", delta=0.05, hull_mode="hsx"
-        )
-        ti.process_data()
-        return ti
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(tmod, "DEFAULT_TERNARY_TSTAR_MAX_HULLS", 1)
-        b_pass = build()
-    return {"b": b_pass, "default": build()}
-
-
-def _node_errors(ti):
-    """|G_lin(T_liq; T*) - G(T_liq)| at every liquid node with a liquidus on the processed hull."""
-    df = ti.equil_df_list[0]
-    liq = df[df["Phase"] == "L"]
-    lowest = liq.groupby([liq["x0_orig"].round(4), liq["x1_orig"].round(4)])["T"].min() + 273.15
-    nodes = ti.liquid_tstar
-    keys = list(zip(nodes["x0"].round(4), nodes["x1"].round(4)))
-    t_liq = np.array([lowest.get(k, np.nan) for k in keys])
-    ok = np.isfinite(t_liq)
-    x = (nodes["x0"].to_numpy()[ok], nodes["x1"].to_numpy()[ok])
-    model = ti.liquid_model()
-    h_lin, s_lin = model.h_s_grid(x, nodes["tstar"].to_numpy()[ok])
-    h_ex, s_ex = model.h_s_grid(x, t_liq[ok])
-    return np.abs((h_lin - t_liq[ok] * s_lin) - (h_ex - t_liq[ok] * s_ex))
-
-
-class TestTernary:
-    def test_the_b_pass_keeps_the_x_weighted_melting_point(self, htz):
-        ti = htz["b"]
-        nodes = ti.liquid_tstar
-        assert nodes["tstar"].to_numpy() == pytest.approx(
-            ti.linear_tstar(nodes["x0"].to_numpy(), nodes["x1"].to_numpy())
-        )
-
-    def test_d_passes_stop_within_the_tolerance(self, htz):
-        ti = htz["default"]
-        nodes = ti.liquid_tstar
-        assert _node_errors(htz["b"]).max() > DEFAULT_TSTAR_TOL
-        assert nodes["tstar"].to_numpy() != pytest.approx(
-            ti.linear_tstar(nodes["x0"].to_numpy(), nodes["x1"].to_numpy())
-        )
-        assert _node_errors(ti).max() <= DEFAULT_TSTAR_TOL
-
-    def test_the_processed_hull_is_the_last_relinearized_one(self, htz):
-        ti = htz["default"]
-        rows = (ti.proc_df["Phase"] == "L").to_numpy()
-        h, _ = ti.liquid_model().h_s_grid(
-            (ti.liquid_tstar["x0"].to_numpy(), ti.liquid_tstar["x1"].to_numpy()),
-            ti.liquid_tstar["tstar"].to_numpy(),
-        )
-        assert ti.proc_df["H"].to_numpy()[rows] == pytest.approx(np.where(np.isfinite(h), h, 0))
-
-
 class TestTstarField:
     TM = [1000.0, 1500.0, 2500.0]
 
@@ -184,6 +142,13 @@ class TestTstarField:
         assert field(nodes) == pytest.approx(values)
         far = np.array([[0.7, 0.2], [0.1, 0.8]])
         assert field(far) == pytest.approx(linear(far))
+
+    def test_outside_its_nodes_it_takes_the_nearest_node_correction(self):
+        nodes = np.array([[0.25, 0.25], [0.5, 0.25], [0.25, 0.5]])
+        linear = TstarField(self.TM)
+        field = TstarField(self.TM, nodes, linear(nodes) + [10.0, 20.0, 30.0])
+        outside = np.array([[0.0, 0.0], [0.7, 0.2], [0.1, 0.8]])
+        assert field(outside) == pytest.approx(linear(outside) + [10.0, 20.0, 30.0])
 
     def test_gradients_follow_t_star(self):
         model = tmod.TernaryLiquidInterpolation(

@@ -1320,7 +1320,7 @@ class BinaryLiquid:
         else:
             raise ValueError("kwarg 'fmt' must be either 'dict' or 'dataframe'!")
 
-    def update_phase_points(self) -> dict:
+    def update_phase_points(self, every_row: bool = False) -> dict:
         """
         Calculates every phase's points for the current parameters with ``self.hsx``.
 
@@ -1333,6 +1333,10 @@ class BinaryLiquid:
 
         ``self.hsx`` is updated in place, and rebuilt only when absent or when the hull's
         phase list changed.
+
+        Args:
+            every_row: the loop checks every interior row, not only those inside the digitized
+                liquidus (``liquid_tstar_row_errors``).
 
         Returns:
             data (dict): A dictionary containing the phase data in HSX format, including phase names and components.
@@ -1355,7 +1359,7 @@ class BinaryLiquid:
             if k + 1 == DEFAULT_TSTAR_MAX_HULLS:
                 break
             liq = _grid_liquidus(phase_points.get("L"), grid)
-            errors = self.liquid_tstar_row_errors(liq)
+            errors = self.liquid_tstar_row_errors(liq, every_row)
             if (
                 errors.max() <= DEFAULT_TSTAR_TOL
                 and self.liquidus_shift_estimate(data, liq, errors).max() <= DEFAULT_TSTAR_LIQ_TOL
@@ -1389,15 +1393,16 @@ class BinaryLiquid:
         """
         return float(self.liquid_tstar_row_errors(liq).max())
 
-    def liquid_tstar_row_errors(self, liq: np.ndarray) -> np.ndarray:
+    def liquid_tstar_row_errors(self, liq: np.ndarray, every_row: bool = False) -> np.ndarray:
         """|G_lin(T_liq; T*) - G(T_liq)| (J/mol) of the liquid on each interior row.
 
-        ``G_lin`` takes H and S at ``liquid_tstar``, ``G`` at ``liq``. Rows outside the
-        digitized liquidus's composition span, and rows where either temperature is not finite,
-        report 0.
+        ``G_lin`` takes H and S at ``liquid_tstar``, ``G`` at ``liq``. Rows where either
+        temperature is not finite report 0, and so, unless ``every_row``, do the rows outside the
+        digitized liquidus's composition span.
 
         Args:
             liq: liquidus temperature (K) of each interior grid row; NaN where there is none.
+            every_row: count the rows outside the digitized liquidus too.
 
         Returns:
             np.ndarray: one difference per interior grid row.
@@ -1408,7 +1413,7 @@ class BinaryLiquid:
         errors = np.zeros(len(grid))
         ok = np.isfinite(liq) & np.isfinite(t_star)
         dig = np.asarray(self.digitized_liq or [], dtype=float).reshape(-1, 2)
-        if len(dig):
+        if len(dig) and not every_row:
             ok &= (grid >= dig[:, 0].min()) & (grid <= dig[:, 0].max())
         if not ok.any():
             return errors
