@@ -276,7 +276,8 @@ def render_tx_surface(
     of a phase with no legend entry (the two-liquid field) is drawn with the rest of the surface,
     and a dotted grey line, shown in every view, marks where it borders other fields; where a
     highlighted field borders it, that field's outline takes the line's place. Without it the
-    surface is the node mesh and has no fields. ``highlight_phase`` draws that solid phase's field
+    surface is the node mesh and has no fields, and with no ``triangles`` either the figure has
+    no liquidus mesh and no isotherms. ``highlight_phase`` draws that solid phase's field
     in full colour, outlined, with the rest of the surface, the other legend entries and the other
     phases' lines dimmed; ``interactive_legend`` embeds every such view for a browser-side legend
     handler (see :mod:`gliquid.plotting.phase_highlight`). Without a ``partition`` neither draws
@@ -368,17 +369,18 @@ def render_tx_surface(
         )
         coexistent = liq_df["coexistent_phases"].to_numpy(dtype=object)
 
-    fig.add_trace(
-        _field_mesh(
-            surface,
-            "Viridis",
-            components,
-            coexistent,
-            liquidus_hover,
-            name="liquidus",
-            **tagged(tags.liquidus if highlight else None, "liquidus"),
+    if len(surface.faces):
+        fig.add_trace(
+            _field_mesh(
+                surface,
+                "Viridis",
+                components,
+                coexistent,
+                liquidus_hover,
+                name="liquidus",
+                **tagged(tags.liquidus if highlight else None, "liquidus"),
+            )
         )
-    )
     boundaries = [
         (neighbour, lines)
         for phase in unlisted
@@ -399,10 +401,10 @@ def render_tx_surface(
             )
         )
 
-    # Add iso-temperature lines
-    draw_isotherms(
-        fig, compute_isotherm_contours(np.column_stack([surface.xy, surface.T]), surface.faces)
-    )
+    if len(surface.faces):
+        draw_isotherms(
+            fig, compute_isotherm_contours(np.column_stack([surface.xy, surface.T]), surface.faces)
+        )
 
     for n, phase in enumerate(legend_phases):
         if highlight:
@@ -655,20 +657,21 @@ def _field_mesh(
     ``coexistent`` is the hover text of each surface vertex, which ``piece.parent`` indexes;
     ``kwargs`` go to the trace. With ``all_T``, the coordinates and temperatures are rounded to
     :data:`FIELD_COORD_DECIMALS` and :data:`FIELD_T_DECIMALS` places and coloured on the scale
-    of ``all_T``.
+    of ``all_T``. Faces are listed coolest centroid first.
     """
     xy, temps = piece.xy, piece.T
     if all_T is not None:
         xy = np.round(xy, FIELD_COORD_DECIMALS)
         temps = np.round(temps, FIELD_T_DECIMALS)
         kwargs.update(cmin=float(all_T.min()), cmax=float(all_T.max()), cauto=False)
+    faces = piece.faces[np.argsort(temps[piece.faces].mean(axis=1), kind="stable")]
     return go.Mesh3d(
         x=xy[:, 0],
         y=xy[:, 1],
         z=temps,
-        i=piece.faces[:, 0],
-        j=piece.faces[:, 1],
-        k=piece.faces[:, 2],
+        i=faces[:, 0],
+        j=faces[:, 1],
+        k=faces[:, 2],
         opacity=0.6,
         colorscale=colorscale,
         intensity=temps,

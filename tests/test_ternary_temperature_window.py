@@ -21,6 +21,8 @@ is exercised on hand-built frames, so it needs no cache at all.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -30,6 +32,8 @@ from gliquid.ternary import (
     PRESCREEN_TOL_K,
     WINDOW_MARGIN_SLICES,
     TernaryLiquidInterpolation,
+    TLIPlotter,
+    _spans_plane,
 )
 
 from ._mpds_builders import IDEAL_MIX
@@ -57,7 +61,8 @@ CORNERS = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]
 
 
 def _hand_built(liquid_h, liquid_s, solid_h=(0.0, 0.0, 0.0)):
-    """A three-corner frame whose corner ``i`` melts at ``liquid_h[i] / liquid_s[i]``."""
+    """A three-corner frame whose corner ``i`` melts at ``liquid_h[i] / liquid_s[i]``, every
+    row's Gibbs energy ``H - T*S`` at every temperature."""
     rows = []
     for (x0, x1), h in zip(CORNERS, solid_h):
         rows.append({"x0": x0, "x1": x1, "S": 0.0, "H": h, "Phase": "solid"})
@@ -65,7 +70,20 @@ def _hand_built(liquid_h, liquid_s, solid_h=(0.0, 0.0, 0.0)):
         rows.append({"x0": x0, "x1": x1, "S": s, "H": h, "Phase": "L"})
     ti = _make_ti("Hf-Ti-Zr")
     ti.proc_df = pd.DataFrame(rows)
+    h, s = ti.proc_df["H"].to_numpy(), ti.proc_df["S"].to_numpy()
+    ti._row_gibbs = lambda temps, rows=slice(None): h[rows] - np.asarray(temps) * s[rows]
     return ti
+
+
+def test_row_gibbs_reads_a_replaced_proc_df():
+    ti = _make_ti("Hf-Ti-Zr")
+    frame = pd.DataFrame(
+        {"x0": [0.0, 1.0, 0.0], "x1": [0.0, 0.0, 1.0], "H": [1.0, 2.0, 3.0], "S": [0.5, 0.25, 0.0]}
+    ).assign(Phase="solid")
+    ti.proc_df = frame
+    assert ti._row_gibbs(2.0) == pytest.approx([0.0, 1.5, 3.0])
+    ti.proc_df = frame.assign(H=frame["H"] + 10.0)
+    assert ti._row_gibbs(2.0) == pytest.approx([10.0, 11.5, 13.0])
 
 
 def test_no_liquid_sits_on_the_hull_at_absolute_zero():
@@ -367,6 +385,45 @@ def test_a_lower_floor_asked_for_up_front_survives_the_hsx_re_lay():
     ti._process_data_hsx()
     assert ti.temp_range[0] == pytest.approx(0.0)
     assert float(ti.conds[0]) == pytest.approx(ABS_ZERO_C, abs=1e-9)
+
+
+@pytest.mark.parametrize("mode", ["hsx", "gtx"])
+def test_a_pinned_floor_above_every_melting_point_gets_a_ceiling_above_it(mode):
+    ti = _make_ti("Hf-Ti-Zr", hull_mode=mode, temp_range=(3000.0, None))
+    ti.process_data()
+    assert ti.temp_range[0] == pytest.approx(3000.0)
+    assert ti.temp_range[1] > 3000.0
+
+
+@pytest.mark.parametrize("mode", ["hsx", "gtx"])
+@pytest.mark.parametrize("high", [300.0, 1100.0])
+def test_a_pinned_ceiling_below_every_melting_point_gets_a_floor_at_or_below_it(mode, high, caplog):
+    """300 K sits below the edges' reference floor, 1100 K above it; every liquidus is hotter."""
+    plotter = TLIPlotter(
+        _make_ti("Hf-Ti-Zr", hull_mode=mode, temp_range=(None, high)), order="given"
+    )
+    plotter.process_data()
+    assert plotter.temp_range[0] <= high
+    assert plotter.temp_range[1] == pytest.approx(high)
+    with caplog.at_level(logging.WARNING, logger="gliquid.ternary"):
+        fig = plotter.get_plot("tx", interactive_legend=True)
+    assert "too few to span the composition triangle" in caplog.text
+    assert list(fig.layout.scene.zaxis.range) == pytest.approx(plotter.conds)
+    assert not (plotter.liq_plotting_df["T"] <= plotter.conds[1]).any()
+
+
+def test_nodes_on_one_line_do_not_span_the_plane():
+    line = [(0.0, 0.0), (0.25, 0.0), (0.5, 0.0), (1.0, 0.0)]
+    assert not _spans_plane(line)
+    assert not _spans_plane(line[:2])
+    assert not _spans_plane(np.empty((0, 2)))
+    assert _spans_plane([*line, (0.0, 0.25)])
+
+
+def test_a_pinned_range_upside_down_is_refused():
+    ti = _make_ti("Hf-Ti-Zr", temp_range=(2600.0, 400.0))
+    with pytest.raises(ValueError, match="low end above its high end"):
+        ti.process_data()
 
 
 def test_the_slider_widening_survives_the_hsx_re_lay():

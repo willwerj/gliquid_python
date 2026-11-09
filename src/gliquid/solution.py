@@ -73,17 +73,14 @@ DEFAULT_TAU = 8000  # K; decay constant of the exp(-T/tau) excess-enthalpy envel
 
 t_sym = sp.Symbol("t")
 
-# Largest per-node |G_lin(T_liq; T*) - G(T_liq)| (J/mol) at which a binary or ternary liquid is
-# not re-linearized at its liquidus.
+# Largest per-row |G_lin(T_liq; T*) - G(T_liq)| (J/mol) at which a binary liquid is not
+# re-linearized at its liquidus.
 DEFAULT_TSTAR_TOL = 0.2143
 # Largest estimated liquidus shift (K) of a binary row, its |G_lin - G| over the entropy step
 # across its liquidus, at which a binary liquid is not re-linearized.
 DEFAULT_TSTAR_LIQ_TOL = 1.0
-# Most hulls one binary liquid evaluation builds; 1 keeps the x-weighted melting point as T* (the
-# B pass).
+# Most hulls one binary liquid evaluation builds; 1 keeps the x-weighted melting point as T*.
 DEFAULT_TSTAR_MAX_HULLS = 60
-# Most hulls one ternary liquid evaluation builds: the B pass and up to two D passes.
-DEFAULT_TERNARY_TSTAR_MAX_HULLS = 3
 
 x_step = 0.01  # Sets composition grid precision; has not been tested for values other than 0.01
 x_prec = len(str(x_step).split(".")[-1])
@@ -693,24 +690,39 @@ class SolutionModel:
             ``dh`` and ``ds`` add a leading axis of length n-1, the derivatives with respect to
             each independent fraction.
         """
-        fns = self._grid_fns.get("nonideal")
-        x_syms = comp_symbols(len(self.components))
-        if fns is None:
+        return (*self.nonideal_h_s(x_arrays, temp), *self.nonideal_gradients(x_arrays, temp))
+
+    def nonideal_h_s(self, x_arrays, temp) -> tuple[np.ndarray, np.ndarray]:
+        """``(h, s)`` of :meth:`nonideal_h_s_gradients`, without the gradients."""
+        h, s = self._nonideal_values(x_arrays, temp, slice(0, 2))
+        return h, s
+
+    def nonideal_gradients(self, x_arrays, temp) -> tuple[np.ndarray, np.ndarray]:
+        """``(dh, ds)`` of :meth:`nonideal_h_s_gradients`, without ``h`` and ``s``."""
+        values = self._nonideal_values(x_arrays, temp, slice(2, None))
+        k = len(values) // 2
+        return np.stack(values[:k]), np.stack(values[k:])
+
+    def _nonideal_values(self, x_arrays, temp, which: slice) -> list[np.ndarray]:
+        """The ``which`` outputs of ``[h, s, *dh, *ds]`` (:meth:`nonideal_h_s_gradients`), each
+        of the shape of ``x_arrays[0]``."""
+        key = ("nonideal", which.start, which.stop)
+        fn = self._grid_fns.get(key)
+        if fn is None:
+            x_syms = comp_symbols(len(self.components))
             exprs = self.expressions(x_syms=x_syms, ideal="plain", numeric=True)
             g = exprs["g_ref"] + exprs["g_xs"]
             s = -sp.diff(g, t_sym)
             h = g + t_sym * s
             outputs = [h, s, *(sp.diff(h, x) for x in x_syms), *(sp.diff(s, x) for x in x_syms)]
-            fns = [sp.lambdify([*x_syms, t_sym], expr, modules="numpy") for expr in outputs]
-            self._grid_fns["nonideal"] = fns
+            fn = sp.lambdify([*x_syms, t_sym], outputs[which], modules="numpy", cse=True)
+            self._grid_fns[key] = fn
         shape = np.shape(x_arrays[0])
         with np.errstate(divide="ignore", invalid="ignore"):
-            values = [
-                np.broadcast_to(np.asarray(fn(*x_arrays, temp), dtype=float), shape).astype(float)
-                for fn in fns
+            return [
+                np.broadcast_to(np.asarray(value, dtype=float), shape).astype(float)
+                for value in fn(*x_arrays, temp)
             ]
-        k = len(x_syms)
-        return values[0], values[1], np.stack(values[2 : 2 + k]), np.stack(values[2 + k :])
 
     def nonideal_h_s_temperature_derivatives(self, x_arrays, temp) -> tuple[np.ndarray, ...]:
         """dH/dT and dS/dT of the reference and excess terms (both 0 for a model linear in T).

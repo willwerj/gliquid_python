@@ -185,6 +185,18 @@ class TestEdgeFigures:
                 fig.layout.annotations
             )
 
+    def test_every_edge_converges_its_liquid_on_every_row(self, hf_ti_zr, monkeypatch):
+        calls = []
+        update = BinaryLiquid.update_phase_points
+
+        def record(bl, every_row=False):
+            calls.append(every_row)
+            return update(bl, every_row)
+
+        monkeypatch.setattr(BinaryLiquid, "update_phase_points", record)
+        build_binary_edge_figures(hf_ti_zr)
+        assert calls == [True, True, True]
+
     def test_the_plotter_threads_the_flag(self):
         plotter = TLIPlotter.from_components(
             ["Hf", "Ti", "Zr"],

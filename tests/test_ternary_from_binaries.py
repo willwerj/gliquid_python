@@ -126,28 +126,33 @@ COMB_EXP_SETS = {
 
 
 @pytest.mark.parametrize("temp", [500.0, 2500.0])
-def test_comb_exp_edges_reproduce_their_binary_b_pass_liquid(dummy_ch, temp):
-    """On each edge the ternary liquid at ``linear_tstar`` (the B pass) equals the liquid its binary
-    puts in a B-pass hull (``to_hsx`` rows), up to the reference frame (an affine function of
-    composition)."""
+def test_comb_exp_edges_carry_their_binary_liquid_gibbs_energy(dummy_ch, temp):
+    """On each edge the ternary liquid's Gibbs energy at ``temp`` (``liquid_gibbs``) equals its
+    binary's, H and S taken at ``temp``, up to the reference frame (an affine function of
+    composition); the binary's taken 500 K away does not."""
     binaries = [
         _bl(p, dummy_ch, param_format="comb-exp", params=COMB_EXP_SETS[p]) for p in COMB_EXP_SETS
     ]
     tli = TernaryLiquidInterpolation.from_binaries(binaries)
     col = {c: i for i, c in enumerate(tli.components)}
     x = np.linspace(0.05, 0.95, 19)
+
+    def residual(diff):
+        return np.max(np.abs(diff - np.polyval(np.polyfit(x, diff, 1), x)))
+
     for bl in binaries:
         a, b = bl.components
-        rows = bl.to_hsx(x_vals=np.concatenate([[0.0], x, [1.0]]))
-        h = np.asarray(rows["H"][1 : len(x) + 1])
-        s = np.asarray(rows["S"][1 : len(x) + 1])
         fracs = np.zeros((len(x), 3))
         fracs[:, col[a]], fracs[:, col[b]] = 1 - x, x
-        y = (fracs[:, 1], fracs[:, 2])
-        h_t, s_t = tli.liquid_model().h_s_grid(y, tli.linear_tstar(*y))
-        diff = (h_t - temp * s_t) - (h - temp * s)
-        residual = diff - np.polyval(np.polyfit(x, diff, 1), x)
-        assert np.max(np.abs(residual)) < 1e-6, bl.sys_name
+        ternary = tli.liquid_gibbs(fracs[:, 1:], temp)
+        binary = {}
+        for t in (temp, temp + 500.0):
+            at = np.full_like(x, t)
+            h = np.ravel(bl.eqs["h_liq_lambdified"](x, at, *bl.xs_mix.values))
+            s = np.ravel(bl.eqs["s_liq_lambdified"](x, at, *bl.xs_mix.values))
+            binary[t] = h - temp * s
+        assert residual(ternary - binary[temp]) < 1e-6, bl.sys_name
+        assert residual(ternary - binary[temp + 500.0]) > 1.0, bl.sys_name
 
 
 def _swapped(params):

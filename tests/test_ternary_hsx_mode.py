@@ -167,6 +167,10 @@ class TestPlotterSettings:
         plotter = tmod.TLIPlotter.from_components(["Al", "Mg", "Si"], T_incr=5)
         assert (plotter.hull_mode, plotter.T_incr, plotter.temp_slider) == ("hsx", 5, [0, 0])
 
+    @pytest.mark.parametrize("mode, expected", [("gtx", 25), ("hsx", 10)])
+    def test_the_default_temperature_increment_follows_the_hull_mode(self, mode, expected):
+        assert self._interp(hull_mode=mode).T_incr == expected
+
     @pytest.mark.parametrize(
         "name, value", [("temp_slider", (0, 50)), ("T_incr", 20), ("hull_mode", "hsx")]
     )

@@ -9,6 +9,124 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Added
+
+- `generate_comp_grid(..., edge_rows=0)`: with `edge_rows` > 0, each side of the composition
+  triangle also gets rows of nodes at `delta / 3**k` from it (k = 1..`edge_rows`).
+- `SolutionModel.nonideal_h_s` and `SolutionModel.nonideal_gradients` return the two halves of
+  `nonideal_h_s_gradients`.
+- `BinaryLiquid.update_phase_points(every_row=False)` and
+  `BinaryLiquid.liquid_tstar_row_errors(liq, every_row=False)`: with `every_row=True` the
+  liquid's linearization also converges the rows outside the digitized liquidus.
+
+### Changed
+
+- **`hull_mode='gtx'` ternaries default to a 25 K temperature grid.** `T_incr` now defaults to
+  `None`, which means 25 K for `gtx` and 10 K for `hsx`; pass `T_incr=10` to keep the old `gtx`
+  grid. A `gtx` figure takes about 0.84 times as long, and a solid-phase field's top can sit up
+  to one grid step lower. A `gtx` ternary imputation accepts a realized temperature within one
+  `T_incr` of its target, so that window is now 25 K by default.
+- **Ternary grids carry extra rows of nodes along each side.** With `delta` at most 0.05 and no
+  solid solutions, `TernaryLiquidInterpolation` adds three rows at `delta / 3`, `delta / 9` and
+  `delta / 27` from each side, so `comp_grid`, `proc_df` and the hull hold more nodes.
+  `TernaryLiquidInterpolation.HULL_COMP_DECIMALS` is now 12 (was 4), so `hull_table()` keeps
+  those rows apart.
+- **The ternary liquid's frames hold its H and S at the components' mean melting point.**
+  `hsx_df` and `surface_df` take the liquid's H and S at the mean component melting point instead
+  of the x-weighted melting point, and `proc_df` keeps them there instead of re-linearizing them
+  at each node's liquidus, so a ternary edge's rows in all three depend on the third element
+  again (0.3.2 had made them independent of it). The liquidus and the melting points are
+  unaffected (see Fixed).
+- **`TernaryLiquidInterpolation.liquid_tstar` holds each liquid node's exact liquidus, K,** in
+  both hull modes, and `liquid_tstar_field()` builds from it.
+
+### Removed
+
+- `gliquid.plotting.liquidus_fields.SIDE_FRACTION`: use `gliquid.liquidus_sheets.SIDE_FRACTION`.
+- Tuning constants that are used together are grouped into one frozen object each, and their
+  old names are gone:
+  - in `gliquid.plotting.liquidus_fields`: `GRADING_SHARE` and `GRADING_EDGE` are
+    `GRADING.share` and `GRADING.edge`; `CROSSING_STEPS`, `CROSSING_TOLERANCE` and
+    `CROSSING_WIDTH` are `CROSSING.steps`, `.tolerance` and `.width`; `TRIPLE_POINT_STEPS` and
+    `TRIPLE_POINT_HALVINGS` are `TRIPLE_POINT.steps` and `.halvings`;
+  - in `gliquid.liquidus_sheets`: `BINODAL_RADII`, `BINODAL_MOVES`, `BINODAL_RISE` and
+    `BINODAL_REACH_STEPS` are `CLIMB.radii`, `.moves`, `.rise` and `.reach_steps`.
+- `gliquid.solution.DEFAULT_TERNARY_TSTAR_MAX_HULLS`: a ternary liquid no longer iterates its
+  T*.
+
+### Fixed
+
+- **A ternary's liquidus and its solids' melting points are solved with the liquid's Gibbs energy
+  at temperature, in both hull modes.** This replaces the per-node re-linearization of 0.3.2,
+  which inside a liquid miscibility gap could cycle without converging and drew one-node spikes,
+  white holes and nodes missing from the surface.
+  - In `hull_mode='hsx'` every node's liquidus, and every solid's highest temperature on the
+    hull, is solved on its own HSX facet with the liquid's H and S at that temperature; a node no
+    facet solves is solved on lower hulls at fixed temperatures.
+  - In `hull_mode='gtx'` every slice carries the liquid's Gibbs energy at its own temperature,
+    and a node's liquidus is refined between the last slice it is off the hull at and the next,
+    instead of read off the slice. A solid's melting point is still the last slice it is on.
+  - Both hull modes take the liquidus sheets' T* from their own liquidus at the nodes, so they
+    draw the same sheets, where 0.3.2's two modes could differ by hundreds of kelvin. Both keep
+    the phase fields while no node of the hull lies more than 1 K above the sheets.
+  - `get_inter_melting_temps` and an imputed phase's realized temperature follow.
+- **Two-liquid (L1 + L2) fields no longer drop out of the ternary liquidus.** Where the liquid
+  splits into two liquids only when it is hot, at the foot of a steep dome wall, in a narrow band
+  between the grid's rows, along a ridge or in a valley narrower than the grid, or in a narrow
+  temperature window, the L1 + L2 sheet came back missing or far too low, and the figure drew the
+  solid's sheet there instead: slots, teeth, fins and stray islands along two-liquid fields,
+  hundreds of kelvin below the liquidus, and a banded edge along steep dome walls.
+- **A ternary whose miscibility gap tops out far above its nodes' liquidus draws its phase
+  fields** (for example Bi-Sn-Ti) instead of rejecting an infinite two-liquid sheet. Where the
+  binodal lies far above T*, the two-liquid sheet takes the whole liquid at the binodal's own
+  temperature, so in `hull_mode='hsx'` it lies on the exact binodal rather than up to 50 K off.
+  Such a ternary takes several times as long to draw as its figure without fields did.
+- **No white holes from the binodal near a grid node.** Every liquid composition's H and S are
+  taken at the T* of the composition the binodal solves for. Taking each at its own T* had let a
+  single liquidus vertex sit far above its neighbours, which plotly clipped at the top of the
+  window as a white hole.
+- **The edge of a two-liquid field that stands above the solids is drawn as a wall.** Where the
+  L1 + L2 sheet ends in a jump, the ternary liquidus figure drew a ramp across one mesh cell that
+  overshot the solid's liquidus on one side and fell short of the two-liquid liquidus on the
+  other. Both fields now keep their own liquidus up to the boundary, joined by a vertical wall,
+  and the mesh is refined on the two-liquid side where its liquidus climbs steeply from the wall.
+- **A steep liquidus next to a binary edge or a corner is drawn** instead of being cut across one
+  mesh cell. The liquidus partition adds points in six rows near each side, down to 0.025 mole
+  fraction from each corner, where the mesh's straight-line liquidus misses the sheets by more
+  than 15 K, and takes each such point's solid sheets with the liquid at the hottest solid's own
+  temperature.
+- **Curved liquidus domes sag less between grid nodes.** The liquidus partition adds the midpoint
+  of a mesh edge whose straight line misses the liquidus there by more than 15 K, so narrow
+  two-liquid domes and the creases between their basins are no longer drawn as facets up to
+  75 K off. A figure holds about 6% more vertices.
+- **A ternary liquidus surface no longer shows mottled patches where it overlaps itself in
+  view.** Each translucent surface mesh lists its faces coolest first, so they blend in a
+  consistent order.
+- **No needle at the sides of the liquidus.** The liquidus sheets read a mole fraction within
+  `gliquid.liquidus_sheets.SIDE_FRACTION` of zero as zero, so a partition vertex that round-off
+  puts a hair off a side takes that side's liquidus instead of a phase holding the missing
+  element. A vertex the partition adds lies at most 25 K above the hottest vertex next to it, so
+  a steep wall near a corner no longer draws as a needle; the mesh nodes keep their liquidus.
+- **A liquidus partition with a non-finite vertex falls back to the node mesh.** An infinite
+  two-liquid sheet at a refinement vertex no longer makes `get_plot('tx')` raise
+  `ValueError: arange: cannot compute length`; the figure is drawn without phase fields, as
+  when the sheets disagree with the hull at a node.
+- **The drawn temperature window reaches the liquidus surface's hottest vertex** unless
+  `temp_range` pins its top, so a two-liquid dome a few K above the hull's window is no longer
+  cut flat.
+- **A ternary `temp_range` with one end pinned past the other end's derived value** no longer
+  leaves an empty temperature grid (`IndexError`): a pinned floor above the derived ceiling gets a
+  padded ceiling above it, and a pinned ceiling below the derived floor (`hull_mode='gtx'`) caps
+  the floor at itself. A pinned range whose low end is above its high end raises `ValueError`.
+  A pinned ceiling that leaves too few liquidus nodes to triangulate draws the figure without a
+  liquidus mesh, and a WARNING says how few the window holds; one that leaves a patch of
+  liquidus nodes touching no side of the composition triangle splits it into the same phase
+  fields as the unpinned figure.
+- **A ternary's binary edge figures match the ternary's own edges.** `build_binary_edge_figures`
+  converges every row of each edge's liquid (`every_row=True`). It had stopped once the rows
+  inside the digitized MPDS liquidus converged, so a predicted edge whose MPDS liquidus is a
+  corner fragment drew its liquidus and two-liquid dome up to 60 K off. Fits are unchanged.
+
 ## [0.3.2] - 2026-10-29
 
 ### Changed

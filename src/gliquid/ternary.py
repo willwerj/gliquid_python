@@ -5,10 +5,13 @@ GitHub: https://github.com/AbrarRauf
 ORCID: https://orcid.org/0000-0001-5205-0075
 """
 
+import functools
+import itertools
 import logging
 import operator
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +20,6 @@ import plotly.graph_objects as go
 from pymatgen.analysis.phase_diagram import PhaseDiagram
 from pymatgen.core import Element
 from scipy.spatial import Delaunay
-from tqdm import tqdm
 
 import gliquid.api as api
 import gliquid.cache as cache
@@ -40,14 +42,7 @@ from gliquid.phase import (
 )
 from gliquid.plotting.binary_tx import _plot_tx_inputs, add_corner_note, plot_tx
 from gliquid.plotting.style import build_phase_color_map, mape_color
-from gliquid.solution import (
-    DEFAULT_TAU,
-    DEFAULT_TERNARY_TSTAR_MAX_HULLS,
-    DEFAULT_TSTAR_TOL,
-    RKPolyExp,
-    SolutionModel,
-    t_sym,
-)
+from gliquid.solution import DEFAULT_TAU, RKPolyExp, SolutionModel, t_sym
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +55,12 @@ PRESCREEN_TOL_K = 0.05
 
 #: Temperature a predicted binary edge's window starts at, below its lower melting point.
 PREDICTED_EDGE_FLOOR_MARGIN_K = 50.0
+
+#: Temperature-grid increment, K, per hull_mode when T_incr is None.
+T_INCR_BY_MODE = {"gtx": 25, "hsx": 10}
+#: Most, K, a node's hull liquidus may lie above the liquidus sheets before the liquidus is
+#: drawn without phase fields.
+SHEET_GUARD_K = 1.0
 
 
 def ordered_binary_systems(elements):
@@ -126,8 +127,30 @@ def ternary_to_cartesian(x_A, x_B):
     return x, y
 
 
-def generate_comp_grid(delta=0.025, atol=1e-6):
-    # generate composition grid for ternary system
+@dataclass(frozen=True)
+class _EdgeRows:
+    """Rows of liquid nodes near each side of the composition triangle."""
+
+    #: Rows :class:`TernaryLiquidInterpolation` adds at ``delta / ratio**k`` (k = 1..rows) from
+    #: each side.
+    rows: int = 3
+    #: Ratio of the distances of successive rows from their side (:func:`generate_comp_grid`).
+    ratio: float = 3.0
+    #: Coarsest grid step, mole fraction, that gets the rows; a grid with solid solutions gets none.
+    max_delta: float = 0.05
+
+
+EDGE_ROW = _EdgeRows()
+
+
+def generate_comp_grid(delta=0.025, atol=1e-6, edge_rows=0):
+    """The ternary composition grid of step ``delta`` as ``{"A", "B", "C"}`` fraction arrays.
+
+    With ``edge_rows`` > 0, each side also gets rows at ``delta / EDGE_ROW.ratio**k`` from it
+    (k = 1..edge_rows). A row holds its two ends, the midpoints between the grid lines it crosses
+    and its crossings with the other sides' rows, so the grid is the same under every order of
+    the components.
+    """
     incr = np.arange(0, 1 + delta, delta)
     A, B, C = np.meshgrid(incr, incr, incr)
     x_A = A.flatten()
@@ -141,7 +164,27 @@ def generate_comp_grid(delta=0.025, atol=1e-6):
     x_A = np.round(x_A, decimal_places)
     x_B = np.round(x_B, decimal_places)
     x_C = np.round(x_C, decimal_places)
-    return {"A": x_A, "B": x_B, "C": x_C}
+    if not edge_rows:
+        return {"A": x_A, "B": x_B, "C": x_C}
+    gaps = delta / EDGE_ROW.ratio ** np.arange(1, edge_rows + 1)
+    mids = np.round(incr[incr <= 1 - delta / 2] + delta / 2, 12)
+    rows = [np.column_stack([x_A, x_B, x_C])]
+    for i in range(3):
+        j, k = (i + 1) % 3, (i + 2) % 3
+        for gap in gaps:
+            ends = [0.0, 1 - gap]
+            along = np.unique(np.concatenate([ends, mids - gap / 2, gaps, 1 - gap - gaps]))
+            along = along[(along >= 0) & (along <= 1 - gap)]
+            row = np.zeros((len(along), 3))
+            row[:, i] = gap
+            row[:, j] = along
+            row[:, k] = 1 - gap - along
+            rows.append(row)
+    points = np.vstack(rows)
+    points = points / points.sum(axis=1, keepdims=True)
+    _, first = np.unique(np.round(points, 13), axis=0, return_index=True)
+    points = points[np.sort(first)]
+    return {"A": points[:, 0], "B": points[:, 1], "C": points[:, 2]}
 
 
 def _user_entropies(bl) -> dict[tuple[str, float], float]:
@@ -206,6 +249,121 @@ def _user_entry_dict(hull: PhaseDiagram, entry, entropy: float = 0.0) -> dict:
     ).as_dict()
 
 
+#: Least |determinant| of a triangle's edge vectors, mole fraction squared, that places a point
+#: on it.
+FLAT_TRIANGLE = 1e-12
+
+
+def _barycentric(corners, points) -> np.ndarray:
+    """(..., 3) weights placing ``points`` (..., 2) on the triangles ``corners`` (..., 3, 2),
+    broadcast together; NaN where a triangle is flat (:data:`FLAT_TRIANGLE`)."""
+    origin = corners[..., 2, :]
+    u, v, r = corners[..., 0, :] - origin, corners[..., 1, :] - origin, points - origin
+    det = u[..., 0] * v[..., 1] - u[..., 1] * v[..., 0]
+    det = np.where(np.abs(det) > FLAT_TRIANGLE, det, np.nan)
+    wa = (r[..., 0] * v[..., 1] - r[..., 1] * v[..., 0]) / det
+    wb = (u[..., 0] * r[..., 1] - u[..., 1] * r[..., 0]) / det
+    return np.stack([wa, wb, 1 - wa - wb], axis=-1)
+
+
+def _containing(corners, points) -> np.ndarray:
+    """Per point of ``points`` (m, 2), the index of the triangle of ``corners`` (n, 3, 2) holding
+    it whose least barycentric weight is largest; -1 where none holds it."""
+    if not len(corners):
+        return np.full(len(points), -1)
+    least = _barycentric(corners[None], points[:, None]).min(axis=2)
+    least = np.where(np.isnan(least), -np.inf, least)
+    best = least.argmax(axis=1)
+    return np.where(least[np.arange(len(points)), best] >= -1e-9, best, -1)
+
+
+def _spans_plane(points) -> bool:
+    """Whether ``points`` (n, 2) hold three that do not lie on one line."""
+    points = np.asarray(points, dtype=float).reshape(-1, 2)
+    return len(points) >= 3 and np.linalg.matrix_rank(points[1:] - points[0]) == 2
+
+
+@functools.cache
+def _triples(count: int) -> np.ndarray:
+    """(t, 3) indices of every choice of three of ``count`` items."""
+    return np.array(list(itertools.combinations(range(count), 3)), dtype=int).reshape(-1, 3)
+
+
+def _plane_gap(ti, node_rows, plane_node, plane_rows, plane_weights):
+    """``gap(temps, nodes)``: the Gibbs energy of ``node_rows[nodes]`` at ``temps`` (K) minus the
+    lowest of their planes there, every Gibbs energy from ``ti._row_gibbs``.
+
+    Args:
+        ti: the :class:`TernaryLiquidInterpolation` whose ``proc_df`` rows these are.
+        node_rows: (n,) ``proc_df`` rows of the nodes.
+        plane_node: (p,) index into ``node_rows`` of the node each plane belongs to.
+        plane_rows: (p, 3) ``proc_df`` rows each plane passes through.
+        plane_weights: (p, 3) weights placing its node on each plane.
+    """
+    pairs, corner = np.unique(
+        np.column_stack([np.repeat(plane_node, 3), np.ravel(plane_rows)]),
+        axis=0,
+        return_inverse=True,
+    )
+    corner = corner.reshape(-1, 3)
+
+    def gap(temps, nodes):
+        at = np.zeros(len(node_rows))
+        at[nodes] = temps
+        wanted = np.zeros(len(node_rows), dtype=bool)
+        wanted[nodes] = True
+        live = wanted[pairs[:, 0]]
+        gibbs = np.zeros(len(pairs))
+        gibbs[live] = ti._row_gibbs(at[pairs[live, 0]], pairs[live, 1])
+        used = wanted[plane_node]
+        heights = (plane_weights[used] * gibbs[corner[used]]).sum(axis=1)
+        lowest = np.full(len(node_rows), np.inf)
+        np.minimum.at(lowest, plane_node[used], heights)
+        return ti._row_gibbs(temps, node_rows[nodes]) - lowest[nodes]
+
+    return gap
+
+
+@dataclass(frozen=True)
+class _NodeLiquidus:
+    """Solution of a node's liquidus on the lower hulls."""
+
+    #: Temperatures, K, a node liquidus is searched between.
+    search_k: tuple[float, float] = (1.0, 1.0e5)
+    #: Width, K, of the bracket a node liquidus is bisected to against planes through other points.
+    tol_k: float = 1e-3
+    #: Width, K, of the bracket a node liquidus is bisected to on whole lower hulls, and how far a
+    #: checked node liquidus may sit from the hulls of the check.
+    hull_tol_k: float = 0.5
+    #: Spacing, K, of the lower hulls every hull_mode 'hsx' node liquidus is checked against.
+    check_k: float = 25.0
+    #: Rungs of the lower-hull scan that solves a node liquidus with no facet to solve it on.
+    scan_rungs: int = 48
+
+
+NODE_LIQUIDUS = _NodeLiquidus()
+
+
+def _bisect(gap, nodes, low, high) -> np.ndarray:
+    """Per node of ``nodes``, the temperature (K) between ``low`` and ``high`` where
+    ``gap(temps, nodes)`` changes sign: bisected to ``NODE_LIQUIDUS.tol_k``, then the zero of the
+    line through the gap at the two ends (the midpoint where that zero is not between them)."""
+    low, high = np.array(low, dtype=float), np.array(high, dtype=float)
+    at_low, at_high = gap(low, nodes), gap(high, nodes)
+    while True:
+        live = np.flatnonzero(high - low > NODE_LIQUIDUS.tol_k)
+        if not len(live):
+            break
+        mid = 0.5 * (low[live] + high[live])
+        at_mid = gap(mid, nodes[live])
+        same = np.sign(at_mid) == np.sign(at_low[live])
+        low[live[same]], at_low[live[same]] = mid[same], at_mid[same]
+        high[live[~same]], at_high[live[~same]] = mid[~same], at_mid[~same]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        zero = low + at_low / (at_low - at_high) * (high - low)
+    return np.where((zero >= low) & (zero <= high), zero, 0.5 * (low + high))
+
+
 class TernaryLiquidInterpolation:
     """Ternary liquid surface interpolated from three binary-edge mixing models.
 
@@ -235,7 +393,7 @@ class TernaryLiquidInterpolation:
     ``from_binaries`` collects the three edges' ``removed_entry_ids``.
     """
 
-    HULL_COMP_DECIMALS = 4
+    HULL_COMP_DECIMALS = 12
     """Decimals the hull rounds every composition to (see :meth:`hull_table`)."""
 
     _DERIVED_STATE = (
@@ -243,8 +401,8 @@ class TernaryLiquidInterpolation:
         "surface_df",
         "tern_mp_df",
         "proc_df",
+        "_proc_arrays",
         "liquid_tstar",
-        "_liquid_tx",
         "df_Tgroups",
         "equil_df_list",
         "T_grid",
@@ -270,7 +428,7 @@ class TernaryLiquidInterpolation:
         solid_solutions: bool | None = None,
         ss_kwargs: dict | None = None,
         temp_slider=(0, 0),
-        T_incr: int = 10,
+        T_incr: int | None = None,
         hull_mode: str = "hsx",
         order: str | list | None = None,
         imputed_entries: list[dict] | None = None,
@@ -290,7 +448,6 @@ class TernaryLiquidInterpolation:
         # it.
         self.data_dir = cache.resolve_backend(data_dir if data_dir is not None else cfg.cache_dir)
         self.delta = delta
-        self.comp_grid = generate_comp_grid(self.delta)
         self.interp_scheme = interp_scheme
         self.param_format = param_format
         # exp(-T/tau) decay constant for the 'combined'/'comb-exp' mixing forms.
@@ -333,11 +490,14 @@ class TernaryLiquidInterpolation:
         self.solid_solutions = bool(
             cfg.solid_solutions if solid_solutions is None else solid_solutions
         )
+        edge_rows = (
+            EDGE_ROW.rows if self.delta <= EDGE_ROW.max_delta and not self.solid_solutions else 0
+        )
+        self.comp_grid = generate_comp_grid(self.delta, edge_rows=edge_rows)
         self.ss_kwargs = ss_kwargs
         self.ss_models = {}
         # Hull evaluation: extra temperature margin, temperature-grid increment and hull algorithm.
         self.temp_slider = list(temp_slider)
-        self.T_incr = T_incr
         # The window T_grid spans, in kelvin, filled by _init_sys. A pinned temp_range end is kept;
         # a None end is derived.
         self._temp_range_arg = list(temp_range) if temp_range is not None else None
@@ -351,6 +511,7 @@ class TernaryLiquidInterpolation:
                 "hull_mode must be 'gtx' (per-temperature slicing) or "
                 "'hsx' (one N-D hull through gliquid.hsx.HSX)."
             )
+        self.T_incr = T_INCR_BY_MODE[hull_mode] if T_incr is None else T_incr
         self._n_simplex_vertices = 3  # gtx facets are triangles; the hsx path sets 4
 
     @classmethod
@@ -527,8 +688,8 @@ class TernaryLiquidInterpolation:
 
     def linear_tstar(self, x0, x1) -> np.ndarray:
         """The x-weighted component melting point (K) at independent fractions ``x0``, ``x1`` of
-        ``components[1]`` and ``components[2]``: the liquid's first linearization temperature,
-        which on each edge equals its binary's."""
+        ``components[1]`` and ``components[2]``: the liquidus sheets' T* where no liquid node has
+        a liquidus."""
         if not hasattr(self, "ref_data"):
             self.init_ref_data()
         tm = np.asarray(self.ref_data["T"], dtype=float)
@@ -537,7 +698,7 @@ class TernaryLiquidInterpolation:
 
     def liquid_tstar_field(self) -> TstarField:
         """T*(x) over all compositions: ``linear_tstar``, brought to ``liquid_tstar`` at the
-        liquid nodes once :meth:`process_data` has re-linearized them."""
+        liquid nodes once :meth:`process_data` has found their liquidus."""
         if not hasattr(self, "ref_data"):
             self.init_ref_data()
         nodes = getattr(self, "liquid_tstar", None)
@@ -548,10 +709,8 @@ class TernaryLiquidInterpolation:
         )
 
     def liquid_gibbs(self, x, temp: float):
-        """Liquid Gibbs energy (J/mol-atom) at ``x`` and ``temp``, H and S taken at ``temp``.
-
-        On the processed hull a liquid node's H and S are taken at its own liquidus
-        (``liquid_tstar``), where this is the Gibbs energy it carries.
+        """Liquid Gibbs energy (J/mol-atom) at ``x`` and ``temp``, H and S taken at ``temp``: the
+        energy every node liquidus of the processed hull is solved with.
 
         Args:
             x: independent fractions of ``components[1:]`` -- one ``(2,)`` point or ``(m, 2)``
@@ -600,15 +759,15 @@ class TernaryLiquidInterpolation:
         }
 
     def interpolate_liquid_surface(self):
-        """Fill ``hsx_df`` with the liquid's H and S on the composition grid, each node's taken
-        at ``linear_tstar``."""
+        """Fill ``hsx_df`` with the liquid's H and S on the composition grid, taken at the
+        components' mean melting point."""
         x_B, x_C = self.comp_grid["B"], self.comp_grid["C"]
 
         self._liquid_model_cache = None
         model = self.liquid_model()
 
         with np.errstate(divide="ignore", invalid="ignore"):
-            h_vals_mesh, s_vals_mesh = model.h_s_grid((x_B, x_C), self.linear_tstar(x_B, x_C))
+            h_vals_mesh, s_vals_mesh = model.h_s_grid((x_B, x_C), np.mean(self.ref_data["T"]))
 
         # Replace inf and nan values with finite values if needed
         H = np.where(np.isfinite(h_vals_mesh), h_vals_mesh, 0).flatten()
@@ -624,7 +783,9 @@ class TernaryLiquidInterpolation:
         Evaluates each ternary SS phase's H(x)/S(x) on the same composition grid the liquid
         uses (one ``SolutionModel.from_ss_model`` surface per phase), so continuous solid
         phases enter the ternary lower hull exactly like the liquid does (dense rows
-        sharing one phase name). Covers the full simplex including the binary edges.
+        sharing one phase name). Covers the full simplex including the binary edges. A phase's
+        H and S do not depend on temperature, so a row's ``H - T*S`` is its Gibbs energy at
+        every temperature.
 
         Models come from ONE n-ary ``load_solid_solution_models`` pass over the three
         elements, with ``ss_kwargs`` (``ref_mode`` defaults to ``config.ss_ref_mode``; for
@@ -964,6 +1125,47 @@ class TernaryLiquidInterpolation:
 
     # -- Hull-evaluation pipeline, callable on the model directly --
 
+    def _row_arrays(self) -> tuple[np.ndarray, ...]:
+        """``proc_df``'s ``(x0, x1)``, H, S and liquid mask as arrays, read once per ``proc_df``
+        object."""
+        df = self.proc_df
+        cached = getattr(self, "_proc_arrays", None)
+        if cached is None or cached[0] is not df:
+            liquid = (df["Phase"] == "L").to_numpy()
+            xy, enthalpy, entropy = (df[c].to_numpy(float) for c in (["x0", "x1"], "H", "S"))
+            cached = self._proc_arrays = (df, xy, enthalpy, entropy, liquid)
+        return cached[1:]
+
+    def _row_gibbs(self, temps, rows=None) -> np.ndarray:
+        """Gibbs energy, J/mol-atom, of ``proc_df`` rows at ``temps`` (K): the liquid's with its
+        H and S taken at that temperature (non-finite ones read 0), every other row's
+        ``H - T*S``.
+
+        Args:
+            temps: one temperature, or one per row of ``rows``.
+            rows: ``proc_df`` row positions; every row when ``None``.
+        """
+        xy, enthalpy, entropy, is_liquid = self._row_arrays()
+        rows = np.arange(len(xy)) if rows is None else np.asarray(rows, dtype=int)
+        temps = np.broadcast_to(np.asarray(temps, dtype=float), rows.shape)
+        gibbs = enthalpy[rows] - temps * entropy[rows]
+        liquid = is_liquid[rows]
+        if liquid.any():
+            x = xy[rows[liquid]]
+            t = temps[liquid]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                h, s = self.liquid_model().h_s_grid((x[:, 0], x[:, 1]), t)
+            gibbs[liquid] = np.where(np.isfinite(h), h, 0.0) - t * np.where(np.isfinite(s), s, 0.0)
+        return gibbs
+
+    def _exact_on_hull(self, temp: float) -> np.ndarray:
+        """Which ``proc_df`` rows are vertices of the lower hull at ``temp`` (K), every row at its
+        :meth:`_row_gibbs`."""
+        points = np.column_stack([self._row_arrays()[0], self._row_gibbs(temp)])
+        on_hull = np.zeros(len(points), dtype=bool)
+        on_hull[np.asarray(lower_convex_hull(points, vertical_simplices=False), dtype=int)] = True
+        return on_hull
+
     def _liquid_nodes_on_hull(self, temp: float) -> int:
         """Count the grid compositions carrying liquid on the lower hull at ``temp`` (K).
 
@@ -971,16 +1173,7 @@ class TernaryLiquidInterpolation:
         liquidus when its liquid point is a VERTEX of the lower hull over solids and liquid
         together. Reads ``proc_df``, so it is callable before the temperature grid exists.
         """
-        energy = self.proc_df["H"].to_numpy(float) - temp * self.proc_df["S"].to_numpy(float)
-        points = np.column_stack(
-            [self.proc_df["x0"].to_numpy(float), self.proc_df["x1"].to_numpy(float), energy]
-        )
-        simplices = np.asarray(lower_convex_hull(points, vertical_simplices=False))
-        if simplices.ndim != 2 or not len(simplices):
-            return 0
-        on_hull = np.zeros(len(points), dtype=bool)
-        on_hull[np.unique(simplices)] = True
-        return int(np.count_nonzero(on_hull & (self.proc_df["Phase"] == "L").to_numpy(bool)))
+        return int(np.count_nonzero(self._exact_on_hull(temp) & self._row_arrays()[3]))
 
     def _liquidus_bracket(self) -> tuple[float | None, float | None]:
         """Temperatures where the FIRST and LAST grid composition turn liquid, in kelvin.
@@ -1113,19 +1306,29 @@ class TernaryLiquidInterpolation:
         """The temperature window before the grid lattice is applied, in kelvin.
 
         Either end of ``temp_range=`` wins where it is given; a ``None`` end is derived. The
-        derived floor is the lower of the liquidus and the frame the three edges' references
-        are drawn in, clamped at absolute zero; the derived ceiling is the screened liquidus
-        top, or the highest melting point where there is no screen, both carrying the same
-        headroom through ``_pad_ceiling``.
+        derived floor is the lowest of the liquidus, the frame the three edges' references
+        are drawn in and the ceiling, clamped at absolute zero; the derived ceiling is the
+        screened liquidus top, or the highest melting point where there is no screen, both
+        carrying the same headroom through ``_pad_ceiling``, and at least a pinned floor with
+        that headroom.
+
+        Raises:
+            ValueError: both ends are pinned and the low end is above the high end.
         """
         low, high = self._temp_range_arg or (None, None)
+        if low is not None and high is not None and float(low) > float(high):
+            raise ValueError(
+                f"temp_range {self._temp_range_arg} has its low end above its high end."
+            )
         if high is None:
             # Only a DERIVED ceiling carries headroom; a pinned one is honoured exactly.
             high = self._pad_ceiling(
                 float(np.max(self.ref_data["T"])) if liquidus_ceiling is None else liquidus_ceiling
             )
+            if low is not None and float(low) >= high:
+                high = self._pad_ceiling(float(low))
         if low is None:
-            candidates = [high if liquidus_floor is None else float(liquidus_floor)]
+            candidates = [high] if liquidus_floor is None else [high, float(liquidus_floor)]
             reference = self._reference_floor()
             if reference is not None:
                 candidates.append(float(reference))
@@ -1137,8 +1340,9 @@ class TernaryLiquidInterpolation:
 
         Interpolates lazily, then rounds/relabels/colors a COPY of ``hsx_df`` (the
         pristine interpolated frame is never mutated), computes the temperature grid,
-        and (gtx mode) slices per-T Gibbs frames into ``df_Tgroups``. ``color_map``
-        overrides the palette; the default is the shared build_phase_color_map scheme.
+        and (gtx mode) slices per-T Gibbs frames (:meth:`_row_gibbs`) into ``df_Tgroups``.
+        ``color_map`` overrides the palette; the default is the shared build_phase_color_map
+        scheme.
         """
         self.proc_df = self.hull_table()
         self.sys_name = "-".join(sorted(self.components))
@@ -1165,7 +1369,6 @@ class TernaryLiquidInterpolation:
 
         self.proc_df = self.proc_df.rename(columns={"Phase Name": "Phase"})
         self.proc_df["Colors"] = self.proc_df["Phase"].map(self.color_map)
-        self._relinearize_liquid()
 
         # One temperature window as T_grid (K), temp_range (its ends) and conds (its ends in C). gtx
         # screens the ceiling against the liquidus; hsx widens it in _process_data_hsx. temp_slider
@@ -1178,84 +1381,292 @@ class TernaryLiquidInterpolation:
 
         self.df_Tgroups = {}
         if self.hull_mode == "gtx":
-            for T in self.T_grid:
-                self.proc_df["G"] = self.proc_df["H"] - T * self.proc_df["S"]
-                self.df_Tgroups[T] = self.proc_df[["x0", "x1", "G", "Phase", "Colors"]].copy()
+            n = len(self.proc_df)
+            gibbs = self._row_gibbs(
+                np.repeat(self.T_grid, n), np.tile(np.arange(n), len(self.T_grid))
+            )
+            frame = self.proc_df[["x0", "x1", "Phase", "Colors"]]
+            for T, g in zip(self.T_grid, gibbs.reshape(-1, n)):
+                self.df_Tgroups[T] = frame.assign(G=g)[["x0", "x1", "G", "Phase", "Colors"]]
 
-    def _liquid_hull_tx(self) -> pd.DataFrame:
-        """The facets of one HSX hull over ``proc_df``: ``compute_tx``'s frame, ``t`` in K."""
+    def _liquid_hull(self) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+        """One HSX hull over ``proc_df``: ``compute_tx``'s frame (``t`` in K), its facets as
+        ``proc_df`` row positions, and each facet's temperature (K)."""
         table = self.proc_df[["x0", "x1", "S", "H", "Phase"]]
         hsx_obj = HSX({"data": table, "phases": self.phase_names, "comps": self.components}, [0, 0])
-        return hsx_obj.compute_tx()[0]
+        df_tx, _, simplices, temps = hsx_obj.compute_tx()
+        return df_tx, np.asarray(simplices, dtype=int).reshape(-1, 4), np.asarray(temps, float)
 
-    def _relinearize_liquid(self) -> None:
-        """Re-linearize ``proc_df``'s liquid rows at their own liquidus, as
-        ``BinaryLiquid.update_phase_points`` does for a binary.
+    def _row_facets(self, simplices, temps, rows, hottest=False) -> tuple[np.ndarray, np.ndarray]:
+        """Each of ``rows``' lowest temperature of a facet it is a vertex of (its highest where
+        ``hottest``; NaN where none), and the index of that facet (-1 where none)."""
+        liq = np.full(len(rows), np.nan)
+        facet = np.full(len(rows), -1)
+        if not len(simplices):
+            return liq, facet
+        where = np.full(len(self.proc_df), -1)
+        where[rows] = np.arange(len(rows))
+        member = where[simplices].ravel()
+        facets = np.repeat(np.arange(len(simplices)), simplices.shape[1])
+        keep = member >= 0
+        member, facets = member[keep], facets[keep]
+        order = np.lexsort((-temps[facets] if hottest else temps[facets], member))
+        member, facets = member[order], facets[order]
+        first = np.r_[True, member[1:] != member[:-1]]
+        liq[member[first]] = temps[facets[first]]
+        facet[member[first]] = facets[first]
+        return liq, facet
 
-        The rows enter at ``linear_tstar``. Each HSX hull over ``proc_df`` gives every liquid node
-        its liquidus, the lowest facet temperature it is a liquid vertex of; the rows are then
-        re-evaluated at it, the step halved where it grew since the last hull, until the largest
-        |G_lin(T_liq; T*) - G(T_liq)| over the nodes is at most ``DEFAULT_TSTAR_TOL`` or
-        ``DEFAULT_TERNARY_TSTAR_MAX_HULLS`` hulls are built. Sets ``liquid_tstar`` (``x0``,
-        ``x1``, ``tstar`` per liquid row); the last hull is kept for ``_process_data_hsx``.
+    @staticmethod
+    def _segment_weights(points, x) -> np.ndarray | None:
+        """Weights on collinear ``points`` (3, 2) placing ``x`` between two of them, or None."""
+        for p, q in ((0, 1), (0, 2), (1, 2)):
+            d = points[q] - points[p]
+            length2 = float(d @ d)
+            if length2 <= 0:
+                continue
+            u = float((x - points[p]) @ d) / length2
+            if -1e-9 <= u <= 1 + 1e-9 and np.linalg.norm(points[p] + u * d - x) <= 1e-9:
+                weights = np.zeros(3)
+                weights[p], weights[q] = 1 - u, u
+                return weights
+        return None
+
+    def _hull_brackets(self, rows, temps) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Each of ``rows`` on or off the lower hull (:meth:`_exact_on_hull`) at each of ``temps``
+        (K, ascending), and the two of ``temps`` around its last move onto it.
+
+        Returns:
+            tuple: the (len(temps), len(rows)) on-hull matrix, and per row the rung it is last
+            off the hull at and the rung after it; NaN where the row is never off the hull or is
+            still off it at the last rung.
         """
-        rows = np.flatnonzero((self.proc_df["Phase"] == "L").to_numpy())
-        x0 = self.proc_df["x0"].to_numpy(float)[rows]
-        x1 = self.proc_df["x1"].to_numpy(float)[rows]
-        keys = list(zip(x0.round(self.HULL_COMP_DECIMALS), x1.round(self.HULL_COMP_DECIMALS)))
-        h_col, s_col = self.proc_df.columns.get_loc("H"), self.proc_df.columns.get_loc("S")
-        model = self.liquid_model()
-        tstar = self.linear_tstar(x0, x1)
-        prev_step = None
-        for k in range(DEFAULT_TERNARY_TSTAR_MAX_HULLS):
-            df_tx = self._liquid_hull_tx()
-            if k + 1 == DEFAULT_TERNARY_TSTAR_MAX_HULLS:
-                break
-            liq_df = df_tx[df_tx["label"] == "L"]
-            lowest = liq_df.groupby(
-                [
-                    liq_df["x0"].round(self.HULL_COMP_DECIMALS),
-                    liq_df["x1"].round(self.HULL_COMP_DECIMALS),
-                ]
-            )["t"].min()
-            lookup = dict(zip(lowest.index, lowest.to_numpy(float)))
-            liq = np.array([lookup.get(key, np.nan) for key in keys])
-            ok = np.isfinite(liq)
-            if not ok.any():
-                break
-            with np.errstate(divide="ignore", invalid="ignore"):
-                h_lin, s_lin = model.h_s_grid((x0[ok], x1[ok]), tstar[ok])
-                h_ex, s_ex = model.h_s_grid((x0[ok], x1[ok]), liq[ok])
-            error = np.abs((h_lin - liq[ok] * s_lin) - (h_ex - liq[ok] * s_ex))
-            if np.nanmax(error, initial=0.0) <= DEFAULT_TSTAR_TOL:
-                break
-            step = np.where(ok, liq - tstar, 0.0)
-            if prev_step is not None:
-                step = np.where(np.abs(step) > np.abs(prev_step), 0.5 * step, step)
-            tstar = tstar + step
-            prev_step = step
-            with np.errstate(divide="ignore", invalid="ignore"):
-                h, s = model.h_s_grid((x0, x1), tstar)
-            self.proc_df.iloc[rows, h_col] = np.where(np.isfinite(h), h, 0)
-            self.proc_df.iloc[rows, s_col] = np.where(np.isfinite(s), s, 0)
+        on = np.array([self._exact_on_hull(t)[rows] for t in temps]).reshape(len(temps), -1)
+        last_off = len(temps) - 1 - np.argmax(~on[::-1], axis=0)
+        moved = (~on).any(axis=0) & (last_off < len(temps) - 1)
+        low = np.where(moved, temps[np.minimum(last_off, len(temps) - 1)], np.nan)
+        high = np.where(moved, temps[np.minimum(last_off + 1, len(temps) - 1)], np.nan)
+        return on, low, high
+
+    def _hull_bisect(self, rows, low, high) -> np.ndarray:
+        """Each of ``rows``' liquidus (K) between ``low``, where it is off the lower hull, and
+        ``high``, where it is on it, bisected on lower hulls (:meth:`_exact_on_hull`) to
+        ``NODE_LIQUIDUS.hull_tol_k``, one hull per distinct midpoint; NaN where a bound is."""
+        low, high = np.array(low, dtype=float), np.array(high, dtype=float)
+        while True:
+            live = np.flatnonzero(high - low > NODE_LIQUIDUS.hull_tol_k)
+            if not len(live):
+                return 0.5 * (low + high)
+            mid = 0.5 * (low[live] + high[live])
+            for temp in np.unique(mid):
+                at = live[mid == temp]
+                on = self._exact_on_hull(temp)[rows[at]]
+                high[at[on]] = temp
+                low[at[~on]] = temp
+
+    def _scanned_liquidus(self, rows, top: float) -> np.ndarray:
+        """Each of ``rows``' liquidus (K) from ``NODE_LIQUIDUS.scan_rungs`` lower hulls spread from
+        the bottom of ``NODE_LIQUIDUS.search_k`` to ``top``, ``top`` first raised by half while a
+        row is off the hull there, then bisected (:meth:`_hull_bisect`); NaN where a row is never
+        off the hull or is still off it at the top."""
+        bottom, ceiling = NODE_LIQUIDUS.search_k
+        top = max(float(top), 2 * bottom)
+        while top < ceiling and not self._exact_on_hull(top)[rows].all():
+            top = min(ceiling, 1.5 * top)
+        _, low, high = self._hull_brackets(rows, np.linspace(bottom, top, NODE_LIQUIDUS.scan_rungs))
+        return self._hull_bisect(rows, low, high)
+
+    def _checked_liquidus(self, rows, liquidus) -> np.ndarray:
+        """``liquidus`` (K) of ``rows`` checked against lower hulls (:meth:`_exact_on_hull`) every
+        ``NODE_LIQUIDUS.check_k``, from a rung below the coldest value to a rung above the hottest.
+
+        A row on the hull at a rung more than ``NODE_LIQUIDUS.hull_tol_k`` below its value, or off
+        it at a rung more than that above, is solved again: bisected between the rungs around its
+        last move onto the hull (:meth:`_hull_bisect`), or scanned (:meth:`_scanned_liquidus`)
+        where the check holds no such rungs, keeping its value where the scan finds none.
+        """
+        out = np.array(liquidus, dtype=float)
+        known = np.isfinite(out)
+        if not known.any():
+            return out
+        step = NODE_LIQUIDUS.check_k
+        bottom = max(NODE_LIQUIDUS.search_k[0], np.floor(out[known].min() / step) * step - step)
+        temps = np.arange(bottom, np.ceil(out[known].max() / step) * step + 1.5 * step, step)
+        on, low, high = self._hull_brackets(rows, temps)
+        rung = temps[:, None]
+        wrong = known & (
+            ((rung < out - NODE_LIQUIDUS.hull_tol_k) & on).any(axis=0)
+            | ((rung > out + NODE_LIQUIDUS.hull_tol_k) & ~on).any(axis=0)
+        )
+        inside = np.flatnonzero(wrong & np.isfinite(low))
+        outside = np.flatnonzero(wrong & ~np.isfinite(low))
+        out[inside] = self._hull_bisect(rows[inside], low[inside], high[inside])
+        if len(outside):
+            found = self._scanned_liquidus(rows[outside], 1.05 * out[outside].max())
+            out[outside] = np.where(np.isfinite(found), found, out[outside])
+        return out
+
+    def _facet_crossing(self, simplices, facet, start, rows, rising=False) -> np.ndarray:
+        """Each of ``rows``' temperature (K) on its HSX ``facet`` where its Gibbs energy
+        (:meth:`_row_gibbs`) crosses the plane through the facet's other three vertices.
+
+        The crossing is looked for from ``start`` in steps of 1, 2, 4, ... K inside
+        ``NODE_LIQUIDUS.search_k``, upward where the row lies above the plane, then bisected
+        (:func:`_bisect`). With ``rising`` the row's height over the plane rises with temperature
+        and the search runs the other way. NaN where the row has no facet, the other three
+        vertices place no plane under it, or no crossing is found.
+        """
+        out = np.full(len(rows), np.nan)
+        nodes = np.flatnonzero((facet >= 0) & np.isfinite(start))
+        vertices = simplices[facet[nodes]]
+        others = vertices != rows[nodes, None]
+        three = others.sum(axis=1) == 3
+        nodes, others = nodes[three], vertices[three][others[three]].reshape(-1, 3)
+        xy = self.proc_df[["x0", "x1"]].to_numpy(float)
+        weights = _barycentric(xy[others], xy[rows[nodes]])
+        for i in np.flatnonzero(np.isnan(weights).any(axis=1)):
+            on_segment = self._segment_weights(xy[others[i]], xy[rows[nodes[i]]])
+            weights[i] = np.nan if on_segment is None else on_segment
+        held = np.isfinite(weights).all(axis=1)
+        nodes, others, weights = nodes[held], others[held], weights[held]
+        if not len(nodes):
+            return out
+        gap = _plane_gap(self, rows, nodes, others, weights)
+        bottom, ceiling = NODE_LIQUIDUS.search_k
+        start = np.clip(start[nodes], bottom, ceiling)
+        at_start = gap(start, nodes)
+        toward = np.where((at_start > 0) != rising, 1.0, -1.0)
+        low, high = start.copy(), np.where(at_start == 0, start, np.nan)
+        searching = np.isfinite(at_start) & (at_start != 0)
+        step = 1.0
+        while searching.any():
+            live = np.flatnonzero(searching)
+            temp = np.clip(start[live] + toward[live] * step, bottom, ceiling)
+            at = gap(temp, nodes[live])
+            crossed = np.isfinite(at) & (np.sign(at) != np.sign(at_start[live]))
+            high[live[crossed]] = temp[crossed]
+            low[live[~crossed]] = temp[~crossed]
+            searching[live[crossed | (temp <= bottom) | (temp >= ceiling)]] = False
+            step *= 2
+        value = np.where(np.isfinite(high), start, np.nan)
+        span = np.flatnonzero(np.isfinite(high) & (high != low))
+        value[span] = _bisect(
+            gap, nodes[span], np.minimum(low, high)[span], np.maximum(low, high)[span]
+        )
+        out[nodes] = value
+        return out
+
+    def _hsx_liquidus(self, simplices, temps, rows) -> tuple[np.ndarray, np.ndarray]:
+        """Each of the liquid ``rows``' liquidus (K) on one HSX hull, and its liquidus facet (-1
+        where it has none).
+
+        The facet temperature (:meth:`_row_facets`) is solved again on that facet
+        (:meth:`_facet_crossing`). A row that solve leaves without a value is scanned
+        (:meth:`_scanned_liquidus`) and keeps its facet temperature where the scan finds none.
+        Every value is then checked (:meth:`_checked_liquidus`).
+        """
+        liquidus, facet = self._row_facets(simplices, temps, rows)
+        solved = self._facet_crossing(simplices, facet, liquidus, rows)
+        unsolved = np.flatnonzero(~np.isfinite(solved))
+        if len(unsolved):
+            hint = liquidus[unsolved]
+            if np.isnan(hint).any() and np.isfinite(liquidus).any():
+                hint = np.append(hint, np.nanmax(liquidus))
+            top = 1.05 * np.nanmax(hint) if np.isfinite(hint).any() else np.max(self.ref_data["T"])
+            found = self._scanned_liquidus(rows[unsolved], top)
+            solved[unsolved] = np.where(np.isfinite(found), found, liquidus[unsolved])
+        return self._checked_liquidus(rows, solved), facet
+
+    def _solid_tops(self, simplices, temps) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """The solid ``proc_df`` rows of the HSX hull, the highest temperature (K) each is on it,
+        and the facet that temperature belongs to.
+
+        Where that facet carries liquid, the temperature is solved again on it with the liquid's
+        Gibbs energy at temperature (:meth:`_facet_crossing`); elsewhere, or where that solve
+        finds none, it is the facet's temperature.
+        """
+        liquid = (self.proc_df["Phase"] == "L").to_numpy()
+        rows = np.unique(simplices[~liquid[simplices]])
+        top, facet = self._row_facets(simplices, temps, rows, hottest=True)
+        melting = np.flatnonzero(liquid[simplices[facet]].any(axis=1))
+        solved = self._facet_crossing(
+            simplices, facet[melting], top[melting], rows[melting], rising=True
+        )
+        top[melting] = np.where(np.isfinite(solved), solved, top[melting])
+        return rows, top, facet
+
+    def _placed(self, df_tx, simplices, facet, rows, values, bound) -> pd.DataFrame:
+        """``df_tx`` with each of ``rows``' vertex rows bounded by its ``values`` (K) through
+        ``bound`` (``np.fmax`` or ``np.fmin``) and the vertex row of its ``facet`` set to it."""
+        node = np.full(len(self.proc_df), -1)
+        node[rows] = np.arange(len(rows))
+        vertex = node[simplices.ravel()]
+        t = df_tx["t"].to_numpy(float).copy()
+        at_node = vertex >= 0
+        t[at_node] = bound(t[at_node], values[vertex[at_node]])
+        placed = np.flatnonzero((facet >= 0) & np.isfinite(values))
+        corner = np.argmax(simplices[facet[placed]] == rows[placed, None], axis=1)
+        t[simplices.shape[1] * facet[placed] + corner] = values[placed]
+        return df_tx.assign(t=t)
+
+    def _with_node_liquidus(self, df_tx, simplices, facet, rows, liquidus) -> pd.DataFrame:
+        """``df_tx`` with each liquid row's vertex rows raised to at least its ``liquidus`` (K) and
+        the vertex row of its liquidus ``facet`` set to it; a row with a liquidus and no facet
+        adds a facet of its own, four liquid rows at its liquidus."""
+        df_tx = self._placed(df_tx, simplices, facet, rows, liquidus, np.fmax)
+        alone = np.flatnonzero((facet < 0) & np.isfinite(liquidus))
+        if not len(alone):
+            return df_tx
+        xy = self.proc_df[["x0", "x1"]].to_numpy(float)[np.repeat(rows[alone], 4)]
+        added = pd.DataFrame(
+            {"x0": xy[:, 0], "x1": xy[:, 1], "t": np.repeat(liquidus[alone], 4), "label": "L"}
+        )
+        return pd.concat([df_tx, added[df_tx.columns]], ignore_index=True)
+
+    def _set_liquid_tstar(self, rows, liquidus) -> None:
+        """Set ``liquid_tstar`` to the liquid ``rows``' ``liquidus`` (K), ``linear_tstar`` where
+        a row has none, kept inside ``NODE_LIQUIDUS.search_k``."""
+        x0, x1 = (self.proc_df[column].to_numpy(float)[rows] for column in ("x0", "x1"))
+        tstar = np.clip(
+            np.where(np.isfinite(liquidus), liquidus, self.linear_tstar(x0, x1)),
+            *NODE_LIQUIDUS.search_k,
+        )
         self.liquid_tstar = pd.DataFrame({"x0": x0, "x1": x1, "tstar": tstar})
-        self._liquid_tx = df_tx
+
+    def _set_sheets_tstar(self, rows, liquidus) -> None:
+        """Set ``liquid_tstar`` to the liquid ``rows``' liquidus on the liquidus sheets built with
+        T* at their node ``liquidus`` (K) (:meth:`_set_liquid_tstar`), keeping that T* at a row
+        where the sheets' liquidus is not finite."""
+        self._set_liquid_tstar(rows, liquidus)
+        nodes = self.liquid_tstar[["x0", "x1"]].to_numpy(float)
+        on_sheets = LiquidusSheets.from_interpolation(self).liquidus(nodes)
+        self._set_liquid_tstar(
+            rows, np.where(np.isfinite(on_sheets), on_sheets, self.liquid_tstar["tstar"])
+        )
 
     def _process_data_hsx(self):
         """One (x0, x1, S, H) lower hull with analytic facet temperatures (hull_mode='hsx').
 
         The generalized HSX replaces the per-temperature G-slicing: coexistence
         temperatures come from facet hyperplane normals, so they are continuous instead
-        of T-grid multiples. Output schema matches the gtx path (equil_df_list rows of
+        of T-grid multiples. Each liquid node's liquidus, and each solid's highest temperature on
+        the hull, is then solved with the liquid's Gibbs energy at temperature
+        (:meth:`_hsx_liquidus`, :meth:`_solid_tops`) and placed in the frame, and
+        ``liquid_tstar`` takes the liquidus sheets' own liquidus at the nodes
+        (:meth:`_set_sheets_tstar`). Output schema matches the gtx path (equil_df_list rows of
         [x0, x1, T(C), Phase, Colors, simplex_id] in ternary Cartesian coordinates).
 
         Re-lays ``temp_range`` (and with it ``T_grid`` and ``conds``) on the liquid facet
         temperatures, so on this path the window is final here rather than in ``_init_sys``.
         """
         start_time = time.time()
-        df_tx = self.__dict__.pop("_liquid_tx", None)
-        if df_tx is None:
-            df_tx = self._liquid_hull_tx()
+        df_tx, simplices, temps = self._liquid_hull()
+        solids, tops, top_facet = self._solid_tops(simplices, temps)
+        df_tx = self._placed(df_tx, simplices, top_facet, solids, tops, np.fmin)
+        rows = np.flatnonzero((self.proc_df["Phase"] == "L").to_numpy())
+        liquidus, facet = self._hsx_liquidus(simplices, temps, rows)
+        df_tx = self._with_node_liquidus(df_tx, simplices, facet, rows, liquidus)
+        self._set_sheets_tstar(rows, liquidus)
 
         temp_df = df_tx.rename(columns={"t": "T", "label": "Phase"})
         temp_df["Colors"] = temp_df["Phase"].map(self.color_map)  # keep this system's palette
@@ -1286,64 +1697,106 @@ class TernaryLiquidInterpolation:
             f"{time.time() - start_time} seconds (single hull, analytic temperatures)"
         )
 
-    def _eval_hull(self):
-        """Per-temperature lower-hull evaluation over ``df_Tgroups`` (hull_mode='gtx')."""
-        start_time = time.time()
-        self.equil_df_list = []
-        shifter = 0
-        # T_grid is the window, so every rung is evaluated.
-        for T in tqdm(self.T_grid, desc="Evaluating lower hull over temperature intervals"):
-            points = np.array(self.df_Tgroups[T][["x0", "x1", "G"]])
-            simplices = lower_convex_hull(points, vertical_simplices=False)
-            simplex_vertices = []
-            for simplex in simplices:
-                simplex_vertices.append(points[simplex])
+    def _rung_liquidus(self, rungs, rows) -> np.ndarray:
+        """Each of the liquid ``rows``' liquidus (K) from the lower hulls ``rungs``, one per
+        ``T_grid`` temperature, written into every frame of ``equil_df_list`` up to the one it is
+        found at.
 
-            final_phases = []
-            for simplex in simplices:
-                phase1 = self.df_Tgroups[T].loc[simplex[0], "Phase"]
-                phase2 = self.df_Tgroups[T].loc[simplex[1], "Phase"]
-                phase3 = self.df_Tgroups[T].loc[simplex[2], "Phase"]
-
-                phase_arr = np.array([phase1, phase2, phase3])
-                final_phases.append(phase_arr)
-
-            data = []
-            last_val = 0
-            for i, simplex in enumerate(simplices):
-                labels = final_phases[i]
-                if len(set(labels)) == 0:
+        A row's liquidus rung is the rung after the last one it is off the hull at, or the first
+        one it is on at where it is off the hull at the last rung. A row whose liquidus rung is
+        k > 0 is solved between rungs k-1 and k (:func:`_bisect`) where its Gibbs energy
+        (:meth:`_row_gibbs`) meets the lowest plane holding it through three points of the rung
+        k-1 facet holding it and of its neighbours at rung k; it takes rung k-1 where it is
+        already below that plane there and rung k where it is still above it there. A row on at
+        every rung takes rung 0, a row never on is NaN.
+        """
+        T_grid = np.asarray(self.T_grid, dtype=float)
+        xy = self.proc_df[["x0", "x1"]].to_numpy(float)
+        node = np.full(len(xy), -1)
+        node[rows] = np.arange(len(rows))
+        on = np.zeros((len(rungs), len(rows)), dtype=bool)
+        for k, simplices in enumerate(rungs):
+            joined = node[np.unique(simplices)]
+            on[k, joined[joined >= 0]] = True
+        last_off = np.where(on, -1, np.arange(len(rungs))[:, None]).max(axis=0, initial=-1)
+        rung = np.where(on[-1], last_off + 1, np.where(on.any(axis=0), on.argmax(axis=0), -1))
+        liquidus = np.where(rung >= 0, T_grid[np.maximum(rung, 0)], np.nan)
+        plane_node, plane_rows, plane_weights = [], [], []
+        for k in np.unique(rung[rung > 0]):
+            below, above = rungs[k - 1], rungs[k]
+            at_k = np.flatnonzero(rung == k)
+            holding = _containing(xy[below], xy[rows[at_k]])
+            for i, facet in zip(at_k, holding):
+                if facet < 0:
                     continue
-                else:
-                    x0_coords = [points[vertex][0] for vertex in simplex]
-                    x1_coords = [points[vertex][1] for vertex in simplex]
-                    t_val = T
+                ring = above[(above == rows[i]).any(axis=1)].ravel()
+                points = np.setdiff1d(np.concatenate([below[facet], ring]), rows[i])
+                corners = points[_triples(len(points))]
+                weights = _barycentric(xy[corners], xy[rows[i]])
+                holds = np.isfinite(weights).all(axis=1) & (weights.min(axis=1) >= -1e-9)
+                weights = np.clip(weights[holds], 0.0, None)
+                plane_node.append(np.full(len(weights), i))
+                plane_rows.append(corners[holds])
+                plane_weights.append(weights / weights.sum(axis=1, keepdims=True))
+        if plane_node:
+            plane_node = np.concatenate(plane_node)
+            nodes = np.unique(plane_node)
+            gap = _plane_gap(
+                self, rows, plane_node, np.concatenate(plane_rows), np.concatenate(plane_weights)
+            )
+            low, high = T_grid[rung[nodes] - 1], T_grid[rung[nodes]]
+            at_low, at_high = gap(low, nodes), gap(high, nodes)
+            value = np.where(at_low < 0, low, high)
+            span = np.flatnonzero((at_low >= 0) & (at_high <= 0))
+            value[span] = _bisect(gap, nodes[span], low[span], high[span])
+            liquidus[nodes] = value
+        for k in range(int(rung.max(initial=-1)) + 1):
+            at = node[rungs[k].ravel()]
+            lift = (at >= 0) & (rung[at] >= k)
+            frame = self.equil_df_list[k]
+            celsius = frame["T"].to_numpy(float).copy()
+            celsius[lift] = liquidus[at[lift]] - 273.15
+            frame["T"] = celsius
+        return liquidus
 
-                j = 0
-                for x0, x1 in zip(x0_coords, x1_coords):
-                    label = labels[j]
-                    color = self.color_map[label]
-                    data.append([x0, x1, t_val, label, color, shifter + i])
-                    j += 1
+    def _eval_hull(self):
+        """Per-temperature lower hulls over ``df_Tgroups`` (hull_mode='gtx'), one frame per rung.
 
-                last_val = i
-
-            shifter += last_val + 1
-
-            temp_df = pd.DataFrame(data, columns=["x0", "x1", "T", "Phase", "Colors", "simplex_id"])
-
-            # Store original coordinates before transformation
-            temp_df["x0_orig"] = temp_df["x0"].copy()
-            temp_df["x1_orig"] = temp_df["x1"].copy()
-
-            temp_df = cartesian_to_ternary(temp_df)
-            temp_df["T"] = temp_df["T"] - 273.15
-
-            self.equil_df_list.append(temp_df)
-
-        end_time = time.time()
+        Each liquid node's liquidus is refined below the rung of its last move onto the hull
+        (:meth:`_rung_liquidus`), and ``liquid_tstar`` takes the liquidus sheets' own liquidus
+        at the nodes (:meth:`_set_sheets_tstar`).
+        """
+        start_time = time.time()
+        phases = self.proc_df["Phase"].to_numpy(object)
+        colors = self.proc_df["Colors"].to_numpy(object)
+        self.equil_df_list, rungs, shifter = [], [], 0
+        for T in self.T_grid:
+            points = self.df_Tgroups[T][["x0", "x1", "G"]].to_numpy(float)
+            simplices = lower_convex_hull(points, vertical_simplices=False)
+            simplices = np.asarray(simplices, dtype=int).reshape(-1, 3)
+            vertices = simplices.ravel()
+            x0, x1 = points[vertices, 0], points[vertices, 1]
+            rungs.append(simplices)
+            self.equil_df_list.append(
+                pd.DataFrame(
+                    {
+                        "x0": x0 + 0.5 * x1,
+                        "x1": x1 * (np.sqrt(3) / 2),
+                        "T": np.full(len(vertices), float(T) - 273.15),
+                        "Phase": phases[vertices],
+                        "Colors": colors[vertices],
+                        "simplex_id": shifter + np.repeat(np.arange(len(simplices)), 3),
+                        "x0_orig": x0,
+                        "x1_orig": x1,
+                    }
+                )
+            )
+            shifter += max(len(simplices), 1)
+        rows = np.flatnonzero((self.proc_df["Phase"] == "L").to_numpy())
+        self._set_sheets_tstar(rows, self._rung_liquidus(rungs, rows))
         logger.info(
-            f"Lower hull evaluation and post processing time:: {end_time - start_time} seconds for temperature increment of {self.T_incr}"
+            f"Lower hull evaluation and post processing time:: {time.time() - start_time} "
+            f"seconds for temperature increment of {self.T_incr}"
         )
 
     def process_data(self, color_map=None):
@@ -1359,12 +1812,12 @@ class TernaryLiquidInterpolation:
         """The ``[x0, x1, G, Phase, Colors]`` hull frame at ``T_kelvin``, indexed from 0.
 
         Read from ``df_Tgroups`` when the gtx pipeline already built that slice, otherwise
-        evaluated from ``proc_df`` as ``G = H - T * S``.
+        evaluated from ``proc_df`` by :meth:`_row_gibbs`.
         """
         if T_kelvin in self.df_Tgroups:
             return self.df_Tgroups[T_kelvin].copy().reset_index(drop=True)
         frame = self.proc_df[["x0", "x1", "Phase", "Colors"]].copy()
-        frame.insert(2, "G", self.proc_df["H"] - T_kelvin * self.proc_df["S"])
+        frame.insert(2, "G", self._row_gibbs(T_kelvin))
         return frame.reset_index(drop=True)
 
     def get_convex_hull(self, T_celsius: float) -> dict:
@@ -1488,10 +1941,9 @@ def build_binary_edge_figures(
 ):
     """Build one TX figure per parameterized binary edge of ``ti``.
 
-    A model-layer act (constructs BinaryLiquid edge systems), so it lives here rather
-    than in gliquid.plotting; ``TLIPlotter._init_sys`` collects the result as
-    ``bin_fig_list``.
+    ``TLIPlotter._init_sys`` collects the result as ``bin_fig_list``.
 
+    Each edge's liquid is converged on every row (``update_phase_points(every_row=True)``).
     Each edge's phases come from :meth:`TernaryLiquidInterpolation.edge_hull`, the hull ``ti``
     places on that edge: its user-defined and imputed phases are drawn dashed under the legend
     entry that names their kind, and a DFT entry one of them replaces is left out.
@@ -1532,7 +1984,7 @@ def build_binary_edge_figures(
             tau=ti.tau,
             hull=ti.edge_hull(alphabetical_order),
         )
-        sys.update_phase_points()
+        sys.update_phase_points(every_row=True)
         fit = ti.fit_or_pred.get(sys_name, "pred") == "fit"
         with_liquidus = fit or (pred_liquidus and bool(sys.digitized_liq))
         hsx, shared = _plot_tx_inputs(sys)
@@ -1718,7 +2170,9 @@ class TLIPlotter:
             clicks and turns the flat labels of the base triangle with the camera so they read
             upright from the edge lowest on screen.
             :func:`gliquid.plotting.ternary_labels.orient_labels` re-fits them to a camera set in
-            Python.
+            Python. Where fewer than three liquidus nodes off one line lie at or below the top of
+            the temperature window, a WARNING says so; the figure is still drawn, and without a
+            liquidus mesh where the nodes the hull returned do not span the triangle.
 
         Raises:
             ValueError: an unknown ``plot_type`` or ``highlight_phase``, a highlight option with
@@ -1858,13 +2312,33 @@ class TLIPlotter:
             for node in zip(self.liq_plotting_df["x0"], self.liq_plotting_df["x1"])
         ]
 
-        self.triangulation = Delaunay(self.liq_plotting_df[["x0", "x1"]].to_numpy(float))
-        triangles = self.triangulation.simplices
+        nodes = self.liq_plotting_df[["x0", "x1"]].to_numpy(float)
+        if _spans_plane(nodes):
+            self.triangulation = Delaunay(nodes)
+            triangles = self.triangulation.simplices
+        else:
+            self.triangulation = None
+            triangles = np.empty((0, 3), dtype=int)
 
         self.plotting_df = pd.concat([self.solid_plotting_df, self.liq_plotting_df])
-        partition = self._liquidus_partition(triangles)
-        if partition is None and (highlight_phase is not None or interactive_legend):
+        partition = self._liquidus_partition(triangles) if len(triangles) else None
+        in_window = self.liq_plotting_df["T"].to_numpy(float) <= self.conds[1]
+        if not _spans_plane(nodes[in_window]):
+            logger.warning(
+                f"{self.sys_name}: {int(in_window.sum())} liquidus nodes lie at or below the top "
+                f"of the temperature window ({self.conds[1]:.1f} °C), too few to span the "
+                "composition triangle; raise the top of temp_range to show the liquidus."
+            )
+        elif partition is None and (highlight_phase is not None or interactive_legend):
             logger.warning(f"{self.sys_name}: the liquidus has no phase fields to highlight.")
+
+        # The drawn window reaches the partition's hottest vertex unless temp_range pins its top.
+        conds = list(self.conds)
+        pinned_high = (self._ti._temp_range_arg or (None, None))[1]
+        if partition is not None and pinned_high is None:
+            top = float(np.max(partition.surface.T))
+            if top > conds[1]:
+                conds[1] = self._ti._pad_ceiling(top + 273.15) - 273.15
 
         return ternary_surface.render_tx_surface(
             self.solid_plotting_df,
@@ -1872,7 +2346,7 @@ class TLIPlotter:
             triangles,
             self.color_map,
             self.components,
-            self.conds,
+            conds,
             imputed_phases=self._ti.imputed_phase_names(),
             user_phases=self._ti.user_phase_names(),
             partition=partition,
@@ -1888,7 +2362,8 @@ class TLIPlotter:
 
         The sheets are rejected when one is not finite at a node, or when a node's hull liquidus
         lies above them, or above the bottom of the temperature window where they lie below it,
-        by more than the hull's temperature resolution.
+        by more than :data:`SHEET_GUARD_K`, or when the partition's surface is not
+        finite at one of its vertices.
 
         The result is cached on the plotter until the model's processed output
         (``equil_df_list``), ``triangles``, the temperature window or the hull mode changes.
@@ -1905,9 +2380,8 @@ class TLIPlotter:
         sheets = LiquidusSheets.from_interpolation(self._ti)
         comp = liq[["x0_orig", "x1_orig"]].to_numpy(float)
         liquidus = sheets.liquidus(comp) - 273.15
-        resolution = 1.0 if self.hull_mode == "hsx" else self.T_incr + 1.0
         bound = np.maximum(liquidus, self.conds[0])
-        rejected = ~np.isfinite(liquidus) | (liq["T"].to_numpy(float) > bound + resolution)
+        rejected = ~np.isfinite(liquidus) | (liq["T"].to_numpy(float) > bound + SHEET_GUARD_K)
         if rejected.any():
             logger.warning(
                 f"{self.sys_name}: the liquidus sheets disagree with the hull at "
@@ -1915,7 +2389,7 @@ class TLIPlotter:
                 "is drawn without phase fields."
             )
             return None
-        return liquidus_fields.partition_fields(
+        partition = liquidus_fields.partition_fields(
             liq[["x0", "x1"]].to_numpy(float),
             comp,
             triangles,
@@ -1923,6 +2397,14 @@ class TLIPlotter:
             sheets.phases,
             sheet_columns=lambda points, which: sheets.columns(points, which) - 273.15,
         )
+        unbounded = ~np.isfinite(partition.surface.T)
+        if unbounded.any():
+            logger.warning(
+                f"{self.sys_name}: the liquidus sheets are not finite at {int(unbounded.sum())} of "
+                f"{len(unbounded)} surface vertices; the liquidus is drawn without phase fields."
+            )
+            return None
+        return partition
 
     def get_inter_melting_temps(self, interphases_for_melting: list[str]):
         """Max stability temperature per requested phase (computation on the model)."""
