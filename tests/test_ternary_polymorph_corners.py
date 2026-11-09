@@ -16,13 +16,11 @@ Runs offline against the two ternary caches that ship for tests:
   Hf-Ti-Zr -- ALL THREE elements carry a sub-melting bcc transition (positive control)
   Al-Mg-Si -- NONE of the three does (negative control: nothing may move)
 
-Every fixture runs in both hull modes: gtx snaps each corner to the T_incr grid, hsx reads it
-off a facet and lands on t_fusion itself.
+Every fixture runs in both hull modes, and each lands on t_fusion itself: gtx refines the corner
+below its first rung on the hull, hsx solves it on its facet.
 """
 
 from __future__ import annotations
-
-import math
 
 import pandas as pd
 import pytest
@@ -42,16 +40,13 @@ ZERO_MIX = {"Hf-Ti": _IDEAL, "Ti-Zr": _IDEAL, "Zr-Hf": _IDEAL}
 ZERO_MIX_AMS = {"Al-Mg": _IDEAL, "Mg-Si": _IDEAL, "Si-Al": _IDEAL}
 T_INCR = 10
 HULL_MODES = ["gtx", "hsx"]
-#: hsx corner temperatures sit on t_fusion to within the reference data's own rounding.
-HSX_TOL_K = 0.05
+#: Corner temperatures sit on t_fusion to within the reference data's own rounding.
+CORNER_TOL_K = 0.05
 
 
-def _expected_corner(el, hull_mode):
-    """The rendered corner temperature (K): t_fusion, rounded up to the grid under gtx."""
-    t_fusion = UNARY[el].t_fusion
-    if hull_mode == "gtx":
-        return pytest.approx(math.ceil(t_fusion / T_INCR) * T_INCR, abs=1e-6)
-    return pytest.approx(t_fusion, abs=HSX_TOL_K)
+def _expected_corner(el):
+    """The rendered corner temperature (K): t_fusion."""
+    return pytest.approx(UNARY[el].t_fusion, abs=CORNER_TOL_K)
 
 
 def _sub_melting_steps(symbol):
@@ -131,7 +126,7 @@ class TestCornersReachTFusion:
     def test_affected_corner_melts_at_t_fusion(self, htz, el):
         corners, ti = htz
         assert corners[el] is not None, f"no liquid vertex found for {el}"
-        assert corners[el] == _expected_corner(el, ti.hull_mode)
+        assert corners[el] == _expected_corner(el)
 
     @pytest.mark.parametrize("el", AFFECTED)
     def test_affected_corner_is_not_the_h_over_s_value(self, htz, el):
@@ -141,8 +136,8 @@ class TestCornersReachTFusion:
 
     @pytest.mark.parametrize("el", UNAFFECTED)
     def test_unaffected_corner_unchanged(self, ams, el):
-        corners, ti = ams
-        assert corners[el] == _expected_corner(el, ti.hull_mode)
+        corners, _ = ams
+        assert corners[el] == _expected_corner(el)
 
 
 class TestLadderOnTheHull:

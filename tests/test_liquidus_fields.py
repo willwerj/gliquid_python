@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from scipy.spatial import Delaunay
 
+from gliquid.liquidus_sheets import TWO_LIQUIDS
 from gliquid.plotting import liquidus_fields as lf
 
 SQRT3_2 = np.sqrt(3) / 2
@@ -265,11 +266,8 @@ def test_every_edge_leaving_a_side_is_split_at_the_same_depths():
         triangles,
         temps.argmax(axis=1),
         temps,
-        np.zeros(0, dtype=np.int64),
-        np.zeros(0),
         _half_wall_sheets,
         columns,
-        lf.SURFACE_TOLERANCE,
         float(np.ptp(temps.max(axis=1))),
     )[0][len(comp) :]
     edges = lf._mesh_edges(triangles)
@@ -284,6 +282,23 @@ def test_every_edge_leaving_a_side_is_split_at_the_same_depths():
     counts = on_edge.sum(axis=1)
     assert counts.min() > 5
     assert counts.min() == counts.max()
+
+
+def test_a_patch_touching_no_side_is_partitioned_like_the_whole_triangle():
+    comp, xy, _ = _grid(0.1)
+    inner = (comp > 0).all(axis=1) & (comp.sum(axis=1) < 1)
+    triangles = Delaunay(xy[inner]).simplices
+    patch = lf.partition_fields(xy[inner], comp[inner], triangles, _corner_sheets(), "ABC")
+    assert set(patch.fields) == {"A", "B", "C"}
+    assert _area(patch.surface) == pytest.approx(
+        lf._triangle_areas(xy[inner], triangles).sum(), rel=1e-12
+    )
+    whole = _partition(0.1)
+    (triple,) = [v for v, phases in enumerate(patch.vertex_phases) if len(phases) == 3]
+    (reference,) = [v for v, phases in enumerate(whole.vertex_phases) if len(phases) == 3]
+    assert patch.surface.comp[triple] == pytest.approx(
+        whole.surface.comp[reference], abs=lf.JUNCTION_EDGE
+    )
 
 
 def _segments(lines):
@@ -303,3 +318,154 @@ def test_field_boundaries_split_the_outline_by_neighbour(curve):
         pieces = [_segments(lines) for lines in groups.values()]
         assert sum(len(piece) for piece in pieces) == len(set().union(*pieces))
         assert set().union(*pieces) == _segments(field.outline)
+
+
+def _surface_at(part, points):
+    """The drawn surface at each of ``points`` (plot coordinates), on the face holding it."""
+    tri = part.surface.xy[part.surface.faces]
+    temps = part.surface.T[part.surface.faces]
+    v0, v1 = tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]
+    det = v0[:, 0] * v1[:, 1] - v0[:, 1] * v1[:, 0]
+    out = np.full(len(points), np.nan)
+    for k, point in enumerate(points):
+        d = point - tri[:, 0]
+        u = (d[:, 0] * v1[:, 1] - d[:, 1] * v1[:, 0]) / det
+        v = (v0[:, 0] * d[:, 1] - v0[:, 1] * d[:, 0]) / det
+        i = np.flatnonzero((u >= -1e-12) & (v >= -1e-12) & (u + v <= 1 + 1e-12))[0]
+        out[k] = (1 - u[i] - v[i]) * temps[i, 0] + u[i] * temps[i, 1] + v[i] * temps[i, 2]
+    return out
+
+
+def test_a_two_liquid_sheet_that_jumps_is_drawn_as_a_wall():
+    """L1 + L2 stands 500 K above the solid where x0 < 0.33 and is absent beyond it."""
+    edge = 0.33
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        return np.column_stack(
+            [np.full(len(points), 1000.0), np.where(points[:, 0] < edge, 1500.0, 0.0)]
+        )
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS))
+    x1 = np.linspace(0.05, 0.6, 12)
+    for x0, expected in ((edge - 1e-3, 1500.0), (edge + 1e-3, 1000.0)):
+        points = np.column_stack([x0 + 0.5 * x1, x1 * SQRT3_2])
+        assert _surface_at(part, points) == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_wall_on_a_sloped_jump_leaves_the_cooler_field_at_its_own_sheet():
+    """L1 + L2 falls from about 1000 K to about 0 across x0 = 0.33 + 0.2 x1; the solid's sheet
+    rises from 150 K to 160 K."""
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        hot = points[:, 0] < 0.33 + 0.2 * points[:, 1]
+        return np.column_stack(
+            [150.0 + 10 * points[:, 0], np.where(hot, 1000.0 - 50 * points[:, 0], 3 * points[:, 0])]
+        )
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS))
+    inside = part.fields["A"].inside
+    assert inside.T[np.unique(inside.faces)].max() <= 160.0
+
+
+def test_a_two_liquid_sheet_climbing_steeply_from_its_wall_is_followed_by_the_surface():
+    """L1 + L2 rises as a square root from 500 K at x0 = 0.33 into x0 < 0.33 and is absent beyond
+    it; the solid stands at 400 K."""
+    edge = 0.33
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        depth = np.clip(edge - points[:, 0], 0.0, None)
+        two = np.where(points[:, 0] < edge, 500.0 + 3000.0 * np.sqrt(depth / edge), 0.0)
+        return np.column_stack([np.full(len(points), 400.0), two])
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS))
+    x0, x1 = np.meshgrid(np.linspace(edge - 0.03, edge - 1e-3, 15), np.linspace(0.05, 0.6, 12))
+    x0, x1 = x0.ravel(), x1.ravel()
+    points = np.column_stack([x0 + 0.5 * x1, x1 * SQRT3_2])
+    expected = sheets(np.column_stack([x0, x1])).max(axis=1)
+    assert np.abs(_surface_at(part, points) - expected).max() < 25.0
+
+
+def test_wall_vertices_keep_the_column_values_the_wall_was_found_with():
+    """L1 + L2 stands at 1500 K for x0 < 0.33 in the columns the wall test reads and for
+    x0 < 0.33 + 1e-7 in the sheets; the solid's field stays at its own 1000 K sheet."""
+    comp, xy, triangles = _grid(0.05)
+
+    def sheets_at(shift):
+        def sheets(points):
+            points = np.atleast_2d(points)
+            wall = np.where(points[:, 0] < 0.33 + shift, 1500.0, 0.0)
+            return np.column_stack([np.full(len(points), 1000.0), wall])
+
+        return sheets
+
+    def columns(points, which):
+        return np.take_along_axis(sheets_at(0.0)(points), which, axis=1)
+
+    part = lf.partition_fields(
+        xy, comp, triangles, sheets_at(1e-7), ("A", TWO_LIQUIDS), sheet_columns=columns
+    )
+    inside = part.fields["A"].inside
+    assert inside.T[np.unique(inside.faces)].max() <= 1000.0 + 1e-6
+
+
+def test_a_wall_vertex_whose_own_sheet_is_absent_takes_the_hottest_sheet():
+    """On the side x1 = 0 the wall test reads A's column as absent (0 K) beyond an L1 + L2 field
+    at 1500 K for x0 < 0.33; B stands at 300 K everywhere, so no vertex is drawn below it."""
+    comp, xy, triangles = _grid(0.05)
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        gap = np.where(points[:, 0] < 0.33, 1500.0, 0.0)
+        return np.column_stack([np.full(len(points), 1000.0), np.full(len(points), 300.0), gap])
+
+    def columns(points, which):
+        values = sheets(points)
+        values[np.atleast_2d(points)[:, 1] == 0, 0] = 0.0
+        return np.take_along_axis(values, which, axis=1)
+
+    part = lf.partition_fields(
+        xy, comp, triangles, sheets, ("A", "B", TWO_LIQUIDS), sheet_columns=columns
+    )
+    assert part.surface.T.min() >= 300.0
+
+
+def _sagging_sheets(comp):
+    """A gentle field, a dome about 0.12 wide above it, and a V ridge inside one field."""
+    comp = np.atleast_2d(comp)
+    x0, x1 = comp[:, 0], comp[:, 1]
+    flat = 1000 + 200 * x0
+    dome = 1700 - 6e4 * ((x0 - 0.55) ** 2 + (x1 - 0.25) ** 2)
+    crease = np.where(x0 + x1 < 0.5, 1550 - 2500 * np.abs(x0 - x1), 0.0)
+    return np.column_stack([flat, dome, crease])
+
+
+def _sagging_surface():
+    comp, xy, triangles = _grid(0.025)
+    phases = ("flat", "dome", "crease")
+    return lf.partition_fields(xy, comp, triangles, _sagging_sheets, phases).surface
+
+
+def test_faces_sagging_visibly_under_a_curved_sheet_are_split(monkeypatch):
+    surface = _sagging_surface()
+    monkeypatch.setattr(
+        lf, "_add_midpoints", lambda xy, comp, tri, temps, _: (xy, comp, tri, temps.max(axis=1), 0)
+    )
+    plain = _sagging_surface()
+    faces, T, xy = np.asarray(surface.faces), np.asarray(surface.T), np.asarray(surface.xy)
+    centre = np.asarray(surface.comp)[faces].mean(axis=1)
+    sag = np.abs(T[faces].mean(axis=1) - _sagging_sheets(centre).max(axis=1))
+    span = np.ptp(T)
+    corner, height = xy[faces], T[faces] / span
+    legs = np.stack([corner[:, 1] - corner[:, 0], corner[:, 2] - corner[:, 0]], axis=1)
+    rise = np.stack([height[:, 1] - height[:, 0], height[:, 2] - height[:, 0]], axis=1)
+    slope = np.linalg.norm(np.linalg.solve(legs, rise[..., None])[..., 0], axis=1)
+    across = sag / span / np.sqrt(1 + slope**2)
+    inside = np.column_stack([1 - centre.sum(axis=1), centre]).min(axis=1) >= 1.4e-3
+    assert ((sag > 25.0) & (across > 2 * 1.4e-3) & inside).sum() <= 1
+    assert len(T) < 1.05 * len(plain.T)

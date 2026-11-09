@@ -30,18 +30,23 @@ from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
 COMPONENTS = ["Al", "Mg", "Si"]
 IDEAL = {"Al-Mg": [0.0] * 4, "Mg-Si": [0.0] * 4, "Si-Al": [0.0] * 4}
 MIXING = {"Al-Mg": [-20000.0, 0, 0, 0], "Mg-Si": [-30000.0, 0, 0, 0], "Si-Al": [-10000.0, 0, 0, 0]}
+COMB_EXP = {
+    "Al-Mg": [-20000.0, -10.0, 0, 0],
+    "Mg-Si": [-60000.0, -20.0, 0, 0],
+    "Si-Al": [-10000.0, -5.0, 0, 0],
+}
 TARGET = {"Al": 0.2, "Mg": 0.4, "Si": 0.4}
 MG2SI = {"Al": 0.0, "Mg": 2 / 3, "Si": 1 / 3}
 DELTA = 0.1
 T_INCR = 5
 
 
-def build(mode="hsx", xs_mix=IDEAL, **kwargs) -> TernaryLiquidInterpolation:
+def build(mode="hsx", xs_mix=IDEAL, param_format="linear", **kwargs) -> TernaryLiquidInterpolation:
     return TernaryLiquidInterpolation(
         list(COMPONENTS),
         delta=DELTA,
         xs_mix=xs_mix,
-        param_format="linear",
+        param_format=param_format,
         order="given",
         hull_mode=mode,
         T_incr=T_INCR,
@@ -98,6 +103,12 @@ class TestRealizedTemperature:
         assert record.accepted and record.code == "imputed", record.reason
         assert record.melts is True
         assert abs(record.realized_temperature_k - temp) <= imp_ternary.HSX_TOLERANCE_K
+
+    def test_hsx_with_a_liquid_nonlinear_in_temperature(self, no_persist):
+        ti = build("hsx", xs_mix=COMB_EXP, param_format="comb-exp")
+        record = ti.impute_phase(TARGET, 800.0, name="TX")
+        assert record.accepted and record.code == "imputed", record.reason
+        assert abs(record.realized_temperature_k - 800.0) <= imp_ternary.HSX_TOLERANCE_K
 
     @pytest.mark.parametrize("temp", [1100.0])
     def test_gtx(self, no_persist, temp):

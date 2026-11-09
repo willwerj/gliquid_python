@@ -147,15 +147,29 @@ def test_fields_tile_the_drawn_surface(plotter, tx):
         assert _mesh_area(traces[key]) + _mesh_area(rest) == pytest.approx(whole, rel=1e-6)
 
 
+def test_surface_meshes_list_faces_coolest_first(plotter, tx):
+    traces = _by_id(tx(plotter, interactive_legend=True))
+    meshes = [
+        trace
+        for key, trace in traces.items()
+        if trace.type == "mesh3d" and key.startswith("gliquid-")
+    ]
+    assert meshes
+    for trace in meshes:
+        centroid_t = np.asarray(trace.z, float)[np.column_stack([trace.i, trace.j, trace.k])].mean(
+            axis=1
+        )
+        assert (np.diff(centroid_t) >= 0).all()
+
+
 def test_surface_is_the_liquidus_of_the_sheets(plotter, tx):
     (surface,) = [trace for trace in tx(plotter).data if trace.name == "liquidus"]
     sheets = LiquidusSheets.from_interpolation(plotter._ti)
     comp = plotter._liquidus_partition(plotter.triangulation.simplices).surface.comp
     assert np.asarray(surface.z) == pytest.approx(sheets.liquidus(comp) - 273.15, abs=1e-6)
-    resolution = 1.0 if plotter.hull_mode == "hsx" else plotter.T_incr + 1.0
     liq = plotter.liq_plotting_df
     node_liquidus = sheets.liquidus(liq[["x0_orig", "x1_orig"]].to_numpy(float)) - 273.15
-    assert (liq["T"].to_numpy() <= node_liquidus + resolution).all()
+    assert (liq["T"].to_numpy() <= node_liquidus + tmod.SHEET_GUARD_K).all()
 
 
 def test_junctions_and_field_vertices_sit_on_their_own_sheets(plotter, tx):
@@ -358,6 +372,42 @@ def test_sheets_that_miss_the_hull_draw_the_node_mesh_without_fields(plotter, mo
     (liquidus,) = [t for t in fig.data if t.name == "liquidus"]
     assert len(liquidus.x) == len(plotter.liq_plotting_df)
     assert ph.trace_index(fig) == {}
+
+
+def test_a_partition_unbounded_at_a_vertex_draws_the_node_mesh(plotter, monkeypatch, caplog):
+    real = lf.partition_fields
+
+    def unbounded(*args, **kwargs):
+        part = real(*args, **kwargs)
+        part.surface.T[np.argmax(part.surface.T)] = np.inf
+        return part
+
+    monkeypatch.setattr(lf, "partition_fields", unbounded)
+    monkeypatch.setattr(plotter, "_partition_cache", (None, None, None))
+    with caplog.at_level(logging.WARNING, logger="gliquid.ternary"):
+        fig = plotter.get_plot("tx", interactive_legend=False)
+    assert plotter._liquidus_partition(plotter.triangulation.simplices) is None
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(m.startswith(plotter.sys_name) and "not finite" in m for m in warnings)
+    (liquidus,) = [t for t in fig.data if t.name == "liquidus"]
+    assert len(liquidus.x) == len(plotter.liq_plotting_df)
+
+
+def test_the_drawn_window_reaches_the_partitions_hottest_vertex(plotter, monkeypatch):
+    real = lf.partition_fields
+    top = plotter.conds[1] + 75.0
+
+    def raised(*args, **kwargs):
+        part = real(*args, **kwargs)
+        part.surface.T[np.argmax(part.surface.T)] = top
+        return part
+
+    monkeypatch.setattr(lf, "partition_fields", raised)
+    monkeypatch.setattr(plotter, "_partition_cache", (None, None, None))
+    fig = plotter.get_plot("tx", interactive_legend=False)
+    z_lo, z_hi = fig.layout.scene.zaxis.range
+    assert z_lo == pytest.approx(plotter.conds[0])
+    assert top <= z_hi < top + 3 * plotter.T_incr
 
 
 def test_the_colab_two_view_render_runs():
