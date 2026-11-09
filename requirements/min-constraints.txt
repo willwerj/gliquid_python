@@ -16,6 +16,7 @@
 #   - plotly 5.24.0 is the minimum: 5.18's express layer calls grouped.get_group(s[0]),
 #     which pandas 3.x rejects (KeyError). Measured in the compat matrix on every -min
 #     env at py311+, where pandas 3 is installable; py310-min escapes on pandas 2.3.3.
+#   - nbformat 5.7.0 is the floor nbconvert 7 and jupyter already require.
 #   - emmet-core is now capped <0.86 in pyproject: 0.87.1 imports pymatgen.core.entries,
 #     removed from current pymatgen, breaking every live MP fetch on py311+.
 #   - emmet-core is not pinned here; mp-api==0.45.1 resolves it within pyproject's >=0.84,<0.86.
@@ -33,7 +34,7 @@
 #     pin stays. Removing it is a matrix experiment, not a cleanup.
 
 plotly==5.24.0
-nbformat==4.2.0
+nbformat==5.7.0
 mp-api==0.45.1
 matplotlib==3.10.0
 sympy==1.13

@@ -53,9 +53,14 @@ source tree carries a version literal that could disagree with this file.
     `BINODAL_REACH_STEPS` are `CLIMB.radii`, `.moves`, `.rise` and `.reach_steps`.
 - `gliquid.solution.DEFAULT_TERNARY_TSTAR_MAX_HULLS`: a ternary liquid no longer iterates its
   T*.
+- The `tqdm` dependency: `hull_mode='gtx'` no longer prints a progress bar over its slices.
 
 ### Fixed
 
+- **`fig.show()` works in a bare Jupyter kernel.** `nbformat>=5.7` is now a base dependency. A
+  plain `pip install gliquid` plus `ipykernel` (the VS Code setup) lacked it, and plotly raised
+  `Mime type rendering requires nbformat>=4.2.0` on every figure. plotly checks for nbformat
+  once, at import, so installing it afterwards needs a kernel restart.
 - **A ternary's liquidus and its solids' melting points are solved with the liquid's Gibbs energy
   at temperature, in both hull modes.** This replaces the per-node re-linearization of 0.3.2,
   which inside a liquid miscibility gap could cycle without converging and drew one-node spikes,

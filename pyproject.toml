@@ -9,6 +9,8 @@ dynamic = ["version"]
 dependencies = [
     # >=5.24 works with pandas 3; <6 keeps the fill behaviour the solid-solution envelope uses.
     "plotly>=5.24,<6.0.0",
+    # fig.show() inside a Jupyter kernel needs nbformat.
+    "nbformat>=5.7",
     # <0.86: later emmet-core breaks live Materials Project fetches. Do not lift.
     "emmet-core>=0.84,<0.86",
     "mp-api>=0.45.1",
@@ -18,7 +20,6 @@ dependencies = [
     "scipy>=1.11",
     "matplotlib>=3.10.0",
     "sympy>=1.13",
-    "tqdm>=4.65",
     # No ML packages here: they are the `ml` extra (test_optional_ml_extras.py checks this).
 ]
 requires-python = ">=3.10,<3.14"

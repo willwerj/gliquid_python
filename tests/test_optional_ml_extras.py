@@ -95,6 +95,7 @@ class TestDeclaredDependencies:
         base = {_dist_name(req) for req in self._requirements() if self._is_unconditional(req)}
         assert base == {
             "plotly",
+            "nbformat",
             "emmet-core",
             "mp-api",
             "pymatgen",
@@ -103,7 +104,6 @@ class TestDeclaredDependencies:
             "scipy",
             "matplotlib",
             "sympy",
-            "tqdm",
         }, sorted(base)
 
     def test_the_extras_are_declared(self):
