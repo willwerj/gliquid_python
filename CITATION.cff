@@ -7,8 +7,8 @@ abstract: >-
   liquid descriptions.
 type: software
 # A literal: bump `version` and `date-released` by hand at each release (CONTRIBUTING.md).
-version: "0.3.2"
-date-released: "2026-10-29"
+version: "0.3.3"
+date-released: "2026-11-09"
 license: MIT
 repository-code: "https://github.com/willwerj/gliquid_python"
 url: "https://viz.whsunresearch.group/gliquid/interactive-matrix.html"
