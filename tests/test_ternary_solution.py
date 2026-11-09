@@ -15,6 +15,7 @@ from gliquid.solution import R, SolutionModel, comp_symbols, t_sym
 from gliquid.ternary import TernaryLiquidInterpolation
 
 x1_sym, x2_sym = comp_symbols(3)
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase
 
 TERN = ["Hf", "Ti", "Zr"]
@@ -110,7 +111,7 @@ class TestTernarySSExpressions:
                 component_data=UNARY.component_data(components),
                 dft_ch=_dummy_ch(),
                 phases=[Phase(phase_type="liquid", name="L")],
-                temp_range=[300, 3000],
+                reference=LiquidusReference(temp_range=[300, 3000]),
             )
             g_binary = bl.solid_solution_gibbs("BCC", x, 1500.0)
             x1_e, x2_e = mapper(x)

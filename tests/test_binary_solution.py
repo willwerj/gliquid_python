@@ -13,6 +13,7 @@ import pytest
 
 import gliquid.api as api
 from gliquid.binary import BinaryLiquid, _x_vals
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import SS_SPACEGROUPS, UNARY, Phase
 from gliquid.solution import SolutionModel
 
@@ -46,7 +47,7 @@ def direct_instance():
         component_data=UNARY.component_data(["Hf", "Zr"]),
         dft_ch=ch,
         phases=[Phase(phase_type="liquid", name="L")],
-        temp_range=[300, 3000],
+        reference=LiquidusReference(temp_range=[300, 3000]),
     )
 
 
@@ -194,7 +195,7 @@ class TestReversedOrderSS:
             component_data=UNARY.component_data(["Zr", "Hf"]),
             dft_ch=ch,
             phases=[Phase(phase_type="liquid", name="L")],
-            temp_range=[300, 3000],
+            reference=LiquidusReference(temp_range=[300, 3000]),
         )
         pin = PINS["pin1"]
         for name, h_key, s_key in (("BCC", "BCC_h", "BCC_s"), ("HCP", "HCP_h", "HCP_s")):

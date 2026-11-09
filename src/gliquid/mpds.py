@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass, field
 
 import numpy as np
 from pymatgen.analysis.phase_diagram import PhaseDiagram
@@ -798,6 +799,49 @@ def mpds_frame_matches(mpds_json: dict, components) -> bool:
 def mirror_liquidus(liquidus: list[list]) -> list[list]:
     """A digitized liquidus reflected onto the reversed component frame (x -> 1-x)."""
     return [[1 - x, t] for x, t in reversed(liquidus)]
+
+
+@dataclass
+class LiquidusReference:
+    """The assessed (MPDS) phase diagram a :class:`~gliquid.binary.BinaryLiquid` is fitted to,
+    in that system's component frame. Pass it as ``BinaryLiquid(..., reference=...)``; the
+    system keeps each field as an attribute of the same name.
+
+    Attributes:
+        mpds_json (dict): MPDS phase equilibrium data, in its own component frame.
+        digitized_liq (list): Digitized liquidus points ``[x, T]``.
+        temp_range (list): Temperature range, K, of the calculations.
+        pd_ind (int | None): Index of the MPDS phase diagram used.
+        liq_coverage (dict | None): :func:`liquidus_coverage` metrics of the digitized liquidus
+            before filling (``max_gap``, ``covered_fraction``, ``holes``, ...).
+        undigitized_comp_ranges (list): ``[lo, hi]`` intervals of the whole composition axis
+            with no digitized liquidus: outside the digitized endpoints, or inside a hole.
+    """
+
+    mpds_json: dict = field(default_factory=dict)
+    digitized_liq: list = field(default_factory=list)
+    temp_range: list = field(default_factory=list)
+    pd_ind: int | None = None
+    liq_coverage: dict | None = None
+    undigitized_comp_ranges: list = field(default_factory=list)
+
+    def mirrored(self) -> LiquidusReference:
+        """This reference on the reversed component frame (x -> 1-x); ``mpds_json`` keeps its
+        own frame."""
+        return LiquidusReference(
+            mpds_json=self.mpds_json,
+            digitized_liq=mirror_liquidus(self.digitized_liq) if self.digitized_liq else [],
+            temp_range=list(self.temp_range),
+            pd_ind=self.pd_ind,
+            liq_coverage=(
+                mirror_liquidus_coverage(self.liq_coverage)
+                if self.liq_coverage
+                else self.liq_coverage
+            ),
+            undigitized_comp_ranges=[
+                [1 - b, 1 - a] for a, b in reversed(self.undigitized_comp_ranges or [])
+            ],
+        )
 
 
 def mirror_mpds_phases(phases: list[dict]) -> list[dict]:

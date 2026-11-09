@@ -20,6 +20,7 @@ from gliquid.cache import (
     entry_energies_by_id,
     entry_energy_drift,
 )
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase
 from gliquid.ternary import TernaryLiquidInterpolation
 
@@ -109,7 +110,7 @@ def _bl(pair, hull):
         component_data=UNARY.component_data(list(pair)),
         dft_ch=hull,
         phases=[Phase(phase_type="liquid", name="L")],
-        temp_range=[300, 3000],
+        reference=LiquidusReference(temp_range=[300, 3000]),
         params=[8000.0, -1.5, 3000.0, 0.5],
         param_format="linear",
         tau=8000,

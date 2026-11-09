@@ -13,6 +13,7 @@ from pymatgen.core import Composition
 
 import gliquid.api as api
 from gliquid.binary import BinaryLiquid, BLPlotter
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import UNARY, Phase, resolve_component_order
 from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
 
@@ -103,7 +104,7 @@ class TestWithComponentOrder:
             component_data=UNARY.component_data(["Hf", "Zr"]),
             dft_ch=ch,
             phases=[Phase(phase_type="liquid", name="L")],
-            temp_range=[300, 3000],
+            reference=LiquidusReference(temp_range=[300, 3000]),
         )
         clone = bl.with_component_order(["Zr", "Hf"])
         h_a, s_a = bl.solid_solution_h_s("BCC", x_vals=X_TEST)
@@ -121,7 +122,7 @@ class TestWithComponentOrder:
             component_data=UNARY.component_data(["Hf", "Zr"]),
             dft_ch=ch,
             phases=[Phase(phase_type="liquid", name="L")],
-            temp_range=[300, 3000],
+            reference=LiquidusReference(temp_range=[300, 3000]),
             unsupported_comp_ranges=[list(r) for r in mask],
         )
         assert bl.with_component_order(["Hf", "Zr"]) is bl
