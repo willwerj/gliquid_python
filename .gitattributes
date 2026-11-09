@@ -5,3 +5,6 @@ src/gliquid/models/** -text
 
 # The pre-commit hook is run by sh; CRLF in it fails at the shebang line.
 .githooks/** text eol=lf
+
+# Keeps cache/ out of GitHub source archives (and the Zenodo record built from them).
+cache/** export-ignore
