@@ -17,18 +17,22 @@ authors:
     family-names: Willwerth
     email: willwerj@umich.edu
     affiliation: "University of Michigan"
+    orcid: "https://orcid.org/0009-0004-6334-9426"
   - given-names: Abrar
     family-names: Rauf
     email: arauf@umich.edu
     affiliation: "University of Michigan"
+    orcid: "https://orcid.org/0000-0001-5205-0075"
   - given-names: Shibo
     family-names: Tan
     email: shibot@umich.edu
     affiliation: "University of Michigan"
+    orcid: "https://orcid.org/0000-0002-1193-5878"
   - given-names: Wenhao
     family-names: Sun
     email: whsun@umich.edu
     affiliation: "University of Michigan"
+    orcid: "https://orcid.org/0000-0002-8416-455X"
 keywords:
   - "density functional theory"
   - "thermodynamic modeling"
