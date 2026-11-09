@@ -21,6 +21,13 @@ source tree carries a version literal that could disagree with this file.
 
 ### Changed
 
+- **`BinaryLiquid(...)` takes its assessed (MPDS) reference as one
+  `reference=LiquidusReference(...)`** (`gliquid.mpds.LiquidusReference`, also importable from
+  `gliquid.binary`), holding `mpds_json`, `digitized_liq`, `temp_range`, `pd_ind`,
+  `liq_coverage` and `undigitized_comp_ranges`. The system keeps each as an attribute of the
+  same name, and `bl.reference` collects them again. Passing one of those keywords, or the
+  unused `invariants=`, raises `TypeError` naming its replacement. `BinaryLiquid.from_cache`
+  is unchanged.
 - **`hull_mode='gtx'` ternaries default to a 25 K temperature grid.** `T_incr` now defaults to
   `None`, which means 25 K for `gtx` and 10 K for `hsx`; pass `T_incr=10` to keep the old `gtx`
   grid. A `gtx` figure takes about 0.84 times as long, and a solid-phase field's top can sit up

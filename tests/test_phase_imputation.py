@@ -56,6 +56,7 @@ from gliquid.imputation.lifecycle import (
     imputed_entry_staleness,
     stale_imputed_entries,
 )
+from gliquid.mpds import LiquidusReference
 from gliquid.phase import EV_ATOM_TO_J_MOL, UNARY
 from gliquid.plotting.binary_figs import imputed_hull_entries
 from gliquid.solution import x_vals
@@ -983,7 +984,7 @@ class TestFarNeighbourPolymorph:
             phases=build_phases_from_chull(ch, components, component_data),
             param_format="comb-exp",
             params=[-40000.0, -5.0, 0.0, 0.0],
-            temp_range=[300, 3000],
+            reference=LiquidusReference(temp_range=[300, 3000]),
         )
         bl._rebuild_thermodynamic_expressions()
         return bl
