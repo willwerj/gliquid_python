@@ -719,10 +719,11 @@ class SolutionModel:
             self._grid_fns[key] = fn
         shape = np.shape(x_arrays[0])
         with np.errstate(divide="ignore", invalid="ignore"):
-            return [
-                np.broadcast_to(np.asarray(value, dtype=float), shape).astype(float)
-                for value in fn(*x_arrays, temp)
-            ]
+            values = [np.asarray(value, dtype=float) for value in fn(*x_arrays, temp)]
+        return [
+            v.copy() if v.shape == shape else np.broadcast_to(v, shape).astype(float)
+            for v in values
+        ]
 
     def nonideal_h_s_temperature_derivatives(self, x_arrays, temp) -> tuple[np.ndarray, ...]:
         """dH/dT and dS/dT of the reference and excess terms (both 0 for a model linear in T).

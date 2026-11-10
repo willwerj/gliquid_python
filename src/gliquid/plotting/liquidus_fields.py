@@ -16,7 +16,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import Delaunay
 
-from gliquid.liquidus_sheets import TWO_LIQUIDS, _on_sides
+from gliquid.liquidus_sheets import SELF_CONSISTENT, TWO_LIQUIDS, _on_sides
 
 #: Longest mesh edge, in mole fraction, below which :func:`partition_fields` stops refining at
 #: field junctions.
@@ -186,13 +186,17 @@ def _label_count(labels) -> np.ndarray:
     )
 
 
-def _edge_span(comp, a, b) -> np.ndarray:
-    """Largest change of any mole fraction along each segment from ``comp[a]`` to ``comp[b]``."""
-    step = comp[b] - comp[a]
+def _span(step) -> np.ndarray:
+    """Largest change of any mole fraction along each composition step of ``step`` (k, 2)."""
     return np.maximum(np.abs(step).max(axis=1), np.abs(step.sum(axis=1)))
 
 
-def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_edge):
+def _edge_span(comp, a, b) -> np.ndarray:
+    """Largest change of any mole fraction along each segment from ``comp[a]`` to ``comp[b]``."""
+    return _span(comp[b] - comp[a])
+
+
+def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_edge, two_liquids):
     """Split the triangles meeting three phases or holding a phase none of their nodes carries
     until their edges are no longer than ``min_edge``, leaving those already narrower than an
     eighth of ``min_edge`` across.
@@ -201,17 +205,17 @@ def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_e
     where the sheets of an edge's two phases cross. A marked triangle is split into four at its
     edge midpoints, as is any triangle with two or more split edges; a triangle with one split
     edge is halved. New nodes are labelled from ``sheets``, and ``temps``, the sheets at the
-    nodes, is extended to them.
+    nodes, is extended to them. ``two_liquids``: as in :func:`_sheet_crossings`.
 
     Returns:
         tuple: the refined ``comp``, ``xy``, ``triangles``, ``labels`` and ``temps``, and the
         crossings found: sorted edge ids (lower node * ``_EDGE_ID`` + upper node) and their
-        shares.
+        rows of :func:`_sheet_crossings`.
     """
     foreign = np.zeros(len(triangles), dtype=bool)
     fresh = np.ones(len(triangles), dtype=bool)
     tested = np.zeros(0, dtype=np.int64)
-    shares = np.zeros(0)
+    found = np.zeros((0, 3))
     intruded = np.zeros(0, dtype=np.int64)
     while True:
         n = len(comp)
@@ -234,13 +238,13 @@ def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_e
         untested = np.setdiff1d(ids[mixed & fresh[:, None]], tested)
         if len(untested):
             u, w = untested // _EDGE_ID, untested % _EDGE_ID
-            s = _sheet_crossings(
-                columns, comp[u], comp[w], labels[u], labels[w], temps[u], temps[w]
+            new = _sheet_crossings(
+                columns, comp[u], comp[w], labels[u], labels[w], temps[u], temps[w], two_liquids
             )
-            at = sheets(comp[u] + s[:, None] * (comp[w] - comp[u])).argmax(axis=1)
+            at = sheets(comp[u] + new[:, :1] * (comp[w] - comp[u])).argmax(axis=1)
             order = np.argsort(np.concatenate([tested, untested]), kind="stable")
             tested = np.concatenate([tested, untested])[order]
-            shares = np.concatenate([shares, s])[order]
+            found = np.concatenate([found, new])[order]
             intruded = np.union1d(intruded, untested[(at != labels[u]) & (at != labels[w])])
         foreign |= np.isin(ids, intruded).any(axis=1)
         long = _edge_span(comp, ends[..., 0].ravel(), ends[..., 1].ravel()).reshape(-1, 3)
@@ -291,7 +295,7 @@ def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_e
         children = len(red_children) + len(green_children)
         foreign = np.concatenate([foreign[kept], np.zeros(children, dtype=bool)])
         fresh = np.concatenate([np.zeros(kept.sum(), dtype=bool), np.ones(children, dtype=bool)])
-    return comp, xy, triangles, labels, temps, tested, shares
+    return comp, xy, triangles, labels, temps, tested, found
 
 
 @dataclass(frozen=True)
@@ -307,7 +311,7 @@ class _Grading:
 GRADING = _Grading()
 
 
-def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
+def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale, two_liquids):
     """Split the mesh edges that leave a side of the composition triangle, toward that side,
     until the surface along them follows the liquidus, and re-triangulate the triangles they
     bound.
@@ -328,8 +332,8 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
 
     Returns:
         tuple: the refined ``comp``, ``xy``, ``triangles``, ``labels`` and ``temps``, and
-        the ids (:data:`_EDGE_ID`) and shares from the lower node of the crossings found on the
-        new edges.
+        the ids (:data:`_EDGE_ID`) of the new edges a crossing was found on with their rows of
+        :func:`_sheet_crossings`, from the lower node. ``two_liquids``: as there.
     """
     edges = _mesh_edges(triangles)
     on = _on_sides(comp)
@@ -338,7 +342,7 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
     origin = np.flatnonzero(leaves_a.any(axis=1) | leaves_b.any(axis=1))
     count = len(origin)
     if not count:
-        return comp, xy, triangles, labels, temps, np.zeros(0, dtype=np.int64), np.zeros(0)
+        return comp, xy, triangles, labels, temps, np.zeros(0, dtype=np.int64), np.zeros((0, 3))
     piece = {
         "a": edges[origin, 0],
         "b": edges[origin, 1],
@@ -347,7 +351,7 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
         "end_a": np.where(leaves_a[origin].any(axis=1), leaves_a[origin].argmax(axis=1), -1),
         "end_b": np.where(leaves_b[origin].any(axis=1), leaves_b[origin].argmax(axis=1), -1),
         "origin": origin,
-        "cross": np.full(count, np.nan),
+        "cross": np.full((count, 3), np.nan),
         "cross_T": np.zeros(count),
         "intruded": np.zeros(count, dtype=bool),
     }
@@ -367,9 +371,9 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
             break
         la, lb = labels[a], labels[b]
         mixed = la != lb
-        unknown = np.flatnonzero(mixed & np.isnan(piece["cross"]))
+        unknown = np.flatnonzero(mixed & np.isnan(piece["cross"][:, 0]))
         if len(unknown):
-            s = _sheet_crossings(
+            new = _sheet_crossings(
                 columns,
                 comp[a[unknown]],
                 comp[b[unknown]],
@@ -377,10 +381,11 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
                 lb[unknown],
                 temps[a[unknown]],
                 temps[b[unknown]],
+                two_liquids,
             )
-            at = sheets(comp[a[unknown]] + s[:, None] * (comp[b[unknown]] - comp[a[unknown]]))
+            at = sheets(comp[a[unknown]] + new[:, :1] * (comp[b[unknown]] - comp[a[unknown]]))
             hottest = at.argmax(axis=1)
-            piece["cross"][unknown] = s
+            piece["cross"][unknown] = new
             piece["cross_T"][unknown] = at.max(axis=1)
             piece["intruded"][unknown] = (hottest != la[unknown]) & (hottest != lb[unknown])
         side_a, side_b = piece["end_a"] >= 0, piece["end_b"] >= 0
@@ -391,7 +396,7 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
         foreign = piece["intruded"] | ((winner != la) & (winner != lb))
 
         top_a, top_b = temps[a].max(axis=1), temps[b].max(axis=1)
-        cross = np.where(mixed, piece["cross"], 1.0)
+        cross = np.where(mixed, piece["cross"][:, 0], 1.0)
         cross_T = np.where(mixed, piece["cross_T"], top_b)
         first = share < cross
         lo, hi = np.where(first, 0.0, cross), np.where(first, cross, 1.0)
@@ -425,7 +430,8 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
         found["origin"].append(parent["origin"])
         found["t"].append(t_new)
         found["node"].append(new)
-        pa, pb, s = labels[parent["a"]], labels[parent["b"]], parent["cross"]
+        pa, pb, row = labels[parent["a"]], labels[parent["b"]], parent["cross"]
+        s = row[:, 0]
         # a crossing carries over to the half holding it when that half keeps the same two phases
         keep_a = (pa != pb) & (s < cut) & (here == pb)
         keep_b = (pa != pb) & (s > cut) & (here == pa)
@@ -439,7 +445,14 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
             "end_b": np.concatenate([off, parent["end_b"]]),
             "origin": np.concatenate([parent["origin"], parent["origin"]]),
             "cross": np.concatenate(
-                [np.where(keep_a, s / cut, np.nan), np.where(keep_b, (s - cut) / (1 - cut), np.nan)]
+                [
+                    np.where(keep_a[:, None], np.clip(row / cut[:, None], 0.0, 1.0), np.nan),
+                    np.where(
+                        keep_b[:, None],
+                        np.clip((row - cut[:, None]) / (1 - cut[:, None]), 0.0, 1.0),
+                        np.nan,
+                    ),
+                ]
             ),
             "cross_T": np.concatenate([parent["cross_T"], parent["cross_T"]]),
             "intruded": np.concatenate([keep_a & parent["intruded"], keep_b & parent["intruded"]]),
@@ -450,10 +463,12 @@ def _grade_sides(comp, xy, triangles, labels, temps, sheets, columns, scale):
         piece = {key: value[graded] for key, value in halves.items()}
 
     a, b, cross = (np.concatenate(settled[key]) for key in ("a", "b", "cross"))
-    placed = ~np.isnan(cross)
+    placed = ~np.isnan(cross[:, 0])
     lower = np.minimum(a, b)[placed]
     ids = lower.astype(np.int64) * _EDGE_ID + np.maximum(a, b)[placed]
-    from_lower = np.where(a[placed] == lower, cross[placed], 1 - cross[placed])
+    from_lower = np.where(
+        (a[placed] == lower)[:, None], cross[placed], 1 - cross[placed][:, [0, 2, 1]]
+    )
     known, first_seen = np.unique(ids, return_index=True)
     shares = from_lower[first_seen]
     if not found["node"]:
@@ -536,8 +551,12 @@ def _ladder(p_nodes, p_t, q_nodes, q_t) -> list[tuple[int, int, int]]:
 class _Wall:
     """Two-liquid walls of :func:`partition_fields`."""
 
-    #: Share of an edge on either side of its crossing at which each end's sheet is read.
+    #: Half the share of its edge the bracket of a jump between two solids' sheets is closed to.
     share: float = 1e-6
+    #: Width, in mole fraction, the bracket of a crossing with the two-liquid sheet is closed to ...
+    width: float = 2e-4
+    #: ... and the most it may be as a share of the least mole fraction at its two ends.
+    depth: float = 8e-3
     #: Least jump, K, between the two sheets of a crossing next to the
     #: :data:`~gliquid.liquidus_sheets.TWO_LIQUIDS` field that is drawn as a wall.
     jump: float = 25.0
@@ -610,18 +629,31 @@ class _Crossing:
 CROSSING = _Crossing()
 
 
-def _sheet_crossings(columns, a, b, p, q, at_a, at_b) -> np.ndarray:
-    """Where ``T_p = T_q`` on each segment from ``a`` (where ``p`` leads) to ``b``, as a share of
-    the segment, by the Illinois method, with bisection steps where a secant step is not
-    available, where the sheets differ by more than ``WALL.jump`` at both ends of the
-    bracket, or where only bisection still closes the bracket in the steps left. A bracket
-    with such a jump at both ends is closed to twice ``WALL.share``. ``columns``
-    evaluates chosen sheets (see :func:`partition_fields`); ``at_a`` and ``at_b``, all the
-    sheets at the two ends, seed the secant steps. Where the two sheets are equal,
-    the lower column leads, as in a node's label."""
+def _sheet_crossings(columns, a, b, p, q, at_a, at_b, two_liquids) -> np.ndarray:
+    """Where ``T_p = T_q`` on each segment from ``a`` (where ``p`` leads) to ``b``, by the Illinois
+    method, with bisection steps where a secant step is not available, where the sheets differ
+    by more than ``WALL.jump`` at both ends of the bracket, or where only bisection still
+    closes the bracket in the steps left. ``columns`` evaluates chosen sheets (see
+    :func:`partition_fields`); ``at_a`` and ``at_b``, all the sheets at the two ends, seed the
+    secant steps. Where the two sheets are equal, the lower column leads, as in a node's label.
+
+    A bracket with such a jump at both ends is closed to twice ``WALL.share``. The bracket of a
+    crossing with column ``two_liquids`` (-1: no such column) is closed to ``WALL.width``, or to
+    ``WALL.depth`` of the least mole fraction at its two ends where that is narrower, and the
+    crossing also counts as found once the two sheets differ by at most
+    ``SELF_CONSISTENT.tolerance``, the width that sheet is solved to.
+
+    Returns:
+        (k, 3): the crossing as a share of its segment, and the two ends of the bracket it was
+        closed to, as shares (both the crossing itself where the two sheets were found equal).
+    """
     if not len(a):
-        return np.zeros(0)
+        return np.zeros((0, 3))
     rows = np.arange(len(a))
+    coarse = (p == two_liquids) | (q == two_liquids)
+    tolerance = np.where(coarse, SELF_CONSISTENT.tolerance, CROSSING.tolerance)
+    along = b - a
+    span = np.maximum(_span(along), WALL.width)
     low, high = np.zeros(len(a)), np.ones(len(a))
     start = at_a[rows, p] - at_a[rows, q]
     gap_low = np.where(start > 0, start, np.nan)
@@ -654,12 +686,23 @@ def _sheet_crossings(columns, a, b, p, q, at_a, at_b) -> np.ndarray:
         gap_high[moved_low[side[moved_low] == 1]] /= 2
         gap_low[moved_high[side[moved_high] == -1]] /= 2
         side[moved_low], side[moved_high] = 1, -1
-        exact = (np.abs(gap) <= CROSSING.tolerance) & (gap != 0)
+        exact = (np.abs(gap) <= tolerance[live]) & (gap != 0)
         found[live_rows[exact]] = at[exact]
-        width = np.where(np.minimum(raw_low, -raw_high) > WALL.jump, 2 * WALL.share, CROSSING.width)
+        ends = np.stack([a + low[:, None] * along, a + high[:, None] * along])
+        depth = np.minimum(ends.min(axis=2), 1 - ends.sum(axis=2)).min(axis=0)
+        coarse_width = np.maximum(np.minimum(WALL.width, WALL.depth * depth) / span, CROSSING.width)
+        jump = np.minimum(raw_low, -raw_high) > WALL.jump
+        width = np.where(coarse, coarse_width, np.where(jump, 2 * WALL.share, CROSSING.width))
         live &= np.isnan(found) & (high - low > width)
-    share = np.where(np.isnan(found), (low + high) / 2, found)
-    return np.clip(share, PARTITION_CLAMP, 1 - PARTITION_CLAMP)
+    placed = ~np.isnan(found)
+    share = np.where(placed, found, (low + high) / 2)
+    return np.column_stack(
+        [
+            np.clip(share, PARTITION_CLAMP, 1 - PARTITION_CLAMP),
+            np.where(placed, found, low),
+            np.where(placed, found, high),
+        ]
+    )
 
 
 def _project(weights) -> np.ndarray:
@@ -711,7 +754,9 @@ def _triple_points(columns, corners, labels, start) -> np.ndarray:
         if not len(active):
             break
         w, h = weights[active], here[active]
-        jacobian = np.stack([(gaps(w + step * s, active) - h) / step for s in shifts], axis=2)
+        moved = gaps(np.concatenate([w + step * s for s in shifts]), np.tile(active, 2))
+        moved = moved.reshape(2, len(active), 2)
+        jacobian = np.stack([(moved[0] - h) / step, (moved[1] - h) / step], axis=2)
         det = jacobian[:, 0, 0] * jacobian[:, 1, 1] - jacobian[:, 0, 1] * jacobian[:, 1, 0]
         safe = np.isfinite(det) & (np.abs(det) > 1e-12) & np.isfinite(h).all(axis=1)
         det = np.where(safe, det, 1.0)
@@ -721,20 +766,20 @@ def _triple_points(columns, corners, labels, start) -> np.ndarray:
             np.where(safe, du, 0.0)[:, None] * shifts[0]
             + np.where(safe, dv, 0.0)[:, None] * shifts[1]
         )
-        scale = np.ones(len(active))
-        pending = safe.copy()
+        pending = np.flatnonzero(safe)
         before = spread(h)
-        for _ in range(TRIPLE_POINT.halvings):
-            if not pending.any():
+        # the whole step first, then every halving of it at once
+        for scales in (np.ones(1), 0.5 ** np.arange(1, TRIPLE_POINT.halvings)):
+            if not len(pending):
                 break
-            idx = np.flatnonzero(pending)
-            trial = _project(w[idx] + scale[idx, None] * newton[idx])
-            trial_gaps = gaps(trial, active[idx])
-            better = spread(trial_gaps) < spread(h[idx])
-            took = idx[better]
-            w[took], h[took] = trial[better], trial_gaps[better]
-            pending[took] = False
-            scale = np.where(pending, scale / 2, scale)
+            trial = w[pending, None, :] + scales[None, :, None] * newton[pending, None, :]
+            trial = _project(trial.reshape(-1, 3))
+            trial_gaps = gaps(trial, np.repeat(active[pending], len(scales)))
+            better = spread(trial_gaps).reshape(len(pending), -1) < spread(h[pending])[:, None]
+            took = better.any(axis=1)
+            pick = np.flatnonzero(took) * len(scales) + better.argmax(axis=1)[took]
+            w[pending[took]], h[pending[took]] = trial[pick], trial_gaps[pick]
+            pending = pending[~took]
         weights[active], here[active] = w, h
         improved = spread(h) < before
         if not improved.any():
@@ -1066,8 +1111,9 @@ def partition_fields(
     equal.
 
     Where one end of an edge is in the :data:`~gliquid.liquidus_sheets.TWO_LIQUIDS` field and the
-    two ends' sheets, read ``WALL.share`` of the edge before and after the crossing, differ by
-    more than ``WALL.jump``, the crossing is a wall: it has one vertex on each side, each
+    two ends' sheets, read at the two ends of the bracket the crossing is closed to
+    (:func:`_sheet_crossings`), differ by more than ``WALL.jump``, the crossing is a wall: it has
+    one vertex on each side, at those two ends, each
     side's faces use their own, and the faces between the two belong to the hotter side. On its
     two-liquid side, each wall edge is split toward the wall where the surface along it misses
     the hottest sheet (:func:`_grade_walls`).
@@ -1108,7 +1154,8 @@ def partition_fields(
     temps = sheets(comp)
     labels = temps.argmax(axis=1)
     scale = max(float(np.ptp(temps.max(axis=1))), 1.0)
-    comp, xy, triangles, labels, temps, graded, graded_shares = _grade_sides(
+    gap = phases.index(TWO_LIQUIDS) if TWO_LIQUIDS in phases else -1
+    comp, xy, triangles, labels, temps, graded, graded_rows = _grade_sides(
         comp,
         xy,
         triangles,
@@ -1117,12 +1164,13 @@ def partition_fields(
         sheets,
         sheet_columns,
         scale,
+        gap,
     )
-    comp, xy, triangles, labels, temps, known, known_shares = _refine_junctions(
-        comp, xy, triangles, labels, temps, sheets, sheet_columns, min_edge
+    comp, xy, triangles, labels, temps, known, known_rows = _refine_junctions(
+        comp, xy, triangles, labels, temps, sheets, sheet_columns, min_edge, gap
     )
     known, first_seen = np.unique(np.concatenate([known, graded]), return_index=True)
-    known_shares = np.concatenate([known_shares, graded_shares])[first_seen]
+    known_rows = np.concatenate([known_rows, graded_rows])[first_seen]
     n = len(comp)
 
     edges = _mesh_edges(triangles)
@@ -1131,10 +1179,10 @@ def partition_fields(
     ids = u.astype(np.int64) * _EDGE_ID + w
     position = np.clip(np.searchsorted(known, ids), 0, max(len(known) - 1, 0))
     reused = (known[position] == ids) if len(known) else np.zeros(len(ids), dtype=bool)
-    s = np.empty(len(ids))
-    s[reused] = known_shares[position[reused]]
+    s, lo, hi = np.empty((3, len(ids)))
+    s[reused], lo[reused], hi[reused] = known_rows[position[reused]].T
     new = ~reused
-    s[new] = _sheet_crossings(
+    s[new], lo[new], hi[new] = _sheet_crossings(
         sheet_columns,
         comp[u[new]],
         comp[w[new]],
@@ -1142,20 +1190,18 @@ def partition_fields(
         labels[w[new]],
         temps[u[new]],
         temps[w[new]],
-    )
-    lo, hi = np.clip(s - WALL.share, 0.0, 1.0), np.clip(s + WALL.share, 0.0, 1.0)
+        gap,
+    ).T
     wall = np.zeros(len(s), dtype=bool)
     wall_lo_T, wall_hi_T = np.full(len(s), np.nan), np.full(len(s), np.nan)
-    if TWO_LIQUIDS in phases:
-        gap = phases.index(TWO_LIQUIDS)
-        two = np.flatnonzero((labels[u] == gap) | (labels[w] == gap))
-        if len(two):
-            which = np.column_stack([labels[u[two]], labels[w[two]]])
-            step = comp[w[two]] - comp[u[two]]
-            before = sheet_columns(comp[u[two]] + lo[two, None] * step, which)
-            after = sheet_columns(comp[u[two]] + hi[two, None] * step, which)
-            wall[two] = np.abs(before[:, 0] - after[:, 1]) > WALL.jump
-            wall_lo_T[two], wall_hi_T[two] = before[:, 0], after[:, 1]
+    two = np.flatnonzero((labels[u] == gap) | (labels[w] == gap))
+    if len(two):
+        which = np.column_stack([labels[u[two]], labels[w[two]]])
+        step = comp[w[two]] - comp[u[two]]
+        before = sheet_columns(comp[u[two]] + lo[two, None] * step, which)
+        after = sheet_columns(comp[u[two]] + hi[two, None] * step, which)
+        wall[two] = np.abs(before[:, 0] - after[:, 1]) > WALL.jump
+        wall_lo_T[two], wall_hi_T[two] = before[:, 0], after[:, 1]
     edge_keys = u * n + w
     node_labels = labels[triangles]
     count = _label_count(node_labels)

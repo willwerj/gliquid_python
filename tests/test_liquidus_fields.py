@@ -269,6 +269,7 @@ def test_every_edge_leaving_a_side_is_split_at_the_same_depths():
         _half_wall_sheets,
         columns,
         float(np.ptp(temps.max(axis=1))),
+        -1,
     )[0][len(comp) :]
     edges = lf._mesh_edges(triangles)
     start, end = comp[edges[:, 0]], comp[edges[:, 1]]
@@ -352,6 +353,29 @@ def test_a_two_liquid_sheet_that_jumps_is_drawn_as_a_wall():
     for x0, expected in ((edge - 1e-3, 1500.0), (edge + 1e-3, 1000.0)):
         points = np.column_stack([x0 + 0.5 * x1, x1 * SQRT3_2])
         assert _surface_at(part, points) == pytest.approx(expected, abs=1e-6)
+
+
+def test_a_crossing_with_the_two_liquid_sheet_is_bracketed_to_the_wall_width():
+    """A sheet that drops 1500 K at x0 = 0.33 on a 0.05 edge: as the two-liquid column its bracket
+    holds the drop and is at most ``WALL.width`` wide, found in a bisection per halving; as a
+    solid's it is closed to twice ``WALL.share`` of the edge."""
+    edge, calls = 0.33, []
+
+    def columns(points, which):
+        calls.append(len(points))
+        temps = [np.full(len(points), 1000.0), np.where(points[:, 0] < edge, 1500.0, 0.0)]
+        return np.take_along_axis(np.column_stack(temps), which, axis=1)
+
+    a, b = np.array([[0.30, 0.2]]), np.array([[0.35, 0.2]])
+    ends = np.array([[1000.0, 1500.0]]), np.array([[1000.0, 0.0]])
+    p, q = np.array([1]), np.array([0])
+    drop = (edge - 0.30) / 0.05
+    share, low, high = lf._sheet_crossings(columns, a, b, p, q, *ends, 1)[0]
+    assert low < drop < high and low <= share <= high
+    assert (high - low) * 0.05 <= lf.WALL.width
+    assert len(calls) <= np.ceil(np.log2(0.05 / lf.WALL.width)) + 1
+    share, low, high = lf._sheet_crossings(columns, a, b, p, q, *ends, -1)[0]
+    assert low < drop < high and high - low <= 2 * lf.WALL.share
 
 
 def test_a_wall_on_a_sloped_jump_leaves_the_cooler_field_at_its_own_sheet():

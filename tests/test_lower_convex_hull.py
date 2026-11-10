@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from gliquid.hsx import lower_convex_hull
+from gliquid.hsx import _base_hull, lower_convex_hull
 
 
 def _grid(n):
@@ -28,3 +28,17 @@ def test_no_vertical_simplex_on_any_edge(n):
     areas = _areas(points, hull)
     assert (areas > 1e-12).all()
     assert areas.sum() == pytest.approx(0.5)
+
+
+def test_hulls_over_the_same_compositions_share_one_composition_hull():
+    """Two energy surfaces over one grid: the second call builds no composition hull, and both
+    return the simplices a call that builds its own returns."""
+    points = _grid(8)
+    tilted = np.column_stack([points[:, :2], points[:, 2] + points[:, 0]])
+    _base_hull.cache_clear()
+    shared = [np.asarray(lower_convex_hull(surface)) for surface in (points, tilted)]
+    info = _base_hull.cache_info()
+    assert (info.misses, info.hits) == (1, 1)
+    for surface, simplices in zip((points, tilted), shared):
+        _base_hull.cache_clear()
+        assert np.array_equal(simplices, lower_convex_hull(surface))
