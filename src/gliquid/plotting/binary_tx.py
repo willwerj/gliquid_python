@@ -15,8 +15,9 @@ from contextlib import contextmanager
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
+from plotly.colors import qualitative
 
 from gliquid.phase import non_dft_kind
 from gliquid.plotting.style import (
@@ -1513,6 +1514,30 @@ def _place_legend(
     return {"xanchor": xanchor, "yanchor": "top", "x": xp, "y": 0.99, "font": dict(size=15)}
 
 
+def _line_trace(x, y, label=None, colors=None) -> go.Scatter:
+    """The trace ``plotly.express.line`` draws of ``y`` against ``x``: unnamed and out of the
+    legend, or named ``label`` in its colour of ``colors`` (the next colour of the default
+    template's colorway where ``colors`` holds none for it)."""
+    colorway = pio.templates[pio.templates.default or "plotly"].layout.colorway or qualitative.D3
+    named = label is not None
+    color = colors.get(label, colorway[len(colors) % len(colorway)]) if named else colorway[0]
+    hover = f"label={label}<br>x=%{{x}}<br>t=%{{y}}" if named else "x=%{x}<br>y=%{y}"
+    return go.Scatter(
+        x=x,
+        y=y,
+        mode="lines",
+        name=label if named else "",
+        legendgroup=label if named else "",
+        showlegend=named,
+        hovertemplate=hover + "<extra></extra>",
+        line=dict(color=color, dash="solid"),
+        marker=dict(symbol="circle"),
+        orientation="v",
+        xaxis="x",
+        yaxis="y",
+    )
+
+
 class _TieDrawer:
     """Draws horizontal tie lines on one figure, merging coincident ties into one trace.
 
@@ -1555,9 +1580,9 @@ class _TieDrawer:
                     rec["record"]["sources"].append(source)
                 return
         self.segments.append((lo, hi, t))
-        tie = px.line(x=[x0, x1], y=[temp, temp])
-        tie.update_traces(line=dict(color="Silver"))
-        self.fig.add_trace(tie.data[0])
+        tie = _line_trace(np.asarray([x0, x1]), np.asarray([temp, temp]))
+        tie.line.color = "Silver"
+        self.fig.add_trace(tie)
         record = None
         if _TIE_SINK is not None:
             record = {"temp": t, "x0": lo, "x1": hi, "sources": [source]}
@@ -2109,9 +2134,7 @@ def plot_tx(
         )
         phase_df = pd.concat([phase_df, new_row_df], ignore_index=True)
         phase_df = phase_df.sort_values(by="t")
-        line = px.line(phase_df, x="x", y="t", color="label", color_discrete_map=phase_colors)
-
-        trace = line.data[0]
+        trace = _line_trace(phase_df["x"].to_numpy(), phase_df["t"].to_numpy(), phase, phase_colors)
         if phase in imputed_phases:
             existing_line = trace.line.to_plotly_json() if trace.line is not None else {}
             existing_line["dash"] = IMPUTED_LINE_DASH
@@ -2570,9 +2593,7 @@ def plot_tx(
 
     if pred:
         phase_colors["L"] = PREDICTED_LIQUIDUS_COLOR
-    fig.add_trace(
-        px.line(liq_df, x="x", y="t", color="label", color_discrete_map=phase_colors).data[0]
-    )
+    fig.add_trace(_line_trace(liq_df["x"].to_numpy(), liq_df["t"].to_numpy(), "L", phase_colors))
     fig.update_traces(line=dict(width=4), showlegend=False)
 
     # -- Solid-solution fields: one '/'-hatched polygon per composition branch, outlined in the

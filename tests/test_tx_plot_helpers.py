@@ -3,6 +3,8 @@ import copy
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import pytest
 
 import gliquid.plotting.binary_tx as binary_tx
@@ -920,6 +922,22 @@ def test_compound_line_starts_where_the_compound_becomes_stable(h_ab, s_ab, bott
     fig = plot_tx(_compound_hsx(h_ab, s_ab))
     (trace,) = [tr for tr in fig.data if tr.name == "AB"]
     assert min(trace.y) == pytest.approx(bottom, abs=1e-6)
+
+
+@pytest.mark.parametrize(
+    "label, colors",
+    [(None, None), ("AB", {"AB": "#123456", "L": "red"}), ("AB", {"L": "red"})],
+    ids=["unnamed", "coloured", "no colour of its own"],
+)
+def test_line_trace_is_the_trace_plotly_express_draws(label, colors):
+    x, y = np.array([0.5, 0.5, 0.25]), np.array([-273.15, 300.0, 500.0])
+    if label is None:
+        drawn = px.line(x=x, y=y)
+    else:
+        frame = pd.DataFrame({"x": x, "t": y, "label": label})
+        drawn = px.line(frame, x="x", y="t", color="label", color_discrete_map=colors)
+    built = go.Figure(binary_tx._line_trace(x, y, label, colors))
+    assert built.to_json() == go.Figure(drawn.data[0]).to_json()
 
 
 def test_zero_kelvin_stable_is_the_lower_h_hull():
