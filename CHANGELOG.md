@@ -26,6 +26,11 @@ source tree carries a version literal that could disagree with this file.
   once the two sheets agree to the 0.01 K that sheet is solved to. A wall's two vertices sit at
   the two ends of that bracket. The liquidus at the grid nodes is unchanged; vertices next to a
   two-liquid wall move by less than the bracket.
+- **The binary edge figures of a ternary build are made about three times faster** (a median
+  of 1.6 s to 0.5 s per system over 30 systems), which shortens `process_data()` by a fifth
+  with `hull_mode='gtx'` and by over a quarter with `'hsx'`. `plot_tx` makes each phase line
+  and tie line as one trace instead of building a `plotly.express` figure for it; the figures
+  are unchanged.
 
 ### Fixed
 
