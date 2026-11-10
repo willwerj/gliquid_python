@@ -312,6 +312,72 @@ def test_a_descent_past_a_narrow_two_liquid_window_finds_its_upper_root():
     assert found[0] == pytest.approx(profile_t[13] + 50.0 * 6 / 36, abs=1.0)
 
 
+def test_the_window_search_solves_two_steps_at_a_time():
+    """With ``f`` negative everywhere every step is taken: one solve for the first bracket's two
+    inner points, then one for each two steps, a step's probe with both the next can ask for."""
+    rows = []
+
+    def solve(comp, t, floor=None, wide=False):
+        rows.append(len(t))
+        return np.asarray(t, float) - 10.0
+
+    binodal = object.__new__(Binodal)
+    binodal._solve = solve
+    low, high = np.array([500.0, 700.0]), np.array([1500.0, 900.0])
+    found = binodal._hump(np.zeros((2, 2)), low, high, np.full(2, -10.0), False)
+    assert np.isneginf(found).all()
+    assert rows == [4] + [6] * ((ls.SEARCH.hump_steps - 2) // 2)
+
+
+def test_the_window_search_drops_rows_far_from_a_window():
+    """A row stops once its best ``f``, ``f(high)`` included, lies more than
+    ``SEARCH.hump_reach`` below zero after either of the first two solves, or more than a half,
+    a quarter, ... of it after each later one."""
+    reach = ls.SEARCH.hump_reach
+    level = np.array([-1.5 * reach, -10.0, -0.75 * reach])
+    rows = []
+
+    def solve(comp, t, floor=None, wide=False):
+        rows.append(len(t))
+        return np.asarray(t, float) + level[comp[:, 0].astype(int)]
+
+    binodal = object.__new__(Binodal)
+    binodal._solve = solve
+    comp = np.column_stack([np.arange(3.0), np.zeros(3)])
+    low, high = np.full(3, 500.0), np.full(3, 1500.0)
+    assert np.isneginf(binodal._hump(comp, low, high, level.copy(), False)).all()
+    assert rows == [6, 6, 6] + [3] * ((ls.SEARCH.hump_steps - 6) // 2)
+    rows.clear()
+    binodal._hump(comp[:1], low[:1], high[:1], np.array([-0.25 * reach]), False)
+    assert rows == [2, 3, 3, 3, 3]
+
+
+def test_gradients_and_hessians_come_from_one_call_of_the_liquid_model(monkeypatch):
+    binodal = _bi_ce_sn_binodal(0.0, n=10)
+    model = binodal.liquid_model
+    points = np.array([[0.3, 0.3], [0.1, 0.2], [0.6, 0.1]])
+    t = np.array([1200.0, 1300.0, 1405.0])
+    raw = model.nonideal_gradients
+    dh, ds = raw((points[:, 0], points[:, 1]), t)
+    rows = []
+    monkeypatch.setattr(
+        model, "nonideal_gradients", lambda x, temp: rows.append(len(temp)) or raw(x, temp)
+    )
+    got_dh, got_ds, hess_h, hess_s = binodal._derivatives(points, t)
+    assert rows == [5 * len(points)]
+    assert got_dh == pytest.approx(dh.T, rel=1e-12) and got_ds == pytest.approx(ds.T, rel=1e-12)
+    for k in range(2):
+        shift = ls.CURVATURE_STEP * np.eye(2)[k]
+        (up_h, up_s), (lo_h, lo_s) = (
+            raw((moved[:, 0], moved[:, 1]), t) for moved in (points + shift, points - shift)
+        )
+        central = (up_h[k] - lo_h[k]) / (2 * ls.CURVATURE_STEP)
+        assert hess_h[:, k, k] == pytest.approx(central, rel=1e-9, abs=1e-6)
+        central = (up_s[k] - lo_s[k]) / (2 * ls.CURVATURE_STEP)
+        assert hess_s[:, k, k] == pytest.approx(central, rel=1e-9, abs=1e-9)
+    assert hess_h == pytest.approx(hess_h.transpose(0, 2, 1), abs=0.0)
+
+
 def test_the_binodal_rises_no_higher_than_the_liquid_spinodal():
     """No two liquids coexist above the liquid's hottest spinodal point, with T* at the node
     liquidus across a Si-Al miscibility gap."""

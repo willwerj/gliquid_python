@@ -9,6 +9,7 @@ ORCID: https://orcid.org/0000-0001-5205-0075
 from __future__ import annotations
 
 from collections import defaultdict
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -38,15 +39,21 @@ def _hull_from_fictitious(real_points, fict_points, second_filter=None):
     return real_simplices
 
 
+@lru_cache(maxsize=8)
+def _base_hull(coordinates: bytes, columns: int) -> np.ndarray:
+    """The convex-hull vertices of the points whose float64 bytes are ``coordinates``
+    (``columns`` per point), followed by their mean. Shared between calls: do not modify."""
+    points = np.frombuffer(coordinates).reshape(-1, columns)
+    vertices = points[ConvexHull(points).vertices]
+    return np.vstack((vertices, np.mean(vertices, axis=0)))
+
+
 def lower_convex_hull(points, vertical_simplices=False):
     # Lower convex hull of an N-dimensional Xi-E space (energy-like axis last) by the
     # sub-hull-centroid fictitious-point strategy; returns the lower-hull simplices.
 
-    sub_points = points[:, :-1]
-    sub_hull = ConvexHull(sub_points)
-    sub_hull_points = sub_points[sub_hull.vertices]
-    center = np.mean(sub_hull_points, axis=0)
-    sub_hull_points = np.vstack((sub_hull_points, center))
+    sub_points = np.ascontiguousarray(points[:, :-1], dtype=float)
+    sub_hull_points = _base_hull(sub_points.tobytes(), sub_points.shape[1])
 
     # Compute upper bound for fictitious points using single-pass ptp
     h_data = points[:, -1]

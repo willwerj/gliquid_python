@@ -118,6 +118,14 @@ def _on_sides(comp) -> np.ndarray:
     return full <= SIDE_FRACTION
 
 
+def _fractions(y) -> np.ndarray:
+    """(k, 3) the three mole fractions at the independent fractions ``y`` (k, 2), none below 0."""
+    full = np.empty((len(y), 3))
+    full[:, 0] = 1 - y.sum(axis=1)
+    full[:, 1:] = y
+    return np.maximum(full, 0.0, out=full)
+
+
 def _inside(points) -> np.ndarray:
     """Which of ``points`` (..., 2) lie in the composition triangle."""
     return (points >= 0).all(axis=-1) & (points.sum(axis=-1) <= 1)
@@ -133,7 +141,7 @@ def _contact_temperatures(d_h, d_s) -> np.ndarray:
         temps = np.divide(d_h, d_s, out=d_h, where=falling)
     temps[~falling] = 0.0
     temps[below] = np.inf
-    np.nan_to_num(temps, copy=False, nan=0.0, posinf=np.inf)
+    temps[np.isnan(temps)] = 0.0
     return np.maximum(temps, 0.0, out=temps)
 
 
@@ -232,9 +240,12 @@ class _Search:
     tolerance: float = 0.5
     #: Most fixed-point steps of a downward search.
     descent: int = 8
-    #: Most evaluations of the search for a two-liquid window under a descent that falls below
+    #: Most steps of the search for a two-liquid window under a descent that falls below
     #: its floor.
     hump_steps: int = 14
+    #: Farthest, K, below zero the best ``f`` of that search may lie after each of its first two
+    #: solves for it to go on; halved by every solve after them.
+    hump_reach: float = 200.0
 
 
 SEARCH = _Search()
@@ -367,10 +378,11 @@ class Binodal:
             )
         return ceiling
 
-    def _h_s(self, y, t):
-        """The liquid's H and total S at ``y`` (k, 2) and temperatures ``t`` (k,)."""
+    def _h_s(self, y, t, full=None):
+        """The liquid's H and total S at ``y`` (k, 2) and temperatures ``t`` (k,); ``full``:
+        :func:`_fractions` of ``y``."""
         h, s = self.liquid_model.nonideal_h_s((y[:, 0], y[:, 1]), t)
-        full = np.clip(np.column_stack([1 - y.sum(axis=1), y]), 0.0, None)
+        full = _fractions(y) if full is None else full
         logs = np.log(np.where(full > 0, full, 1.0))
         return h, s - R * (full * logs).sum(axis=1)
 
@@ -447,39 +459,48 @@ class Binodal:
     def _take(tangent, rows) -> dict:
         return {key: value[rows] for key, value in tangent.items()}
 
-    def _gaps(self, tangent, y) -> tuple[np.ndarray, np.ndarray]:
+    def _gaps(self, tangent, y) -> tuple[np.ndarray, ...]:
         """(k,) H and total S of liquid point ``y[i]`` (k, 2) above tangent plane ``i``, the point
-        taken at the plane's temperature."""
-        h, s = self._h_s(y, tangent["t"])
-        full = np.clip(np.column_stack([1 - y.sum(axis=1), y]), 0.0, None)
+        taken at the plane's temperature, and (k, 3) the fractions of ``y``
+        (:func:`_fractions`)."""
+        full = _fractions(y)
+        h, s = self._h_s(y, tangent["t"], full)
         d_h = h - (tangent["a"] + (tangent["d"] * y).sum(axis=1))
         s_plane = tangent["b"] + (tangent["e"] * y).sum(axis=1)
-        return d_h, s - (s_plane - R * (full * tangent["log_x"]).sum(axis=1))
+        return d_h, s - (s_plane - R * (full * tangent["log_x"]).sum(axis=1)), full
 
     def _contact(self, tangent, y, clearance) -> np.ndarray:
         """(k,) contact temperature of liquid point ``y[i]`` with tangent plane ``i``; 0 within
         ``clearance`` (mole fraction) of the plane's point of tangency."""
-        temps = _contact_temperatures(*self._gaps(tangent, y))
-        full = np.clip(np.column_stack([1 - y.sum(axis=1), y]), 0.0, None)
+        d_h, d_s, full = self._gaps(tangent, y)
+        temps = _contact_temperatures(d_h, d_s)
         blocked = ((full > 0) & tangent["absent"]).any(axis=1)
         near = np.abs(y - tangent["x"]).max(axis=1) <= clearance
         return np.where(blocked | near, 0.0, temps)
 
-    def _hessians(self, comp, t) -> tuple[np.ndarray, np.ndarray]:
-        """(m, 2, 2) composition Hessians of the liquid's nonideal H and S at ``comp`` (m, 2)
-        and temperatures ``t`` (m,)."""
-        step = CURVATURE_STEP
-        hess_h = np.zeros((len(comp), 2, 2))
-        hess_s = np.zeros((len(comp), 2, 2))
+    def _derivatives(self, comp, t) -> tuple[np.ndarray, ...]:
+        """The composition gradients, each (m, 2), and Hessians, each (m, 2, 2), of the liquid's
+        nonideal H and S at ``comp`` (m, 2) and temperatures ``t`` (m,): ``(dh, ds, hess_h,
+        hess_s)``. The Hessians are central differences of the gradients :data:`CURVATURE_STEP`
+        apart."""
+        step, m = CURVATURE_STEP, len(comp)
+        points = [comp]
         for k in range(2):
             shift = np.zeros(2)
             shift[k] = step
-            upper, lower = comp + shift, comp - shift
-            dh_up, ds_up = self.liquid_model.nonideal_gradients((upper[:, 0], upper[:, 1]), t)
-            dh_lo, ds_lo = self.liquid_model.nonideal_gradients((lower[:, 0], lower[:, 1]), t)
-            hess_h[:, :, k] = ((dh_up - dh_lo) / (2 * step)).T
-            hess_s[:, :, k] = ((ds_up - ds_lo) / (2 * step)).T
-        return (hess_h + hess_h.transpose(0, 2, 1)) / 2, (hess_s + hess_s.transpose(0, 2, 1)) / 2
+            points += [comp + shift, comp - shift]
+        points = np.concatenate(points)
+        temps = np.tile(np.broadcast_to(np.asarray(t, dtype=float), (m,)), 5)
+        dh, ds = self.liquid_model.nonideal_gradients((points[:, 0], points[:, 1]), temps)
+        dh, ds = dh.reshape(2, 5, m), ds.reshape(2, 5, m)
+        hess_h = ((dh[:, 1::2] - dh[:, 2::2]) / (2 * step)).transpose(2, 0, 1)
+        hess_s = ((ds[:, 1::2] - ds[:, 2::2]) / (2 * step)).transpose(2, 0, 1)
+        return (
+            dh[:, 0].T,
+            ds[:, 0].T,
+            (hess_h + hess_h.transpose(0, 2, 1)) / 2,
+            (hess_s + hess_s.transpose(0, 2, 1)) / 2,
+        )
 
     @staticmethod
     def _onset(full, hess_h, hess_s) -> tuple[np.ndarray, ...]:
@@ -505,7 +526,7 @@ class Binodal:
         rows = np.flatnonzero((full > 1e-12).all(axis=1))
         if not len(rows):
             return False
-        hessians = self._hessians(self.nodes[rows], self.tstar(self.nodes[rows]))
+        hessians = self._derivatives(self.nodes[rows], self.tstar(self.nodes[rows]))[2:]
         return bool((self._onset(full[rows], *hessians)[1] < 0).any())
 
     def _ridge(self, tangent) -> np.ndarray:
@@ -519,7 +540,7 @@ class Binodal:
         rows = np.flatnonzero((full > 1e-12).all(axis=1))
         if not len(rows) or not self._indefinite:
             return out
-        hess_h, hess_s = self._hessians(x[rows], t[rows])
+        hess_h, hess_s = self._derivatives(x[rows], t[rows])[2:]
         c, a, b, disc = self._onset(full[rows], hess_h, hess_s)
         keep = np.flatnonzero((a < 0) & (disc >= 0))
         if not len(keep):
@@ -552,7 +573,7 @@ class Binodal:
         """
         comp = np.atleast_2d(np.asarray(comp, dtype=float))
         t = self.tstar(comp) if t is None else np.asarray(t, dtype=float)
-        hess_h, hess_s = self._hessians(comp, t)
+        hess_h, hess_s = self._derivatives(comp, t)[2:]
         full = np.column_stack([1 - comp.sum(axis=1), comp])
         present = full > 1e-12
         out = np.zeros(len(comp))
@@ -701,44 +722,47 @@ class Binodal:
         rows = np.flatnonzero(interior)
         gap = np.full(len(y), np.inf)
         if len(rows):
-            d_h, d_s = self._gaps(self._take(tangent, rows), y[rows])
+            d_h, d_s, _ = self._gaps(self._take(tangent, rows), y[rows])
             gap[rows] = d_h - t[rows] * d_s
         for _ in range(POLISH.steps):
             if not len(rows):
                 break
             p, tt = y[rows], t[rows]
             full = np.column_stack([1 - p.sum(axis=1), p])
-            _, _, dh, ds = self.liquid_model.nonideal_h_s_gradients((p[:, 0], p[:, 1]), tt)
+            dh, ds, hess_h, hess_s = self._derivatives(p, tt)
             ideal = np.log(full[:, 1:] / full[:, :1]) - (log_x[rows, 1:] - log_x[rows, :1])
             grad = (
-                np.column_stack(dh)
+                dh
                 - tangent["d"][rows]
-                - tt[:, None] * (np.column_stack(ds) - tangent["e"][rows])
+                - tt[:, None] * (ds - tangent["e"][rows])
                 + R * tt[:, None] * ideal
             )
-            hess_h, hess_s = self._hessians(p, tt)
             w, v = np.linalg.eigh(hess_h + tt[:, None, None] * self._onset(full, hess_h, hess_s)[0])
             w = np.maximum(np.abs(w), 1e-9 * np.abs(w).max(axis=1, keepdims=True) + 1e-12)
             step = -np.einsum("kij,kj,klj,kl->ki", v, 1 / w, v, grad)
             size = np.abs(step).max(axis=1)
             step *= np.minimum(1.0, 0.5 * self.spacing / np.where(size > 0, size, 1.0))[:, None]
             lowered = np.zeros(len(rows), dtype=bool)
-            for _ in range(POLISH.halvings):
-                todo = np.flatnonzero(~lowered)
+            todo = np.arange(len(rows))
+            # the whole step first, then every halving of it at once
+            for scales in (np.ones(1), 0.5 ** np.arange(1, POLISH.halvings)):
                 if not len(todo):
                     break
-                trial = p[todo] + step[todo]
-                trial_full = np.column_stack([1 - trial.sum(axis=1), trial])
-                kept = (trial_full > 0.1 * full[todo]).all(axis=1)
-                at = np.full(len(todo), np.inf)
+                trial = p[todo, None, :] + scales[None, :, None] * step[todo, None, :]
+                trial_full = np.concatenate([1 - trial.sum(axis=2, keepdims=True), trial], axis=2)
+                kept = (trial_full > 0.1 * full[todo, None, :]).all(axis=2)
+                at = np.full(kept.shape, np.inf)
                 if kept.any():
-                    r = rows[todo[kept]]
-                    d_h, d_s = self._gaps(self._take(tangent, r), trial[kept])
-                    at[kept] = d_h - t[r] * d_s
-                fell = at < gap[rows[todo]]
-                y[rows[todo[fell]]], gap[rows[todo[fell]]] = trial[fell], at[fell]
-                lowered[todo[fell]] = True
-                step[todo[~fell]] *= 0.5
+                    i, j = np.nonzero(kept)
+                    r = rows[todo[i]]
+                    d_h, d_s, _ = self._gaps(self._take(tangent, r), trial[i, j])
+                    at[i, j] = d_h - t[r] * d_s
+                fell = at < gap[rows[todo], None]
+                took, first = fell.any(axis=1), fell.argmax(axis=1)
+                r = rows[todo[took]]
+                y[r], gap[r] = trial[took, first[took]], at[took, first[took]]
+                lowered[todo[took]] = True
+                todo = todo[~took]
             rows = rows[lowered]
         return self._contact(tangent, y, BINODAL_CLEARANCE * self.spacing), y
 
@@ -845,11 +869,10 @@ class Binodal:
                 value[r] = np.fmax(value[r], self._search(x[r], top[r], low[r], wide=True))
             r = np.flatnonzero(reentrant)
             if len(r):
-                found = np.fmax(
-                    self._search(x[r], t[r], low[r], wide=CONTACTS),
-                    self._search(x[r], top_re[r], low[r], wide=CONTACTS),
-                )
-                value[r] = np.fmax(value[r], found)
+                twice = np.concatenate([r, r])
+                starts = np.concatenate([t[r], top_re[r]])
+                found = self._search(x[twice], starts, low[twice], wide=CONTACTS)
+                value[r] = np.fmax(value[r], np.fmax(found[: len(r)], found[len(r) :]))
         out[rows] = value
         return out
 
@@ -1023,10 +1046,11 @@ class Binodal:
     def _hump(self, comp, low, high, at_high, wide) -> np.ndarray:
         """(k,) the hottest self-consistent binodal found in ``(low, high)`` (k,) by maximising
         ``f`` (as in :meth:`_self_consistent`; ``f(high) = at_high`` is negative) with a
-        golden-section search of at most ``SEARCH.hump_steps`` evaluations, stopping where
-        ``f`` turns positive; the bracket between that temperature and the coolest hotter one at
-        which ``f`` is not positive is closed (:meth:`_close`). ``-inf`` where ``f`` stays
-        negative. ``wide``: as in :meth:`_solve`."""
+        golden-section search of at most ``SEARCH.hump_steps`` steps, stopping where
+        ``f`` turns positive, or where the best ``f`` found, ``f(high)`` included, lies more than
+        ``SEARCH.hump_reach`` below zero; the bracket between that temperature and the coolest
+        hotter one at which ``f`` is not positive is closed (:meth:`_close`). ``-inf`` where
+        ``f`` stays negative. ``wide``: as in :meth:`_solve`."""
         n = len(comp)
         ratio = (np.sqrt(5.0) - 1.0) / 2.0
         a, b = np.array(low, dtype=float), np.array(high, dtype=float)
@@ -1036,33 +1060,60 @@ class Binodal:
         c, d = b - ratio * (b - a), a + ratio * (b - a)
         fc, fd = np.full(n, -np.inf), np.full(n, -np.inf)
         live = np.arange(n)
+
+        def narrowed(a, b, c, d, left):
+            """The bracket and its two inner points once the side of the cooler one is dropped,
+            and the inner point still to be solved."""
+            b, a = np.where(left, d, b), np.where(left, a, c)
+            c, d = np.where(left, b - ratio * (b - a), d), np.where(left, c, a + ratio * (b - a))
+            return a, b, c, d, np.where(left, c, d)
+
+        def solved(rows, *probes):
+            """``f`` at each of ``probes`` for ``rows``, in one solve."""
+            at = self._solve(
+                np.tile(comp[rows], (len(probes), 1)), np.concatenate(probes), wide=wide
+            )
+            return (at - np.concatenate(probes)).reshape(len(probes), len(rows))
+
+        def take(k, rows, state, left, at):
+            """Record step ``k`` of ``rows``; returns the rows where ``f`` is not yet positive."""
+            kept = np.where(left, fc[rows], fd[rows])
+            a[rows], b[rows], c[rows], d[rows] = state[:4]
+            temps[rows, k], values[rows, k] = state[4], at
+            fc[rows], fd[rows] = np.where(left, at, kept), np.where(left, kept, at)
+            return ~(at > 0)
+
+        def near(rows, reach):
+            """Whether the best ``f`` found for each of ``rows`` lies within ``reach`` of zero."""
+            return np.fmax.reduce(values[rows], axis=1) >= -reach
+
         with np.errstate(all="ignore"):
-            for k in range(1, SEARCH.hump_steps + 1):
+            # the two inner points of the first bracket, then two steps per solve: a step's
+            # probe with both probes the next step can ask for
+            first, second = solved(live, c, d)
+            temps[:, 1], values[:, 1], fc[:] = c, first, first
+            live = live[~(first > 0)]
+            temps[live, 2], values[live, 2], fd[live] = d[live], second[live], second[live]
+            live = live[~(second[live] > 0)]
+            live = live[near(live, SEARCH.hump_reach)]
+            for k in range(3, SEARCH.hump_steps + 1, 2):
                 if not len(live):
                     break
-                if k == 1:
-                    probe = c[live]
-                elif k == 2:
-                    probe = d[live]
-                else:
-                    left = fc[live] >= fd[live]
-                    b[live] = np.where(left, d[live], b[live])
-                    a[live] = np.where(left, a[live], c[live])
-                    c_new = np.where(left, b[live] - ratio * (b[live] - a[live]), d[live])
-                    d_new = np.where(left, c[live], a[live] + ratio * (b[live] - a[live]))
-                    fc[live] = fd[live] = np.where(left, fc[live], fd[live])
-                    c[live], d[live] = c_new, d_new
-                    probe = np.where(left, c[live], d[live])
-                at = self._solve(comp[live], probe, wide=wide) - probe
-                temps[live, k], values[live, k] = probe, at
-                if k == 1:
-                    fc[live] = at
-                elif k == 2:
-                    fd[live] = at
-                else:
-                    fc[live] = np.where(left, at, fc[live])
-                    fd[live] = np.where(left, fd[live], at)
-                live = live[~(at > 0)]
+                left = fc[live] >= fd[live]
+                state = narrowed(a[live], b[live], c[live], d[live], left)
+                if k == SEARCH.hump_steps:
+                    take(k, live, state, left, solved(live, state[4])[0])
+                    break
+                ahead = [narrowed(*state[:4], np.full(len(live), side)) for side in (True, False)]
+                at, at_left, at_right = solved(live, state[4], ahead[0][4], ahead[1][4])
+                on = take(k, live, state, left, at)
+                live = live[on]
+                left = fc[live] >= fd[live]
+                state = [np.where(left, x[on], y[on]) for x, y in zip(*ahead)]
+                live = live[
+                    take(k + 1, live, state, left, np.where(left, at_left[on], at_right[on]))
+                ]
+                live = live[near(live, SEARCH.hump_reach * 0.5 ** ((k - 3) // 2))]
         positive = values > 0
         found = np.full(n, -np.inf)
         rows = np.flatnonzero(positive.any(axis=1))

@@ -9,6 +9,24 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Ternary phase fields with a two-liquid region are drawn faster in both hull modes: about
+  1.5 times over a 2,300-system set, more than 4 times where they were slowest** (Bi-Sn-Th 458 s
+  to 96 s with `hull_mode='gtx'`, 642 s to 92 s with `'hsx'`). The binodal solver calls the
+  liquid model fewer times, on more points per call, and a triple point's Jacobian and its step
+  halvings each take one evaluation of the sheets; these steps leave the drawn surface as it
+  was. The lower hulls of one build share the hull of their composition points, which shortens
+  the hull stage by about a tenth. The search for a re-entrant two-liquid window drops a point
+  once its best value lies far from a window (`SEARCH.hump_reach`), which takes a further sixth
+  off the 14 slowest systems and leaves their surfaces bit-identical.
+- **The edge of a two-liquid field is located to 2e-4 in mole fraction** (`WALL.width`), or
+  to 0.8% of the distance to the nearest side of the triangle where that is narrower,
+  instead of a millionth of each mesh edge, and a crossing with the two-liquid sheet is placed
+  once the two sheets agree to the 0.01 K that sheet is solved to. A wall's two vertices sit at
+  the two ends of that bracket. The liquidus at the grid nodes is unchanged; vertices next to a
+  two-liquid wall move by less than the bracket.
+
 ### Fixed
 
 - `extract_digitized_liquidus` reads a narrow few-vertex `L` wedge (at most 0.05 wide in
