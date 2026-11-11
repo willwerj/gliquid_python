@@ -149,8 +149,13 @@ class Partition:
     vertex_phases: tuple[tuple[str, ...], ...]
 
 
-def field_boundaries(partition, phase) -> dict[str | None, tuple[np.ndarray, ...]]:
+def field_boundaries(partition, phase, clear=0.0) -> dict[str | None, tuple[np.ndarray, ...]]:
     """The outline of ``phase``'s field in ``partition``, split by the field across it.
+
+    With ``clear`` above 0, a stretch whose two ends both lie within that mole fraction of a
+    side of the composition triangle is left out, and so is every run of the other stretches,
+    joined end to end, that stays within twice that of the sides. A neighbour left with no
+    stretch has no entry.
 
     Returns:
         dict: neighbouring phase -> the x, y, T polylines of the boundary the two fields share,
@@ -167,6 +172,17 @@ def field_boundaries(partition, phase) -> dict[str | None, tuple[np.ndarray, ...
     on_boundary = ((first == k) | (second == k)) & (first != second)
     across = np.where(first == k, second, first)
     surface = partition.surface
+    if clear > 0:
+        least = np.minimum(surface.comp.min(axis=1), 1 - surface.comp.sum(axis=1))
+        on_boundary &= (least[edges[start]] >= clear).any(axis=1)
+        drawn = edges[start[on_boundary]]
+        joined = coo_matrix(
+            (np.ones(len(drawn)), (drawn[:, 0], drawn[:, 1])), shape=(len(least), len(least))
+        )
+        _, run = connected_components(joined, directed=False)
+        reach = np.zeros(len(least))
+        np.maximum.at(reach, run[drawn], least[drawn])
+        on_boundary[on_boundary] = reach[run[drawn[:, 0]]] >= 2 * clear
     out = {}
     for other in np.unique(across[on_boundary]):
         shared = edges[start[on_boundary & (across == other)]]
@@ -562,18 +578,29 @@ class _Wall:
     jump: float = 25.0
     #: Most points added to the stretch of each wall edge on its two-liquid side.
     grading_rounds: int = 12
+    #: Distance, in plot units and square to the wall, from a wall to its vertex on the
+    #: two-liquid side ...
+    setback: float = 5e-4
+    #: ... which is at most this share of the stretch from the wall to the edge's two-liquid end.
+    setback_share: float = 0.9
+    #: An edge closer than this, degrees, to the direction of the wall it crosses is taken to
+    #: meet it at this angle.
+    setback_angle: float = 15.0
 
 
 WALL = _Wall()
 
 
-def _grade_walls(starts, ends, comp, xy, T, sheets):
+def _grade_walls(starts, ends, comp, xy, T, sheets, least, scale):
     """Split each segment from vertex ``starts[i]`` to vertex ``ends[i]`` toward its start: while
     the hottest sheet at ``GRADING.share`` of the piece that has the start as an end misses
     the straight line along that piece by more than :data:`SURFACE_TOLERANCE`, the piece is
     longer than ``GRADING.edge``, and fewer than ``WALL.grading_rounds`` such points have
     been added, the piece is split there, and the rest of it is split at its middle where the
-    hottest sheet misses the line along the rest by as much.
+    hottest sheet misses the line along the rest by as much. A miss on segment ``i`` is taken
+    across the surface, with ``scale[i]`` K counting as one unit of plot length, and in
+    temperature alone where that is infinite. Segment ``i`` is split at all only where that
+    first miss, in temperature, is also more than ``least[i]``.
 
     Returns:
         tuple: ``comp``, ``xy`` and ``T`` with the split points appended, and per segment its
@@ -583,6 +610,7 @@ def _grade_walls(starts, ends, comp, xy, T, sheets):
     chains = [[(0.0, int(starts[i])), (1.0, int(ends[i]))] for i in range(count)]
     seg, hi, t_hi = np.arange(count), np.ones(count), T[ends]
     span = _edge_span(comp, starts, ends)
+    reach = np.linalg.norm(xy[ends] - xy[starts], axis=1)
 
     def add(seg, at, point, hot):
         nonlocal comp, xy, T
@@ -597,16 +625,21 @@ def _grade_walls(starts, ends, comp, xy, T, sheets):
         a = comp[starts[seg]]
         point = a + at[:, None] * (comp[ends[seg]] - a)
         hot = sheets(point).max(axis=1)
-        return at, point, hot, np.abs(hot - t_lo - share * (t_hi - t_lo)) > SURFACE_TOLERANCE
+        off = np.abs(hot - t_lo - share * (t_hi - t_lo))
+        length = np.maximum((hi - lo) * reach[seg], GRADING.edge)
+        steep = np.abs(t_hi - t_lo) / scale[seg] / length
+        return at, point, hot, off, off / np.sqrt(1 + steep**2)
 
-    for _ in range(WALL.grading_rounds):
+    for k in range(WALL.grading_rounds):
         if not len(seg):
             break
-        at, point, hot, split = miss(seg, 0.0, T[starts[seg]], hi, t_hi, GRADING.share)
+        at, point, hot, off, across = miss(seg, 0.0, T[starts[seg]], hi, t_hi, GRADING.share)
+        split = (across > SURFACE_TOLERANCE) & ((k > 0) | (off > least[seg]))
         split &= hi * span[seg] > GRADING.edge
         seg, at, point, hot, hi, t_hi = (v[split] for v in (seg, at, point, hot, hi, t_hi))
         add(seg, at, point, hot)
-        mid, mid_point, mid_hot, rest = miss(seg, at, hot, hi, t_hi, 0.5)
+        mid, mid_point, mid_hot, _, across = miss(seg, at, hot, hi, t_hi, 0.5)
+        rest = across > SURFACE_TOLERANCE
         add(seg[rest], mid[rest], mid_point[rest], mid_hot[rest])
         hi, t_hi = at, hot
     chains = [sorted(chain) for chain in chains]
@@ -627,6 +660,33 @@ class _Crossing:
 
 
 CROSSING = _Crossing()
+
+
+def _wall_setbacks(xy, u, w, lo, hi, wall, first, second) -> np.ndarray:
+    """(k,) the share of each edge (``u[i]``, ``w[i]``) that ``WALL.setback``, square to the
+    wall, spans along it; 0 off the walls.
+
+    At an edge the wall runs along the segments joining its crossing (the middle of its bracket
+    ``lo[i]``, ``hi[i]``) to the crossings of the wall edges it shares a triangle with:
+    ``first[j]`` and ``second[j]`` are the two crossed edges of triangle ``j``. An edge with no
+    such neighbour counts as square to the wall, and one closer to the wall's direction than
+    ``WALL.setback_angle`` as at that angle.
+    """
+    step = xy[w] - xy[u]
+    at = xy[u] + (0.5 * (lo + hi))[:, None] * step
+    both = wall[first] & wall[second]
+    run = at[second[both]] - at[first[both]]
+    twice = 2 * np.arctan2(run[:, 1], run[:, 0])
+    turn = np.zeros((len(u), 2))
+    for ends in (first[both], second[both]):
+        np.add.at(turn, ends, np.column_stack([np.cos(twice), np.sin(twice)]))
+    along = 0.5 * np.arctan2(turn[:, 1], turn[:, 0])
+    length = np.hypot(step[:, 0], step[:, 1])
+    square = np.abs(step[:, 0] * np.sin(along) - step[:, 1] * np.cos(along))
+    least = np.sin(np.radians(WALL.setback_angle)) * length
+    square = np.where((turn != 0).any(axis=1), np.maximum(square, least), length)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(wall & (square > 0), WALL.setback / square, 0.0)
 
 
 def _sheet_crossings(columns, a, b, p, q, at_a, at_b, two_liquids) -> np.ndarray:
@@ -793,19 +853,25 @@ def _triple_points(columns, corners, labels, start) -> np.ndarray:
 SPLINTER_AREA = 1e-2
 
 
+def _joined_faces(faces) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The pairs of ``faces`` that share a side: the two faces of every pair, and the (k, 2)
+    nodes of the sides they share."""
+    edges = _face_edges(faces)
+    face_of = np.tile(np.arange(len(faces)), 3)
+    order = np.lexsort((edges[:, 1], edges[:, 0]))
+    edges, face_of = edges[order], face_of[order]
+    shared = (edges[1:] == edges[:-1]).all(axis=1)
+    return face_of[:-1][shared], face_of[1:][shared], edges[:-1][shared]
+
+
 def _merge_splinters(faces, owner, xy, max_area) -> np.ndarray:
     """``owner`` with every detached piece of a field smaller than ``max_area`` (other than the
     field's largest piece) handed to the neighbouring field it shares the longest boundary with,
     counting only neighbours that are not such pieces themselves."""
     owner = owner.copy()
     n_faces = len(faces)
-    edges = _face_edges(faces)
-    face_of = np.tile(np.arange(n_faces), 3)
-    order = np.lexsort((edges[:, 1], edges[:, 0]))
-    edges, face_of = edges[order], face_of[order]
-    shared = (edges[1:] == edges[:-1]).all(axis=1)
-    first, second = face_of[:-1][shared], face_of[1:][shared]
-    length = np.linalg.norm(xy[edges[:-1][shared][:, 0]] - xy[edges[:-1][shared][:, 1]], axis=1)
+    first, second, sides = _joined_faces(faces)
+    length = np.linalg.norm(xy[sides[:, 0]] - xy[sides[:, 1]], axis=1)
     areas = _triangle_areas(xy, faces)
     while True:
         joined = owner[first] == owner[second]
@@ -843,6 +909,38 @@ def _merge_splinters(faces, owner, xy, max_area) -> np.ndarray:
             return owner
 
 
+#: Most, K, the surface may lead the other sheets at the vertices of a piece of the two-liquid
+#: field for the piece to belong to the other fields.
+SHALLOW_GAP = 10.0
+
+
+def _fold_shallow(faces, owner, T, sheets_at, gap) -> np.ndarray:
+    """``owner`` with every shallow piece of field ``gap`` handed to the other fields.
+
+    A piece, faces of the field joined along their sides, is shallow where ``T`` leads the
+    hottest column of ``sheets_at`` other than ``gap`` by at most :data:`SHALLOW_GAP` at each of
+    its vertices. ``sheets_at`` holds the sheets at the first vertices, and a piece with any
+    other vertex is not shallow. Each face of a shallow piece goes to the other column that is
+    hottest at a corner of the face.
+    """
+    mine = np.flatnonzero(owner == gap)
+    if not len(mine):
+        return owner
+    others = np.array(sheets_at, dtype=float)
+    others[:, gap] = -np.inf
+    lead = np.full(len(T), np.inf)
+    lead[: len(others)] = T[: len(others)] - others.max(axis=1)
+    first, second, _ = _joined_faces(faces[mine])
+    graph = coo_matrix((np.ones(len(first)), (first, second)), shape=(len(mine), len(mine)))
+    count, piece = connected_components(graph, directed=False)
+    deep = np.zeros(count, dtype=bool)
+    deep[piece[(lead[faces[mine]] > SHALLOW_GAP).any(axis=1)]] = True
+    shallow = mine[~deep[piece]]
+    owner = owner.copy()
+    owner[shallow] = others[faces[shallow]].max(axis=1).argmax(axis=1)
+    return owner
+
+
 #: Most, K, a vertex the partition adds may lie above the hottest vertex next to it.
 ADDED_VERTEX_RISE = 25.0
 
@@ -862,6 +960,47 @@ def _cap_added(T, faces, first) -> np.ndarray:
             break
         T[over] = ring[over] + ADDED_VERTEX_RISE
     return T
+
+
+#: Twice the area, in plot units, at or below which a face has none in the plot plane.
+FLAT_FACE = 1e-15
+
+
+def _wound(faces, xy) -> np.ndarray:
+    """``faces`` with each face's vertices in one order: counter-clockwise in the plot plane
+    where the face has area there, and elsewhere against the order of an ordered face along a
+    side the two share. A face no such side reaches keeps its order."""
+    faces = np.array(faces)
+    a, b, c = xy[faces[:, 0]], xy[faces[:, 1]], xy[faces[:, 2]]
+    turn = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    back = turn < -FLAT_FACE
+    faces[back] = faces[back][:, [0, 2, 1]]
+    waiting = np.flatnonzero(np.abs(turn) <= FLAT_FACE).tolist()
+    if not waiting:
+        return faces
+    ordered = faces[np.abs(turn) > FLAT_FACE]
+    run = set(
+        map(
+            tuple,
+            np.concatenate([ordered[:, [0, 1]], ordered[:, [1, 2]], ordered[:, [2, 0]]]).tolist(),
+        )
+    )
+    while waiting:
+        left = []
+        for f in waiting:
+            p, q, r = (int(v) for v in faces[f])
+            sides = ((p, q), (q, r), (r, p))
+            if any(side in run for side in sides):
+                faces[f] = (p, r, q)
+                sides = ((p, r), (r, q), (q, p))
+            elif not any(side[::-1] in run for side in sides):
+                left.append(f)
+                continue
+            run.update(sides)
+        if len(left) == len(waiting):
+            break
+        waiting = left
+    return faces
 
 
 @dataclass(frozen=True)
@@ -1113,16 +1252,23 @@ def partition_fields(
     Where one end of an edge is in the :data:`~gliquid.liquidus_sheets.TWO_LIQUIDS` field and the
     two ends' sheets, read at the two ends of the bracket the crossing is closed to
     (:func:`_sheet_crossings`), differ by more than ``WALL.jump``, the crossing is a wall: it has
-    one vertex on each side, at those two ends, each
+    one vertex on each side, at those two ends, the two-liquid side's ``WALL.setback`` inside its
+    end (:func:`_wall_setbacks`) and read from the two-liquid sheet there, each
     side's faces use their own, and the faces between the two belong to the hotter side. On its
     two-liquid side, each wall edge is split toward the wall where the surface along it misses
-    the hottest sheet (:func:`_grade_walls`).
+    the hottest sheet, and any other edge leaving the field toward its crossing where the surface
+    misses the sheet by more than ``WALL.jump`` and, across the surface, by more than
+    :data:`SURFACE_TOLERANCE` (:func:`_grade_walls`).
 
     Each vertex takes the hottest sheet as its temperature, so the surface is the liquidus of the
     sheets, except that a wall vertex takes its own side's sheet where no other solid's sheet is
     hotter, and a vertex added to the mesh lies at most :data:`ADDED_VERTEX_RISE` above
     the hottest vertex next to it (:func:`_cap_added`). A detached piece of a field smaller than
-    :data:`SPLINTER_AREA` joins the neighbouring field it shares the longest boundary with.
+    :data:`SPLINTER_AREA` joins the neighbouring field it shares the longest boundary with. A
+    piece of the two-liquid field then left, where the surface leads the other sheets by at most
+    :data:`SHALLOW_GAP` at each of its vertices, belongs to the other fields
+    (:func:`_fold_shallow`).
+    Every face lists its vertices in one order (:func:`_wound`).
 
     Args:
         xy: (n, 2) plot coordinates of the nodes, an affine image of ``comp``; the returned
@@ -1256,6 +1402,14 @@ def partition_fields(
         vx, vy = crossing(x, y, x), crossing(x, y, y)
         closing.append((np.column_stack([vx, vy, centre]), vx, vy, labels[x], labels[y]))
 
+    if wall.any():
+        crossed = [
+            np.searchsorted(edge_keys, np.minimum(o, x) * n + np.maximum(o, x)) for x in (p, q)
+        ]
+        reach = _wall_setbacks(xy, u, w, lo, hi, wall, *crossed)
+        keep = 1 - WALL.setback_share
+        lo = np.where(labels[u] == gap, np.maximum(lo - reach, keep * lo), lo)
+        hi = np.where(labels[w] == gap, np.minimum(hi + reach, 1 - keep * (1 - hi)), hi)
     s_first = np.where(wall, lo, s)
     all_comp = np.vstack(
         [
@@ -1274,9 +1428,13 @@ def partition_fields(
         ]
     )
     added = sheets(all_comp[n:])
-    raw_T = np.concatenate([temps.max(axis=1), added.max(axis=1)])
+    sheets_at = np.vstack([temps, added])
+    raw_T = sheets_at.max(axis=1)
     if wall.any():
         solid = np.delete(added, gap, axis=1).max(axis=1, initial=-np.inf)
+        e = np.flatnonzero(wall)
+        wall_lo_T[e] = np.where(labels[u[e]] == gap, added[e, gap], wall_lo_T[e])
+        wall_hi_T[e] = np.where(labels[w[e]] == gap, added[wall_vertex[e] - n, gap], wall_hi_T[e])
         # each side of a wall takes its own field's sheet where no other solid's is hotter
         for at, own in (
             (n + np.flatnonzero(wall), wall_lo_T[wall]),
@@ -1287,12 +1445,19 @@ def partition_fields(
         faces.append(face)
         owner.append(np.where(raw_T[vx] > raw_T[vy], lx, ly))
     faces, owner = np.concatenate(faces), np.concatenate(owner)
-    if wall.any():
-        e = np.flatnonzero(wall)
+    if len(two):
+        e = two
         gap_end = np.where(labels[u[e]] == gap, u[e], w[e])
-        start = np.where(gap_end == w[e], wall_vertex[e], n + e)
+        start = np.where(wall[e] & (gap_end == w[e]), wall_vertex[e], n + e)
         all_comp, all_xy, raw_T, chains = _grade_walls(
-            start, gap_end, all_comp, all_xy, raw_T, sheets
+            start,
+            gap_end,
+            all_comp,
+            all_xy,
+            raw_T,
+            sheets,
+            np.where(wall[e], SURFACE_TOLERANCE, WALL.jump),
+            np.where(wall[e], np.inf, scale),
         )
         chain = {(c[0][0], c[0][-1]): c for c in chains if len(c[0]) > 2}
         dropped, added, added_owner = np.zeros(len(faces), dtype=bool), [], []
@@ -1331,9 +1496,11 @@ def partition_fields(
     kept = (
         (faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2]) & (faces[:, 2] != faces[:, 0])
     )
-    faces, owner = faces[kept], owner[kept]
+    faces, owner = _wound(faces[kept], all_xy), owner[kept]
     all_T = _cap_added(raw_T, faces, n_nodes)
     owner = _merge_splinters(faces, owner, all_xy, SPLINTER_AREA * spacing**2)
+    if gap >= 0:
+        owner = _fold_shallow(faces, owner, raw_T, sheets_at, gap)
 
     parent = np.arange(len(all_comp))
     surface = SurfacePiece(xy=all_xy, T=all_T, comp=all_comp, parent=parent, faces=faces)

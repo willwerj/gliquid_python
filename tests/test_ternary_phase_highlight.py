@@ -18,9 +18,11 @@ import gliquid.ternary as tmod
 from gliquid.liquidus_sheets import TWO_LIQUIDS, LiquidusSheets
 from gliquid.plotting import liquidus_fields as lf
 from gliquid.plotting import phase_highlight as ph
+from gliquid.plotting import ternary_surface
 from gliquid.plotting.style import (
     DIMMED_PHASE_COLOR,
     FIELD_OUTLINE_COLOR,
+    GAP_OUTLINE_CLEARANCE,
     GAP_OUTLINE_COLOR,
     GAP_OUTLINE_DASH,
 )
@@ -315,6 +317,11 @@ def _polyline_points(lines):
     return set().union(*(_points(line[:, 0], line[:, 1]) for line in lines))
 
 
+def _inner_points(boundaries):
+    """The points of the boundaries a field shares with other fields."""
+    return set().union(*(_polyline_points(lines) for phase, lines in boundaries.items() if phase))
+
+
 def test_a_liquid_miscibility_gap_is_coloured_with_the_surface_and_dotted_where_it_borders(gap, tx):
     fig = tx(gap)
     part = gap._liquidus_partition(gap.triangulation.simplices)
@@ -326,10 +333,10 @@ def test_a_liquid_miscibility_gap_is_coloured_with_the_surface_and_dotted_where_
     assert not _lines(fig, FIELD_OUTLINE_COLOR)
     dotted = _lines(fig, GAP_OUTLINE_COLOR)
     assert {t.line.dash for t in dotted} == {GAP_OUTLINE_DASH}
-    shared = lf.field_boundaries(part, TWO_LIQUIDS)
-    assert None in shared
-    inner = set().union(*(_polyline_points(lines) for phase, lines in shared.items() if phase))
-    assert _line_points(dotted) == inner
+    assert None in lf.field_boundaries(part, TWO_LIQUIDS)
+    assert _line_points(dotted) == _inner_points(
+        lf.field_boundaries(part, TWO_LIQUIDS, GAP_OUTLINE_CLEARANCE)
+    )
     assert TWO_LIQUIDS not in {t.name for t in fig.data if t.showlegend}
 
 
@@ -346,15 +353,21 @@ def test_a_highlighted_neighbour_s_outline_replaces_their_shared_dotted_boundary
     ) == pytest.approx(float(lf._triangle_areas(part.surface.xy, part.surface.faces).sum()))
     (outline,) = _lines(fig, FIELD_OUTLINE_COLOR)
     assert _polyline_points(shared[neighbour]) <= _line_points([outline])
-    others = [lines for phase, lines in shared.items() if phase not in (neighbour, None)]
-    assert _line_points(_lines(fig, GAP_OUTLINE_COLOR)) == set().union(
-        *(_polyline_points(lines) for lines in others)
+    drawn = lf.field_boundaries(part, TWO_LIQUIDS, GAP_OUTLINE_CLEARANCE)
+    assert _line_points(_lines(fig, GAP_OUTLINE_COLOR)) == _inner_points(
+        {phase: lines for phase, lines in drawn.items() if phase != neighbour}
     )
     base = tx(gap, interactive_legend=True)
     _restyle(fig, base.layout.meta[ph.SPEC_KEY]["reset"])
-    assert _line_points(_lines(fig, GAP_OUTLINE_COLOR)) == set().union(
-        *(_polyline_points(lines) for phase, lines in shared.items() if phase)
-    )
+    assert _line_points(_lines(fig, GAP_OUTLINE_COLOR)) == _inner_points(drawn)
+
+
+def test_the_dotted_boundary_stops_short_of_the_sides_by_the_clearance(gap, monkeypatch):
+    monkeypatch.setattr(ternary_surface, "GAP_OUTLINE_CLEARANCE", 0.05)
+    dotted = _line_points(_lines(gap.get_plot("tx"), GAP_OUTLINE_COLOR))
+    part = gap._liquidus_partition(gap.triangulation.simplices)
+    assert dotted == _inner_points(lf.field_boundaries(part, TWO_LIQUIDS, 0.05))
+    assert set() < dotted < _inner_points(lf.field_boundaries(part, TWO_LIQUIDS, 0.01))
 
 
 def test_sheets_that_miss_the_hull_draw_the_node_mesh_without_fields(plotter, monkeypatch, caplog):

@@ -31,6 +31,21 @@ source tree carries a version literal that could disagree with this file.
   with `hull_mode='gtx'` and by over a quarter with `'hsx'`. `plot_tx` makes each phase line
   and tie line as one trace instead of building a `plotly.express` figure for it; the figures
   are unchanged.
+- **A cliff at the edge of a two-liquid field is drawn without dark slivers or fins.** Every
+  face of the partition lists its vertices counter-clockwise, so neighbouring faces are shaded
+  alike; a wall's vertex on the two-liquid side sits `WALL.setback` (5e-4 in plot units) inside
+  the wall and takes the two-liquid sheet there; and an edge that leaves the field up a rise of
+  more than `WALL.jump` is split until the surface follows the sheet, its miss measured across
+  the surface as for the edges leaving a side. Vertices next to walls and steep edges move; the
+  fields and the liquidus at the grid nodes are unchanged.
+- **The dotted outline of the two-liquid field is not drawn along the sides of the composition
+  triangle.** Stretches within `GAP_OUTLINE_CLEARANCE` (0.01 in mole fraction) of a side are
+  left out, and so is a run of the rest that never gets twice that far from the sides.
+  `field_boundaries(partition, phase, clear=...)` takes the clearance and returns the whole
+  outline without it.
+- **A piece of the two-liquid field that leads the solids by at most 10 K (`SHALLOW_GAP`)
+  belongs to the solids' fields**: it has no outline, and each of its faces goes to the solid
+  hottest there. The surface keeps its temperatures.
 
 ### Fixed
 

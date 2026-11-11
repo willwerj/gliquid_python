@@ -53,6 +53,9 @@ FIELD_OUTLINE_WIDTH = 5
 # The boundary of the two-liquid field, drawn in every view.
 GAP_OUTLINE_COLOR = "#7f7f7f"
 GAP_OUTLINE_DASH = "dot"
+# Mole fraction from a side of the composition triangle within which that boundary is not drawn;
+# a run of it that stays within twice that of the sides is not drawn either.
+GAP_OUTLINE_CLEARANCE = 0.01
 
 
 def non_dft_legend_label(kinds) -> str:

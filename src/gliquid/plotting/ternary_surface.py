@@ -19,6 +19,7 @@ from gliquid.plotting.export import side_by_side_html
 from gliquid.plotting.style import (
     FIELD_OUTLINE_COLOR,
     FIELD_OUTLINE_WIDTH,
+    GAP_OUTLINE_CLEARANCE,
     GAP_OUTLINE_COLOR,
     GAP_OUTLINE_DASH,
     IMPUTED_LEGEND_LABEL,
@@ -274,10 +275,11 @@ def render_tx_surface(
     ``partition`` (a :class:`gliquid.plotting.liquidus_fields.Partition`) replaces the mesh of
     ``liq_df`` nodes as the drawn surface, and its fields are the phases' liquidus fields. A field
     of a phase with no legend entry (the two-liquid field) is drawn with the rest of the surface,
-    and a dotted grey line, shown in every view, marks where it borders other fields; where a
-    highlighted field borders it, that field's outline takes the line's place. Without it the
-    surface is the node mesh and has no fields, and with no ``triangles`` either the figure has
-    no liquidus mesh and no isotherms. ``highlight_phase`` draws that solid phase's field
+    and a dotted grey line, shown in every view, marks where it borders other fields away from
+    the sides of the triangle (``GAP_OUTLINE_CLEARANCE``); where a highlighted field borders
+    it, that field's outline takes the line's place. Without it the surface is the node mesh and
+    has no fields, and with no ``triangles`` either the figure has no liquidus mesh and no
+    isotherms. ``highlight_phase`` draws that solid phase's field
     in full colour, outlined, with the rest of the surface, the other legend entries and the other
     phases' lines dimmed; ``interactive_legend`` embeds every such view for a browser-side legend
     handler (see :mod:`gliquid.plotting.phase_highlight`). Without a ``partition`` neither draws
@@ -384,7 +386,9 @@ def render_tx_surface(
     boundaries = [
         (neighbour, lines)
         for phase in unlisted
-        for neighbour, lines in liquidus_fields.field_boundaries(partition, phase).items()
+        for neighbour, lines in liquidus_fields.field_boundaries(
+            partition, phase, clear=GAP_OUTLINE_CLEARANCE
+        ).items()
         if neighbour is not None
     ]
     for n, (neighbour, lines) in enumerate(boundaries):

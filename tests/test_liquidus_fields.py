@@ -321,6 +321,37 @@ def test_field_boundaries_split_the_outline_by_neighbour(curve):
         assert set().union(*pieces) == _segments(field.outline)
 
 
+def test_field_boundaries_leave_out_the_stretches_along_a_side():
+    """L1 + L2 stands above the solid where x0 < 0.33, and in a second partition everywhere but
+    a strip 0.015 wide along the side x1 = 0."""
+
+    def crossing(points):
+        points = np.atleast_2d(points)
+        return np.column_stack(
+            [np.full(len(points), 1000.0), np.where(points[:, 0] < 0.33, 1500.0, 0.0)]
+        )
+
+    def along(points):
+        points = np.atleast_2d(points)
+        return np.column_stack(
+            [np.full(len(points), 1000.0), np.where(points[:, 1] > 0.015, 1500.0, 0.0)]
+        )
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, crossing, ("A", TWO_LIQUIDS))
+    surface = part.surface
+    least = np.minimum(surface.comp.min(axis=1), 1 - surface.comp.sum(axis=1))
+    points = np.round(np.column_stack([surface.xy, surface.T]), 9)
+    near = {tuple(point) for point in points[least < 0.01]}
+    whole = _segments(lf.field_boundaries(part, TWO_LIQUIDS)["A"])
+    kept = _segments(lf.field_boundaries(part, TWO_LIQUIDS, clear=0.01)["A"])
+    assert kept == {segment for segment in whole if not segment <= near}
+    assert 0 < len(kept) < len(whole)
+    part = lf.partition_fields(xy, comp, triangles, along, ("A", TWO_LIQUIDS))
+    assert "A" in lf.field_boundaries(part, TWO_LIQUIDS, clear=0.005)
+    assert "A" not in lf.field_boundaries(part, TWO_LIQUIDS, clear=0.01)
+
+
 def _surface_at(part, points):
     """The drawn surface at each of ``points`` (plot coordinates), on the face holding it."""
     tri = part.surface.xy[part.surface.faces]
@@ -413,6 +444,89 @@ def test_a_two_liquid_sheet_climbing_steeply_from_its_wall_is_followed_by_the_su
     points = np.column_stack([x0 + 0.5 * x1, x1 * SQRT3_2])
     expected = sheets(np.column_stack([x0, x1])).max(axis=1)
     assert np.abs(_surface_at(part, points) - expected).max() < 25.0
+
+
+def test_every_face_runs_counter_clockwise_and_against_its_neighbours():
+    """Across a two-liquid wall too: every face with area in the plot plane runs counter-clockwise
+    there, and no two faces run along a side they share in the same direction."""
+    edge = 0.33
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        depth = np.clip(edge - points[:, 0], 0.0, None)
+        two = np.where(points[:, 0] < edge, 500.0 + 3000.0 * np.sqrt(depth / edge), 0.0)
+        return np.column_stack([np.full(len(points), 400.0), two])
+
+    comp, xy, triangles = _grid(0.05)
+    surface = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS)).surface
+    a, b, c = (surface.xy[surface.faces[:, k]] for k in range(3))
+    turn = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
+    assert (turn >= -lf.FLAT_FACE).all()
+    faces = surface.faces
+    sides = np.concatenate([faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]])
+    assert len(np.unique(sides, axis=0)) == len(sides)
+
+
+def test_a_wall_vertex_on_the_two_liquid_side_sits_the_setback_inside_the_wall():
+    """L1 + L2 stands 500 K above the solid where x0 < 0.33: whichever way its edge runs, a
+    wall's vertex on that side lies ``WALL.setback`` from the wall, square to it."""
+    edge = 0.33
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        return np.column_stack(
+            [np.full(len(points), 1000.0), np.where(points[:, 0] < edge, 1500.0, 0.0)]
+        )
+
+    comp, xy, triangles = _grid(0.05)
+    surface = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS)).surface
+    depth = (edge - surface.comp[:, 0]) * SQRT3_2
+    nearest = depth[(surface.T == 1500.0) & (depth < 2 * lf.WALL.setback)]
+    assert len(nearest) > 10
+    assert nearest == pytest.approx(lf.WALL.setback, abs=lf.WALL.width)
+
+
+def test_a_two_liquid_sheet_climbing_steeply_without_a_wall_is_followed_by_the_surface():
+    """L1 + L2 rises as a square root from the solid's 400 K at x0 = 0.33 into x0 < 0.33 and
+    falls below it beyond, with no jump between the two. The miss is taken across the
+    surface, with the 3000 K the sheets span counting as one unit of plot length."""
+    edge = 0.33
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        depth = edge - points[:, 0]
+        rise = np.where(depth > 0, np.sqrt(np.abs(depth) / edge), depth)
+        return np.column_stack([np.full(len(points), 400.0), 400.0 + 3000.0 * rise])
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS))
+    x0, x1 = np.meshgrid(np.linspace(edge - 0.03, edge - 1e-3, 15), np.linspace(0.05, 0.6, 12))
+    x0, x1 = x0.ravel(), x1.ravel()
+    points = np.column_stack([x0 + 0.5 * x1, x1 * SQRT3_2])
+    expected = sheets(np.column_stack([x0, x1])).max(axis=1)
+    steep = 1500.0 / np.sqrt((edge - x0) * edge) / 3000.0
+    across = np.abs(_surface_at(part, points) - expected) / np.sqrt(1 + steep**2)
+    assert across.max() < 2 * lf.SURFACE_TOLERANCE
+
+
+def test_a_two_liquid_piece_within_the_shallow_margin_of_the_solid_joins_its_field():
+    """L1 + L2 leads a flat solid at 1000 K in two bumps: by 8 K at most around (0.3, 0.3) and
+    by 30 K around (0.2, 0.6). Only the second is a two-liquid field, and the surface keeps the
+    temperatures of the first."""
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        two = np.full(len(points), 990.0)
+        for centre, lead in (((0.3, 0.3), 8.0), ((0.2, 0.6), 30.0)):
+            two += (lead + 10.0) * np.exp(-((points - centre) ** 2).sum(axis=1) / 0.01)
+        return np.column_stack([np.full(len(points), 1000.0), two])
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", TWO_LIQUIDS))
+    field = part.fields[TWO_LIQUIDS].inside
+    assert np.linalg.norm(field.comp - [0.2, 0.6], axis=1).max() < 0.15
+    top = np.linalg.norm(part.surface.comp - [0.3, 0.3], axis=1).argmin()
+    assert part.surface.T[top] == pytest.approx(1008.0, abs=0.01)
 
 
 def test_wall_vertices_keep_the_column_values_the_wall_was_found_with():
