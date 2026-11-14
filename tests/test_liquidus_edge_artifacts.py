@@ -249,6 +249,39 @@ class TestDiagramInvariants:
         assert not _spikes(curve)
 
 
+class TestNarrowWedge:
+    """A few-vertex 'L' wedge whose sectioning leaves no two-point run is read from its ring."""
+
+    # Triangle on the right axis: hot tip and melting vertex share the axis column.
+    TRIANGLE = [[99.9619, 4100.34], [99.7713, 2650.17], [99.9619, 2627.77], [99.9619, 4100.34]]
+    # Full-width band: wider than _WEDGE_MAX_SPAN_X, its ring is not a liquidus.
+    BAND = [
+        [99.9619, 1344.78],
+        [99.9619, 1413.38],
+        [0.0381, 1413.38],
+        [0.0381, 1344.78],
+        [99.9619, 1344.78],
+    ]
+
+    def test_triangle_keeps_its_floor_not_its_tip(self):
+        mpds_json = _make_json([_shape(self.TRIANGLE)], elements=("Dy", "Mo"), temp=(0, 5000))
+        branch = mpds._shape_liquidus(mpds_json["shapes"][0]["svgpath"], mpds_json)
+        assert sum(branch, []) == pytest.approx(
+            [0.997713, 2650.17 + 273.15, 0.999619, 2627.77 + 273.15]
+        )
+
+    def test_the_tip_was_kept_without_the_ring_fallback(self, monkeypatch):
+        monkeypatch.setattr(mpds, "_WEDGE_MAX_SPAN_X", 0.0)
+        mpds_json = _make_json([_shape(self.TRIANGLE)], elements=("Dy", "Mo"), temp=(0, 5000))
+        branch = mpds._shape_liquidus(mpds_json["shapes"][0]["svgpath"], mpds_json)
+        assert sum(branch, []) == pytest.approx([0.999619, 4100.34 + 273.15])
+
+    def test_wide_band_is_not_rebuilt(self):
+        mpds_json = _make_json([_shape(self.BAND)], elements=("Li", "Si"), temp=(200, 1414))
+        branch = mpds._shape_liquidus(mpds_json["shapes"][0]["svgpath"], mpds_json)
+        assert len(branch) == 1
+
+
 class TestCachedCorpus:
     """Opportunistic pins on the real jsons that carry this artifact."""
 

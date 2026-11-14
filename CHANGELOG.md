@@ -9,6 +9,11 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `extract_digitized_liquidus` reads a narrow few-vertex `L` wedge (at most 0.05 wide in
+  composition) from its whole outline instead of keeping its hottest tip as the only point.
+
 ## [0.3.3] - 2026-11-09
 
 ### Added
