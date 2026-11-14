@@ -56,6 +56,10 @@ _AXIS_X_TOL = 1e-3
 # spans at least this temperature; points at one composition always collapse.
 _AXIS_MIN_SPREAD_K = 40.0
 
+# Widest composition span, in mole fraction, of a few-vertex 'L' wedge that _shape_liquidus
+# rebuilds from its whole ring when no monotonic section of two points survives sectioning.
+_WEDGE_MAX_SPAN_X = 0.05
+
 # -- Lean records: the pre-fill stitched liquidus stored under the reserved key, plus only
 # ``reference``/``chemical_elements``/``temp``/``comp_range`` (see :func:`record_mode`) --
 _GLIQUID_KEY = "_gliquid"
@@ -234,7 +238,9 @@ def _shape_liquidus(svgpath: str, mpds_json: dict) -> list[list] | None:
     not liquidus), split what is left into monotonic sections, stitch the sections that
     line up with the pure-element endpoints onto the longest one, and collapse what
     survives to one temperature per composition (:func:`_collapse_columns`), which is what
-    removes the ring-closure edges the frame strip cannot see. ``None`` when the shape has
+    removes the ring-closure edges the frame strip cannot see. A narrow wedge of a few
+    vertices that sectioning reduces to a single point is collapsed from its whole ring
+    instead, when the ring spans at most ``_WEDGE_MAX_SPAN_X``. ``None`` when the shape has
     too few interior points to be a curve.
     """
     liquidus = shape_to_list(svgpath)
@@ -302,7 +308,12 @@ def _shape_liquidus(svgpath: str, mpds_json: dict) -> list[list] | None:
             ):
                 main_section += sec
 
-    return _collapse_columns(main_section, mpds_json)
+    branch = _collapse_columns(main_section, mpds_json)
+    if len(branch) == 1:
+        span = max(pt[0] for pt in liquidus) - min(pt[0] for pt in liquidus)
+        if span <= _WEDGE_MAX_SPAN_X:
+            return _collapse_columns(liquidus, mpds_json)
+    return branch
 
 
 def _collapse_columns(branch: list[list], mpds_json: dict) -> list[list]:
