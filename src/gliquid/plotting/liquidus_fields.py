@@ -212,16 +212,27 @@ def _edge_span(comp, a, b) -> np.ndarray:
     return _span(comp[b] - comp[a])
 
 
+#: Most rounds in which :func:`_refine_junctions` splits edges to bring a triple point into its
+#: triangle.
+JUNCTION_ROUNDS = 16
+
+
 def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_edge, two_liquids):
     """Split the triangles meeting three phases or holding a phase none of their nodes carries
     until their edges are no longer than ``min_edge``, leaving those already narrower than an
     eighth of ``min_edge`` across.
 
-    A phase none of the nodes carries is looked for at the edge midpoints, at the centroid, and
-    where the sheets of an edge's two phases cross. A marked triangle is split into four at its
-    edge midpoints, as is any triangle with two or more split edges; a triangle with one split
-    edge is halved. New nodes are labelled from ``sheets``, and ``temps``, the sheets at the
-    nodes, is extended to them. ``two_liquids``: as in :func:`_sheet_crossings`.
+    A triangle then left meeting three phases holds their triple point unless, on one of its
+    edges, the phase of the opposite node is the hottest where the edge's two phases cross, a
+    crossing with the two-liquid sheet read at the solid end of its bracket. Such an edge is
+    split there, in at most :data:`JUNCTION_ROUNDS` rounds.
+
+    A phase none of the nodes carries is looked for where the sheets of an edge's two phases
+    cross and, in a triangle large enough to split, at the edge midpoints and the centroid. A
+    marked triangle is split into four at its edge midpoints, as is any triangle with two or
+    more split edges; a triangle with one split edge is halved. New nodes are labelled from
+    ``sheets``, and ``temps``, the sheets at the nodes, is extended to them. ``two_liquids``: as
+    in :func:`_sheet_crossings`.
 
     Returns:
         tuple: the refined ``comp``, ``xy``, ``triangles``, ``labels`` and ``temps``, and the
@@ -233,21 +244,30 @@ def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_e
     tested = np.zeros(0, dtype=np.int64)
     found = np.zeros((0, 3))
     intruded = np.zeros(0, dtype=np.int64)
+    tops = np.zeros(0, dtype=np.int64)
+    spots = np.zeros(0)
+    rounds = 0
     while True:
         n = len(comp)
         node_labels = labels[triangles]
-        if fresh.any():
-            corners = comp[triangles[fresh]]
+        # Edge j of a triangle joins its vertices j and j + 1.
+        ends = np.sort(np.stack([triangles, np.roll(triangles, -1, axis=1)], axis=2), axis=2)
+        long = _edge_span(comp, ends[..., 0].ravel(), ends[..., 1].ravel()).reshape(-1, 3)
+        corners_xy = xy[triangles]
+        sides = np.linalg.norm(corners_xy - np.roll(corners_xy, -1, axis=1), axis=2)
+        height = 2 * _triangle_areas(xy, triangles) / np.maximum(sides.max(axis=1), 1e-300)
+        wide = (long.max(axis=1) > min_edge) & (height > min_edge / 8)
+        probed = fresh & wide
+        if probed.any():
+            corners = comp[triangles[probed]]
             samples = np.concatenate(
                 [(corners + np.roll(corners, -1, axis=1)) / 2, corners.mean(axis=1, keepdims=True)],
                 axis=1,
             )
             winners = sheets(samples.reshape(-1, 2)).argmax(axis=1).reshape(-1, 4)
-            foreign[fresh] = (
-                (winners[:, :, None] != node_labels[fresh][:, None, :]).all(axis=2).any(axis=1)
+            foreign[probed] = (
+                (winners[:, :, None] != node_labels[probed][:, None, :]).all(axis=2).any(axis=1)
             )
-        # Edge j of a triangle joins its vertices j and j + 1.
-        ends = np.sort(np.stack([triangles, np.roll(triangles, -1, axis=1)], axis=2), axis=2)
         keys = ends[..., 0] * n + ends[..., 1]
         ids = ends[..., 0].astype(np.int64) * _EDGE_ID + ends[..., 1]
         mixed = labels[ends[..., 0]] != labels[ends[..., 1]]
@@ -257,32 +277,47 @@ def _refine_junctions(comp, xy, triangles, labels, temps, sheets, columns, min_e
             new = _sheet_crossings(
                 columns, comp[u], comp[w], labels[u], labels[w], temps[u], temps[w], two_liquids
             )
-            at = sheets(comp[u] + new[:, :1] * (comp[w] - comp[u])).argmax(axis=1)
+            # A crossing with the two-liquid sheet is read at the solid end of its bracket.
+            end = np.where(labels[w] == two_liquids, 1, np.where(labels[u] == two_liquids, 2, 0))
+            spot = new[np.arange(len(new)), end]
+            at = sheets(comp[u] + spot[:, None] * (comp[w] - comp[u])).argmax(axis=1)
             order = np.argsort(np.concatenate([tested, untested]), kind="stable")
             tested = np.concatenate([tested, untested])[order]
             found = np.concatenate([found, new])[order]
+            tops = np.concatenate([tops, at])[order]
+            spots = np.concatenate([spots, spot])[order]
             intruded = np.union1d(intruded, untested[(at != labels[u]) & (at != labels[w])])
         foreign |= np.isin(ids, intruded).any(axis=1)
-        long = _edge_span(comp, ends[..., 0].ravel(), ends[..., 1].ravel()).reshape(-1, 3)
-        corners_xy = xy[triangles]
-        sides = np.linalg.norm(corners_xy - np.roll(corners_xy, -1, axis=1), axis=2)
-        height = 2 * _triangle_areas(xy, triangles) / np.maximum(sides.max(axis=1), 1e-300)
-        red = (
-            ((_label_count(node_labels) == 3) | foreign)
-            & (long.max(axis=1) > min_edge)
-            & (height > min_edge / 8)
-        )
-        if not red.any():
+        red = ((_label_count(node_labels) == 3) | foreign) & wide
+        cut, cut_share = np.zeros(0, dtype=keys.dtype), np.zeros(0)
+        if not red.any() and rounds < JUNCTION_ROUNDS:
+            rounds += 1
+            three = _label_count(node_labels) == 3
+            crossed = np.searchsorted(tested, ids[three])
+            share = spots[crossed]
+            hidden = (tops[crossed] == np.roll(node_labels[three], 1, axis=1)) & (
+                np.minimum(share, 1 - share) > PARTITION_CLAMP
+            )
+            cut, first = np.unique(keys[three][hidden], return_index=True)
+            cut_share = share[hidden][first]
+        if not red.any() and not len(cut):
             break
         while True:
-            closed = red | (np.isin(keys, keys[red]).sum(axis=1) >= 2)
+            closed = red | (
+                np.isin(keys, np.concatenate([keys[red].ravel(), cut])).sum(axis=1) >= 2
+            )
             if (closed == red).all():
                 break
             red = closed
-        split = np.unique(keys[red])
+        split = np.unique(np.concatenate([keys[red].ravel(), cut]))
         a, b = split // n, split % n
-        comp = np.vstack([comp, (comp[a] + comp[b]) / 2])
-        xy = np.vstack([xy, (xy[a] + xy[b]) / 2])
+        share = np.full((len(split), 1), 0.5)
+        share[np.searchsorted(split, cut), 0] = cut_share
+        placed = np.isin(split, cut)[:, None]
+        comp = np.vstack(
+            [comp, np.where(placed, comp[a] + share * (comp[b] - comp[a]), (comp[a] + comp[b]) / 2)]
+        )
+        xy = np.vstack([xy, np.where(placed, xy[a] + share * (xy[b] - xy[a]), (xy[a] + xy[b]) / 2)])
         added = sheets(comp[n:])
         labels = np.concatenate([labels, added.argmax(axis=1)])
         temps = np.vstack([temps, added])
@@ -848,6 +883,112 @@ def _triple_points(columns, corners, labels, start) -> np.ndarray:
     return weights
 
 
+@dataclass(frozen=True)
+class _GapJoint:
+    """Placement of a joint of the two-liquid field with two solid fields (:func:`_gap_joints`)."""
+
+    #: Bisections of the stretch of the solids' line inside the triangle.
+    steps: int = 20
+    #: Corrections, after the last bisection, that put the joint back on the solids' line.
+    polish: int = 2
+    #: Most, K, the two solids' sheets may differ at a joint before the point where the three
+    #: sheets meet is tried in its place.
+    apart: float = 1.0
+
+
+GAP_JOINT = _GapJoint()
+
+
+def _gap_joints(columns, corners, labels, at_corners, two_liquids, start) -> np.ndarray:
+    """(k, 3) barycentric coordinates of the joint of the two-liquid field with the two solid
+    fields of each triangle of ``corners`` (k, 3, 2): the point where the line on which the two
+    solids' sheets are equal enters the two-liquid field, on its solid side.
+
+    ``labels`` (k, 3) holds column ``two_liquids`` once per row, ``at_corners`` (k, 3, phases) is
+    every sheet at the corners and ``columns`` evaluates chosen sheets (see
+    :func:`partition_fields`). The line is followed from the edge joining the two solids' nodes,
+    and the stretch of it inside the triangle is bisected ``GAP_JOINT.steps`` times on whether
+    the two-liquid sheet is the hottest. A row whose solids' sheets do not order its corners
+    takes ``start`` (k, 3). A row whose solids' sheets are more than ``GAP_JOINT.apart`` apart at
+    the point found takes the point where the three sheets meet (:func:`_triple_points` from
+    ``start``) if the solids' sheets are closer there.
+    """
+    k = len(corners)
+    if not k:
+        return np.zeros((0, 3))
+    rows = np.arange(k)
+    g_at = (labels == two_liquids).argmax(axis=1)
+    a_at, b_at = (g_at + 1) % 3, (g_at + 2) % 3
+    solids = np.column_stack([labels[rows, a_at], labels[rows, b_at]])
+    order = np.column_stack([a_at, b_at, g_at])
+    # first solid's sheet minus the second's at its own node, the other's and the two-liquid node
+    lead = (
+        at_corners[rows[:, None], order, solids[:, :1]]
+        - at_corners[rows[:, None], order, solids[:, 1:]]
+    )
+    slope = lead[:, 0] - lead[:, 1]
+    usable = np.isfinite(lead).all(axis=1) & (slope > 0)
+    if not usable.all():
+        out = _project(start)
+        out[usable] = _gap_joints(
+            columns,
+            corners[usable],
+            labels[usable],
+            at_corners[usable],
+            two_liquids,
+            start[usable],
+        )
+        return out
+    with np.errstate(divide="ignore", invalid="ignore"):
+        leave_first = np.where(
+            lead[:, 2] > lead[:, 1], -lead[:, 1] / (lead[:, 2] - lead[:, 1]), np.inf
+        )
+        leave_second = np.where(
+            lead[:, 0] > lead[:, 2], lead[:, 0] / (lead[:, 0] - lead[:, 2]), np.inf
+        )
+    low, high = np.zeros(k), np.minimum(np.minimum(leave_first, leave_second), 1.0)
+    which = np.column_stack([solids, np.full(k, two_liquids)])
+
+    def weights(share, shift):
+        """The point of the solids' line with weight ``share`` on the two-liquid node, moved
+        ``shift`` toward the first solid's node."""
+        first = (-lead[:, 1] + share * (lead[:, 1] - lead[:, 2])) / slope + shift
+        first = np.clip(first, 0.0, 1.0 - share)
+        out = np.empty((k, 3))
+        out[rows, a_at], out[rows, b_at], out[rows, g_at] = first, 1.0 - share - first, share
+        return out
+
+    def read(share, shift, cols):
+        return columns(np.einsum("ki,kij->kj", weights(share, shift), corners), cols)
+
+    def onto_line(shift, temps):
+        gap = temps[:, 0] - temps[:, 1]
+        return shift - np.where(np.isfinite(gap), gap, 0.0) / slope
+
+    shift = np.zeros(k)
+    for _ in range(GAP_JOINT.steps):
+        share = (low + high) / 2
+        temps = read(share, shift, which)
+        inside = temps[:, 2] > temps[:, :2].max(axis=1)
+        low, high = np.where(inside, low, share), np.where(inside, share, high)
+        shift = onto_line(shift, temps)
+    for _ in range(GAP_JOINT.polish):
+        shift = onto_line(shift, read(low, shift, solids))
+    found = _project(weights(low, shift))
+
+    def apart(at, of):
+        temps = columns(np.einsum("ki,kij->kj", at, corners[of]), solids[of])
+        gap = np.abs(temps[:, 0] - temps[:, 1])
+        return np.where(np.isfinite(gap), gap, np.inf)
+
+    off = np.flatnonzero(apart(found, rows) > GAP_JOINT.apart)
+    if len(off):
+        meeting = _triple_points(columns, corners[off], labels[off], start[off])
+        closer = apart(meeting, off) < apart(found[off], off)
+        found[off[closer]] = meeting[closer]
+    return found
+
+
 #: Largest detached piece of a field that :func:`partition_fields` merges into a neighbour, as a
 #: share of the squared median mesh-edge length.
 SPLINTER_AREA = 1e-2
@@ -1243,11 +1384,14 @@ def partition_fields(
     composition triangle, and midpoints of edges that sag off the sheets, are first added to the
     mesh where its linear liquidus misses them (:func:`_add_edge_points`). Triangles meeting three
     phases, or holding a phase none of their nodes carries, are then split at their edge midpoints
-    until their edges are no longer than ``min_edge``, and edges leaving a side are split toward it
-    until the surface along them is within :data:`SURFACE_TOLERANCE` of the liquidus
-    (:func:`_grade_sides`). Every edge between two phases is then cut where their sheets are equal,
+    until their edges are no longer than ``min_edge``, then where that brings the triple point of
+    three phases into the triangle meeting them (:func:`_refine_junctions`), and edges
+    leaving a side are split toward it until the surface along them is within
+    :data:`SURFACE_TOLERANCE` of the liquidus (:func:`_grade_sides`). Every edge between two
+    phases is then cut where their sheets are equal,
     and every triangle meeting three phases at the point inside it where the three come closest to
-    equal.
+    equal, or, where one of the three is the two-liquid field, where the boundary of the two
+    solids' fields enters it (:func:`_gap_joints`).
 
     Where one end of an edge is in the :data:`~gliquid.liquidus_sheets.TWO_LIQUIDS` field and the
     two ends' sheets, read at the two ends of the bracket the crossing is closed to
@@ -1386,7 +1530,14 @@ def partition_fields(
         near_i = np.where(t3[:, i] < t3[:, j], 1 - share, share)
         start[:, i] += near_i / 3
         start[:, j] += (1 - near_i) / 3
-    weights = _triple_points(sheet_columns, comp[t3], labels[t3], start)
+    at_gap = (labels[t3] == gap).any(axis=1)
+    weights = np.empty((len(t3), 3))
+    weights[~at_gap] = _triple_points(
+        sheet_columns, comp[t3[~at_gap]], labels[t3[~at_gap]], start[~at_gap]
+    )
+    weights[at_gap] = _gap_joints(
+        sheet_columns, comp[t3[at_gap]], labels[t3[at_gap]], temps[t3[at_gap]], gap, start[at_gap]
+    )
     centre = n + len(edges) + np.arange(len(t3))
     a, b, c = t3[:, 0], t3[:, 1], t3[:, 2]
     faces += [
