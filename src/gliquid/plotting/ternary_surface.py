@@ -289,8 +289,9 @@ def render_tx_surface(
     ``solidus`` lists the triangles of three solid phases the liquid leaves, each ``(phases,
     (3, 2) plot coordinates of the three phases, temperature in C)``. Each is drawn flat at its
     temperature and outlined in the colour of a binary tie line
-    (:mod:`gliquid.plotting.solidus_view`). In a browser, the parts of an outline behind the liquidus are not drawn, and the triangle
-    under the pointer is filled with the three phases' colours, each strongest at its own corner.
+    (:mod:`gliquid.plotting.solidus_view`). In a browser, the parts of an outline behind the
+    liquidus are not drawn, and the triangle under the pointer is filled with the three phases'
+    colours, each strongest at its own corner.
 
     Raises:
         ValueError: ``highlight_phase`` is not a solid phase of the figure.

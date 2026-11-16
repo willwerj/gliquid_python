@@ -9,6 +9,8 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-16
+
 ### Added
 
 - **The ternary liquidus figure draws the solidus with `get_plot('tx', solidus=True)`** (off by
@@ -1096,7 +1098,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/willwerj/gliquid_python/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/willwerj/gliquid_python/compare/v0.3.0...v0.3.1
