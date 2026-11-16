@@ -32,6 +32,7 @@ import gliquid.plotting.export as plot_export
 import gliquid.solid_coverage as solid_coverage
 import gliquid.solution as solution
 from gliquid.cache import (
+    ENTROPY_KEY,
     imputed_entry_label,
     non_dft_entry_kind,
     non_dft_entry_label,
@@ -489,10 +490,18 @@ def build_phases_from_chull(
 
     Returns:
         list[Phase]: Elemental polymorphs and line compounds sorted by composition,
-        with the 'L' liquid sentinel appended last.
+        with the 'L' liquid sentinel appended last. A line compound is a stable entry of
+        ``ch``, or an entry carrying an entropy (``data[ENTROPY_KEY]``, J/mol-atom/K), which is
+        placed even above the hull.
     """
     phases = _endpoint_polymorphs(components, component_data, exclude_spacegroups)
-    for entry in ch.stable_entries:
+    stable = list(ch.stable_entries)
+    lifted = [
+        e
+        for e in ch.all_entries
+        if e not in stable and (getattr(e, "data", None) or {}).get(ENTROPY_KEY)
+    ]
+    for entry in stable + lifted:
         composition = api.entry_frac_along(ch, entry, components)[0]
         if composition in [
             p.fraction_in(components)[0] for p in phases
@@ -504,7 +513,7 @@ def build_phases_from_chull(
                 phase_type="solid",
                 composition=api.entry_original(entry).composition,
                 enthalpy=EV_ATOM_TO_J_MOL * ch.get_form_energy_per_atom(entry),
-                entropy=0,
+                entropy=float((getattr(entry, "data", None) or {}).get(ENTROPY_KEY, 0.0)),
                 **hull_phase_fields(entry),
             ),
         )

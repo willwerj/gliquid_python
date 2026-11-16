@@ -18,13 +18,23 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from pymatgen.analysis.phase_diagram import PhaseDiagram
+from pymatgen.entries.computed_entries import ComputedEntry
 
 import gliquid.config as config
 import gliquid.imputation.core as imp_core
 import gliquid.imputation.lifecycle as imp_lifecycle
 import gliquid.imputation.ternary_imputation as imp_ternary
-from gliquid.cache import CacheModeError, DirectoryBackend, imputed_entry_label
-from gliquid.phase import EV_ATOM_TO_J_MOL
+import gliquid.ternary as ternary_module
+from gliquid.binary import build_phases_from_chull
+from gliquid.cache import (
+    ENTROPY_KEY,
+    CacheModeError,
+    DirectoryBackend,
+    canonical_entry_id,
+    imputed_entry_label,
+)
+from gliquid.phase import EV_ATOM_TO_J_MOL, UNARY
 from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
 
 COMPONENTS = ["Al", "Mg", "Si"]
@@ -418,6 +428,643 @@ class TestAdjustPhaseTemperature:
 
         with pytest.raises(ValueError, match="is an element"):
             ti.adjust_phase_temperature(hull_entry_name(element), 1000.0)
+
+
+class TestHoldHull:
+    """A phase that would displace a stable phase, held at the 0 K hull limit with an entropy."""
+
+    DISPLACER = TestProtection.DISPLACER
+
+    def test_it_is_placed_with_an_entropy_and_the_hull_keeps_its_phases(
+        self, no_persist, synthetic_store
+    ):
+        ti = build("hsx", data_dir=synthetic_store)
+        record = ti.impute_phase(self.DISPLACER, 2500.0, name="TX", screen=False, hold_hull=True)
+        assert record.accepted and record.code == "imputed", record.reason
+        assert record.enthalpy > record.inverted_enthalpy
+        lift = record.enthalpy - record.inverted_enthalpy
+        assert record.entropy == pytest.approx(lift / 2500.0)
+        assert 0.0 < record.entropy < record.support_entropy
+        assert [n for n in record.displaces if n.startswith("Mg2AlSi")]
+        assert synthetic_stable(ti)
+
+    def test_it_leaves_the_hull_at_its_temperature(self, no_persist, synthetic_store):
+        ti = build("hsx", data_dir=synthetic_store)
+        ti.impute_phase(self.DISPLACER, 2500.0, name="TX", screen=False, hold_hull=True)
+        assert abs(top_k(ti, "TX") - 2500.0) <= imp_ternary.HSX_TOLERANCE_K
+
+    def test_control_a_phase_that_displaces_nothing_carries_no_entropy(self, no_persist):
+        record = build("hsx").impute_phase(TARGET, 1000.0, name="TX", screen=False, hold_hull=True)
+        assert record.accepted and record.entropy == 0.0 and record.displaces == ()
+
+
+class TestSolidus:
+    """A phase placed on the hull between a solidus and the temperature it leaves it at."""
+
+    TOP, SOLIDUS = 1200.0, 900.0
+
+    def placed(self):
+        ti = build("hsx")
+        record = ti.impute_phase(TARGET, self.TOP, name="TX", solidus=self.SOLIDUS, screen=False)
+        return ti, record
+
+    def test_it_carries_an_entropy_and_sits_above_the_0_k_hull(self, no_persist):
+        ti, record = self.placed()
+        assert record.accepted and record.code == "imputed", record.reason
+        assert record.solidus_k == self.SOLIDUS and record.entropy > 0.0
+        assert record.entropy <= imp_ternary.SOLIDUS_ENTROPY_SHARE * record.support_entropy
+        assert "TX" not in {
+            imputed_entry_label(e.as_dict()) for e in ti.solid_hull().stable_entries
+        }
+        assert ti.imputed_phase_names() == ["TX"]
+
+    def test_it_is_on_the_hull_between_the_two_temperatures_only(self, no_persist):
+        ti, _ = self.placed()
+        assert abs(top_k(ti, "TX") - self.TOP) <= imp_ternary.HSX_TOLERANCE_K
+        frame = ti.equil_df_list[0]
+        lowest = float(frame.loc[frame["Phase"] == "TX", "T"].min()) + 273.15
+        assert abs(lowest - self.SOLIDUS) <= 5.0
+
+    def test_control_without_a_solidus_it_is_stable_from_0_k(self, no_persist):
+        ti = build("hsx")
+        record = ti.impute_phase(TARGET, self.TOP, name="TX", screen=False)
+        assert record.entropy == 0.0 and record.solidus_k is None
+        assert "TX" in {imputed_entry_label(e.as_dict()) for e in ti.solid_hull().stable_entries}
+
+    def test_below_the_liquid_it_is_refused_with_the_lowest_solidus_that_works(self, no_persist):
+        record = build("hsx").impute_phase(TARGET, self.TOP, name="TX", solidus=300.0, screen=False)
+        assert (record.accepted, record.code) == (False, "below_solidus")
+        assert 300.0 < record.solidus_limit_k < self.TOP
+        retry = build("hsx").impute_phase(
+            TARGET, self.TOP, name="TX", solidus=record.solidus_limit_k, screen=False
+        )
+        assert retry.accepted, retry.reason
+
+    def test_a_solidus_at_or_above_the_top_raises(self, no_persist):
+        with pytest.raises(ValueError, match="solidus must lie between"):
+            build("hsx").impute_phase(TARGET, self.TOP, name="TX", solidus=self.TOP)
+
+    def test_edit_phases_passes_the_solidus(self, no_persist):
+        ti = build("hsx")
+        (record,) = ti.edit_phases(
+            [
+                {
+                    "composition": TARGET,
+                    "temperature": self.TOP,
+                    "solidus": self.SOLIDUS,
+                    "name": "TX",
+                }
+            ],
+            screen=False,
+        )
+        assert record.accepted and record.solidus_k == self.SOLIDUS
+
+
+class TestGivenEnergies:
+    """A phase placed with an enthalpy or an entropy given for it."""
+
+    TOP, SOLIDUS = TestSolidus.TOP, TestSolidus.SOLIDUS
+
+    def test_both_given_are_carried_as_given(self, no_persist):
+        ti = build("hsx")
+        plain = build("hsx").impute_phase(TARGET, 1000.0, name="TX", screen=False)
+        record = ti.impute_phase(
+            TARGET, name="TX", enthalpy=plain.enthalpy - 500.0, entropy=2.0, screen=False
+        )
+        assert record.accepted and record.temperature_k is None, record.reason
+        assert (record.enthalpy, record.entropy) == (plain.enthalpy - 500.0, 2.0)
+        table = ti.hull_table()
+        assert table.loc[table["Phase Name"] == "TX", "S"].tolist() == [2.0]
+
+    def test_an_entropy_with_a_temperature_solves_the_enthalpy_and_leaves_at_it(self, no_persist):
+        plain = build("hsx").impute_phase(TARGET, 900.0, name="TX", screen=False)
+        ti = build("hsx")
+        record = ti.impute_phase(TARGET, 900.0, name="TX", entropy=3.0)
+        assert record.accepted and record.entropy == 3.0, record.reason
+        assert record.enthalpy == pytest.approx(plain.enthalpy + 900.0 * 3.0, abs=1e-6)
+        assert abs(record.realized_temperature_k - 900.0) <= imp_ternary.HSX_TOLERANCE_K
+
+    def test_an_enthalpy_with_a_temperature_solves_the_entropy(self, no_persist):
+        plain = build("hsx").impute_phase(TARGET, 900.0, name="TX", screen=False)
+        record = build("hsx").impute_phase(
+            TARGET, 900.0, name="TX", enthalpy=plain.enthalpy + 2700.0, screen=False
+        )
+        assert record.accepted, record.reason
+        assert record.entropy == pytest.approx(3.0, abs=1e-9)
+
+    @pytest.mark.parametrize("given", ["enthalpy", "entropy"])
+    def test_one_of_them_with_a_solidus_solves_the_other(self, no_persist, given):
+        both = build("hsx").impute_phase(
+            TARGET, self.TOP, name="TX", solidus=self.SOLIDUS, screen=False
+        )
+        record = build("hsx").impute_phase(
+            TARGET, name="TX", solidus=self.SOLIDUS, screen=False, **{given: getattr(both, given)}
+        )
+        assert record.accepted and record.temperature_k is None, record.reason
+        assert record.enthalpy == pytest.approx(both.enthalpy, abs=1e-6)
+        assert record.entropy == pytest.approx(both.entropy, abs=1e-9)
+
+    def test_above_the_hull_without_an_entropy_it_is_refused(self, no_persist):
+        record = build("hsx").impute_phase(
+            TARGET, name="TX", enthalpy=5000.0, entropy=0.0, screen=False
+        )
+        assert (record.accepted, record.code) == (False, "unstable")
+
+    def test_an_entropy_that_would_join_at_the_temperature_is_refused(self, no_persist):
+        record = build("hsx").impute_phase(TARGET, 900.0, name="TX", entropy=1e4, screen=False)
+        assert (record.accepted, record.code) == (False, "no_entropy")
+
+    def test_a_given_enthalpy_that_displaces_a_phase_is_not_held_at_the_hull(
+        self, no_persist, synthetic_store
+    ):
+        held = build("hsx", data_dir=synthetic_store).impute_phase(
+            TestHoldHull.DISPLACER, 2500.0, name="TX", screen=False, hold_hull=True
+        )
+        with pytest.warns(UserWarning, match="will displace"):
+            record = build("hsx", data_dir=synthetic_store).impute_phase(
+                TestHoldHull.DISPLACER,
+                name="TX",
+                enthalpy=held.inverted_enthalpy,
+                entropy=0.0,
+                screen=False,
+                hold_hull=True,
+            )
+        assert (record.accepted, record.code) == (False, "displaces_hull")
+        assert [n for n in record.displaces if n.startswith("Mg2AlSi")]
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            {"enthalpy": -1e4},
+            {"solidus": 900.0},
+            {"temperature": 900.0, "solidus": 800.0, "entropy": 1.0},
+        ],
+    )
+    def test_any_other_set_of_targets_raises(self, no_persist, target):
+        with pytest.raises(ValueError, match="a target names"):
+            imp_ternary.impute_ternary_phases(build("hsx"), [{"composition": TARGET, **target}])
+
+    def test_edit_phases_gives_an_existing_phase_an_enthalpy_and_an_entropy(
+        self, no_persist, synthetic_store
+    ):
+        ti, name, _ = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        (record,) = ti.edit_phases(
+            [{"phase": name, "enthalpy": -19000.0, "entropy": 1.5}], screen=False
+        )
+        assert record.accepted and record.replaces == (SYNTHETIC_ID,), record.reason
+        assert (record.enthalpy, record.entropy) == (-19000.0, 1.5)
+        assert record.previous_enthalpy == pytest.approx(-20000.0, abs=1e-6)
+
+
+class TestEntryList:
+    """A system's entries listed for pymatgen, and a list read back as phase edits."""
+
+    def test_the_list_is_the_hull_pymatgen_builds_and_carries_the_entropies(self, no_persist):
+        ti = build("hsx")
+        record = ti.impute_phase(TARGET, 1000.0, name="TX", entropy=2.0, screen=False)
+        entries = json.loads(json.dumps(ti.export_entries()))
+        hull = PhaseDiagram([ComputedEntry.from_dict(d) for d in entries])
+
+        def stable(diagram):
+            return sorted(canonical_entry_id(e.entry_id) for e in diagram.stable_entries)
+
+        assert stable(hull) == stable(ti.solid_hull())
+        placed = next(e for e in hull.all_entries if e.entry_id == "imputed:TX")
+        assert hull.get_form_energy_per_atom(placed) * EV_ATOM_TO_J_MOL == pytest.approx(
+            record.enthalpy, abs=1e-6
+        )
+        entropies = {d["entry_id"] == "imputed:TX": d["data"][ENTROPY_KEY] for d in entries}
+        assert entropies == {True: 2.0, False: 0.0}
+        assert {(d["correction"], len(d["energy_adjustments"])) for d in entries} == {(0.0, 0)}
+        assert {d["@module"] for d in entries} == {"pymatgen.entries.computed_entries"}
+
+    def test_control_a_systems_own_list_changes_nothing(self, no_persist, synthetic_store):
+        ti = build("hsx", data_dir=synthetic_store)
+        found = ti.entry_list_edits(ti.export_entries())
+        assert (found.edits, found.reference_shifts, found.ignored) == ([], {}, [])
+        assert found.unchanged >= 1
+
+    def test_a_fresh_system_given_an_edited_systems_list_gets_its_phases(
+        self, no_persist, synthetic_store
+    ):
+        edited, name, _ = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        edited.edit_phases(
+            [
+                {"phase": name, "enthalpy": -19000.0, "entropy": 1.5},
+                {"composition": TARGET, "temperature": 1000.0, "name": "TX"},
+            ],
+            screen=False,
+        )
+        entries = edited.export_entries()
+        fresh = build("hsx", data_dir=synthetic_store)
+        found = fresh.entry_list_edits(entries)
+        assert (found.changed, found.added, found.removed) == ([name], ["TX"], [])
+        records = fresh.edit_phases(found.edits, screen=False)
+        assert all(r.accepted for r in records), [r.reason for r in records]
+        assert fresh.entry_list_edits(entries).edits == []
+
+    def test_a_phase_the_list_leaves_out_is_removed(self, no_persist, synthetic_store):
+        ti, name, _ = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        entries = [d for d in ti.export_entries() if d["entry_id"] != SYNTHETIC_ID]
+        found = ti.entry_list_edits(entries)
+        assert found.removed == [name] and found.edits == [{"remove": name}]
+        ti.edit_phases(found.edits)
+        assert not synthetic_stable(ti)
+
+    def test_a_list_on_other_references_keeps_its_formation_enthalpies(
+        self, no_persist, synthetic_store
+    ):
+        ti = build("hsx", data_dir=synthetic_store)
+        entries = ti.export_entries()
+        for payload in entries:
+            payload["energy"] += 0.01 * ComputedEntry.from_dict(payload).composition["Al"]
+        found = ti.entry_list_edits(entries)
+        assert found.reference_shifts == pytest.approx({"Al": 0.01})
+        assert found.edits == []
+
+    def test_listed_entries_that_change_nothing_are_ignored(self, no_persist):
+        ti = build("hsx")
+        high = probe_entry(ti, TARGET, 5000.0, name="HIGH")
+        other = ComputedEntry("Fe2O3", -1.0, entry_id="other").as_dict()
+        found = ti.entry_list_edits(ti.export_entries() + [high, other])
+        assert found.edits == [] and sorted(found.ignored) == ["imputed:HIGH", "other"]
+
+    def test_a_forced_edit_places_a_phase_that_displaces_another(self, no_persist, synthetic_store):
+        held = build("hsx", data_dir=synthetic_store).impute_phase(
+            TestHoldHull.DISPLACER, 2500.0, name="TX", screen=False, hold_hull=True
+        )
+        ti = build("hsx", data_dir=synthetic_store)
+        edit = {
+            "composition": TestHoldHull.DISPLACER,
+            "name": "TX",
+            "enthalpy": held.inverted_enthalpy,
+            "entropy": 0.0,
+            "force": True,
+        }
+        (record,) = ti.edit_phases([edit], screen=False, hold_hull=True)
+        assert record.accepted and not synthetic_stable(ti)
+
+    def test_remove_takes_out_a_phase_the_store_imputed_and_what_it_stands_in_for(
+        self, no_persist, synthetic_store
+    ):
+        ti, name, t0 = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        ti.adjust_phase_temperature(name, t0 - 150.0, write_cache=True)
+        reread = build("hsx", data_dir=synthetic_store, include_imputed=True)
+        assert name in reread.imputed_phase_names()
+        reread.edit_phases([{"remove": name}])
+        reread.process_data()
+        assert name not in reread.phase_names and not synthetic_stable(reread)
+
+
+class TestEntropyOnTheEdges:
+    """An imputed edge phase carrying an entropy is placed above the 0 K hull, on the ternary
+    and on its binary edge."""
+
+    EDGE = {"Al": 0.0, "Mg": 0.5, "Si": 0.5}
+
+    def lifted(self, entropy):
+        ti = build("hsx")
+        entry = probe_entry(ti, self.EDGE, 2000.0, name="EX")
+        if entropy:
+            entry["data"][ENTROPY_KEY] = entropy
+        ti.imputed_entries = [entry]
+        ti.reset_derived_state()
+        return ti
+
+    def edge_phases(self, ti):
+        pair = ["Mg", "Si"]
+        return build_phases_from_chull(ti.edge_hull("Mg-Si"), pair, UNARY.component_data(pair))
+
+    def test_it_is_a_row_of_the_ternary_table_with_its_entropy(self, no_persist):
+        table = self.lifted(6.0).hull_table()
+        assert table.loc[table["Phase Name"] == "EX", "S"].tolist() == [6.0]
+
+    def test_it_is_a_phase_of_the_binary_edge_with_its_entropy(self, no_persist):
+        phase = next(p for p in self.edge_phases(self.lifted(6.0)) if p.name == "EX")
+        assert phase.entropy == 6.0 and phase.enthalpy == pytest.approx(2000.0, abs=1e-6)
+
+    def test_control_without_an_entropy_it_is_left_out(self, no_persist):
+        ti = self.lifted(0.0)
+        assert "EX" not in set(ti.hull_table()["Phase Name"])
+        assert "EX" not in {p.name for p in self.edge_phases(ti)}
+
+
+class TestEditPhases:
+    """Additions, temperature changes and removals applied in one call."""
+
+    def test_a_change_and_an_addition_are_placed_together(self, no_persist, synthetic_store):
+        ti, name, t0 = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        records = ti.edit_phases(
+            [
+                {"phase": name, "temperature": t0 - 150.0},
+                {"composition": TARGET, "temperature": t0, "name": "TX"},
+            ],
+            screen=False,
+        )
+        assert [r.name for r in records] == [name, "TX"]
+        assert all(r.accepted for r in records), [r.reason for r in records]
+        assert records[0].previous_enthalpy == pytest.approx(-20000.0, abs=1e-6)
+        assert records[1].previous_enthalpy is None
+        assert sorted(ti.imputed_phase_names()) == sorted([name, "TX"])
+
+    def test_remove_leaves_the_dft_phase_off_the_hull(self, no_persist, synthetic_store):
+        ti, name, _ = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        assert ti.edit_phases([{"remove": name}]) == []
+        assert not synthetic_stable(ti)
+        ti.process_data()
+        assert name not in ti.phase_names
+
+    def test_remove_drops_a_phase_imputed_on_the_model(self, no_persist):
+        ti = build("hsx")
+        ti.impute_phase(TARGET, 1000.0, name="TX", screen=False)
+        ti.edit_phases([{"remove": "TX"}])
+        assert ti.imputed_entries == []
+
+    def test_removing_an_unknown_phase_raises(self, no_persist):
+        with pytest.raises(ValueError, match="not a phase on the 0 K hull"):
+            build("hsx").edit_phases([{"remove": "NoSuchPhase"}])
+
+    def test_a_phase_exposed_by_lifting_the_changed_one_out_is_not_protected(
+        self, no_persist, synthetic_store, synthetic_record
+    ):
+        from pymatgen.core import Composition
+        from pymatgen.entries.computed_entries import ComputedEntry
+
+        fractions = {"Al": 0.2, "Mg": 0.5, "Si": 0.3}
+        ti = build("hsx", data_dir=synthetic_store)
+        covered = imp_core.phase_diagram_enthalpy_at(ti.solid_hull(), fractions)
+        bare = imp_core.phase_diagram_enthalpy_at(ti.solid_hull(exclude=[SYNTHETIC_ID]), fractions)
+        assert covered < bare - 1000.0
+        per_atom = imp_core.hull_ref_energy_per_atom(ti.solid_hull([]), fractions) + (
+            0.5 * (covered + bare) / EV_ATOM_TO_J_MOL
+        )
+        hidden = ComputedEntry(Composition("Mg5Al2Si3"), 10 * per_atom, entry_id="mp-synthetic-2")
+        record_file = synthetic_store / synthetic_record.name
+        raw = json.loads(record_file.read_text())
+        raw.append(hidden.as_dict())
+        record_file.write_text(json.dumps(raw))
+
+        ti, name, t0 = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        assert "mp-synthetic-2" not in {str(e.entry_id) for e in ti.solid_hull().stable_entries}
+        record = ti.adjust_phase_temperature(name, t0 - 20.0, screen=False)
+        assert record.accepted, record.reason
+        assert record.displaces == ()
+
+
+class TestLiquidusRanges:
+    """The temperature span of each phase's liquidus field."""
+
+    @staticmethod
+    def plotter():
+        return TLIPlotter.from_components(
+            COMPONENTS,
+            delta=DELTA,
+            xs_mix=IDEAL,
+            order="given",
+            hull_mode="hsx",
+            param_format="linear",
+        )
+
+    def test_empty_before_a_plot(self, no_persist):
+        assert self.plotter().liquidus_ranges() == {}
+
+    def test_an_imputed_phase_spans_up_to_its_temperature(self, no_persist):
+        plotter = self.plotter()
+        plotter.impute_phase(TARGET, 1000.0, name="TX")
+        plotter.get_plot("tx")
+        ranges = plotter.liquidus_ranges()
+        low, high = ranges["TX"]
+        assert high == pytest.approx(1000.0 - 273.15, abs=5.0)
+        assert low < high
+        assert set(ranges) <= set(plotter.phase_names)
+
+    def test_an_element_tops_out_at_its_melting_point(self, no_persist):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        ranges = plotter.liquidus_ranges()
+        melting = {
+            name: top for name, (_, top) in ranges.items() if name.split(" ")[0] in COMPONENTS
+        }
+        assert melting
+        tops = plotter.get_inter_melting_temps(list(melting))
+        for name, top in melting.items():
+            assert top == pytest.approx(tops[name], abs=imp_ternary.HSX_TOLERANCE_K)
+
+
+class TestSolidusTriangles:
+    """The triangles of three solid phases the liquid leaves."""
+
+    @staticmethod
+    def plotter():
+        return TLIPlotter.from_components(
+            COMPONENTS,
+            delta=DELTA,
+            xs_mix=IDEAL,
+            order="given",
+            hull_mode="gtx",
+            param_format="linear",
+        )
+
+    @staticmethod
+    def liquid_over_plane(ti, triangle) -> float:
+        """Gibbs energy, J/mol, of the triangle's liquid over the plane through its solids."""
+        xy, enthalpy, entropy, is_liquid = ti._row_arrays()
+        phase = ti.proc_df["Phase"].to_numpy(object)
+        kelvin = triangle["T"] + 273.15
+        rows = [
+            next(
+                r
+                for r in np.flatnonzero(~is_liquid)
+                if phase[r] == name and np.allclose(xy[r], corner, atol=1e-9)
+            )
+            for name, corner in zip(triangle["phases"], triangle["comp"])
+        ]
+        plane = np.linalg.solve(
+            np.column_stack([np.ones(3), xy[rows]]), enthalpy[rows] - kelvin * entropy[rows]
+        )
+        return ti.liquid_gibbs(triangle["liquid"], kelvin) - plane @ [1.0, *triangle["liquid"]]
+
+    def test_empty_before_a_plot(self, no_persist):
+        assert self.plotter().solidus_triangles() == []
+
+    def test_the_triangles_tile_the_system_and_are_drawn_where_the_liquid_leaves(self, no_persist):
+        plotter = self.plotter()
+        plain = plotter.get_plot("tx")
+        assert not {"solidus", "solidus fill"} & {trace.name for trace in plain.data}
+        fig = plotter.get_plot("tx", solidus=True)
+        triangles = plotter.solidus_triangles()
+        temps = [triangle["T"] for triangle in triangles]
+        assert temps == sorted(temps, reverse=True)
+        area = sum(abs(np.linalg.det(t["comp"][1:] - t["comp"][0])) for t in triangles)
+        assert area == pytest.approx(1.0, abs=1e-9)
+        for triangle in triangles:
+            assert self.liquid_over_plane(plotter._ti, triangle) == pytest.approx(0.0, abs=0.5)
+
+        outline = next(trace for trace in fig.data if trace.name == "solidus")
+        assert sorted({z for z in outline.z if z is not None}) == pytest.approx(sorted(temps))
+        fill = next(trace for trace in fig.data if trace.name == "solidus fill")
+        assert list(fill.z) == pytest.approx(np.repeat(temps, 3))
+        assert len(fill.vertexcolor) == 3 * len(triangles)
+
+        ranges = plotter.liquidus_ranges()
+        for triangle in triangles:
+            for phase in triangle["phases"]:
+                assert ranges[phase][0] <= triangle["T"]
+
+    def test_a_joint_under_a_hotter_sheet_gives_no_triangle(self, no_persist, monkeypatch):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        partition, sheets = plotter._partition_cache[2], plotter._partition_sheets
+        monkeypatch.setattr(TLIPlotter, "_unjoined_solidus", lambda self, joined: [])
+        assert len(plotter._solidus(partition, sheets)) >= 3
+
+        class Raised:
+            """``sheets`` with every sheet read 50 K hotter by a whole call."""
+
+            columns = staticmethod(sheets.columns)
+            contact_points = staticmethod(sheets.contact_points)
+
+            def __call__(self, comp):
+                return sheets(comp) + 50.0
+
+        assert plotter._solidus(partition, Raised()) == []
+
+    def test_a_triangle_the_solids_hull_does_not_hold_is_taken_again(self, no_persist, monkeypatch):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        expected = {t["phases"]: t["T"] for t in plotter.solidus_triangles()}
+        ti = plotter._ti
+        xy, _, _, is_liquid = ti._row_arrays()
+        corners = [
+            next(r for r in np.flatnonzero(~is_liquid) if np.allclose(xy[r], corner))
+            for corner in ([0.0, 0.0], [1.0, 0.0], [0.0, 1.0])
+        ]
+        facets = ternary_module._solid_facets
+        floor = max(plotter.conds[0] + 273.15, 1.0)
+        monkeypatch.setattr(
+            ternary_module,
+            "_solid_facets",
+            lambda ti, temp: np.array([corners]) if temp == floor else facets(ti, temp),
+        )
+        solved = {t["phases"]: t["T"] for t in plotter._unjoined_solidus([])}
+        assert set(solved) == set(expected)
+        for phases, temp in solved.items():
+            assert temp == pytest.approx(expected[phases], abs=1e-2)
+
+    @pytest.mark.parametrize("inner, held", [(-100.0, False), (100.0, True)])
+    def test_a_triangle_with_a_solid_below_its_plane_is_off_the_solids_hull(self, inner, held):
+        class Rows:
+            @staticmethod
+            def _row_arrays():
+                xy = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.3, 0.3], [0.5, 0.25]])
+                enthalpy = np.array([0.0, 0.0, 0.0, inner, -900.0])
+                liquid = np.array([False, False, False, False, True])
+                return xy, enthalpy, np.zeros(5), liquid
+
+        on_hull = ternary_module._on_solids_hull(Rows(), np.array([[0, 1, 2]]), np.array([500.0]))
+        assert on_hull.tolist() == [held]
+
+    def test_a_lower_solid_at_a_corner_of_a_triangle_leaves_it_on_the_solids_hull(self):
+        class Rows:
+            @staticmethod
+            def _row_arrays():
+                xy = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.5, 0.25]])
+                enthalpy = np.array([0.0, 0.0, 0.0, -100.0, -900.0])
+                liquid = np.array([False, False, False, False, True])
+                return xy, enthalpy, np.zeros(5), liquid
+
+        on_hull = ternary_module._on_solids_hull(Rows(), np.array([[0, 1, 2]]), np.array([500.0]))
+        assert on_hull.tolist() == [True]
+
+    def test_a_lower_solid_beyond_a_corner_of_a_triangle_takes_it_off_the_solids_hull(self):
+        class Rows:
+            @staticmethod
+            def _row_arrays():
+                xy = np.array([[0.0, 0.5], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.5, 0.25]])
+                enthalpy = np.array([0.0, 0.0, 0.0, -100.0, -900.0])
+                liquid = np.array([False, False, False, False, True])
+                return xy, enthalpy, np.zeros(5), liquid
+
+        on_hull = ternary_module._on_solids_hull(Rows(), np.array([[0, 1, 2]]), np.array([500.0]))
+        assert on_hull.tolist() == [False]
+
+    @pytest.mark.parametrize(
+        "twin_enthalpy, twin_entropy, held", [(-100.0, 0.0, False), (-499.5, -1.0, True)]
+    )
+    def test_a_triangle_holds_while_its_solids_are_the_stable_ones_at_its_temperature(
+        self, twin_enthalpy, twin_entropy, held
+    ):
+        """A second solid at one corner, of lower Gibbs energy at 500 K or only below it."""
+
+        class Rows:
+            @staticmethod
+            def _row_arrays():
+                xy = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0], [0.5, 0.25]])
+                enthalpy = np.array([0.0, 0.0, 0.0, twin_enthalpy, -900.0])
+                entropy = np.array([0.0, 0.0, 0.0, twin_entropy, 0.0])
+                liquid = np.array([False, False, False, False, True])
+                return xy, enthalpy, entropy, liquid
+
+        holds = ternary_module._holds(Rows(), np.array([[0, 1, 2]]), np.array([500.0]))
+        assert holds.tolist() == [held]
+
+    def test_a_contact_is_taken_through_the_solids_stable_at_its_temperature(
+        self, no_persist, monkeypatch
+    ):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        ti = plotter._ti
+        first, other = ternary_module._solid_facets(ti, max(plotter.conds[0] + 273.15, 1.0))[:2]
+        alone, _, _ = ternary_module._plane_contacts(ti, np.array([first, other]))
+        asked = []
+
+        def stable(ti, rows, temps):
+            """The rows asked about, until a contact is known; then ``other``."""
+            asked.append(np.array(temps))
+            return rows if len(asked) == 1 else np.array([other])
+
+        monkeypatch.setattr(ternary_module, "_stable_rows", stable)
+        temps, _, rows = ternary_module._plane_contacts(ti, np.array([first]))
+        assert rows.tolist() == [other.tolist()]
+        assert asked[1] == pytest.approx(alone[:1], abs=1e-6)
+        assert temps == pytest.approx(alone[1:], abs=1e-6)
+
+    def test_the_drawn_window_reaches_down_to_the_coldest_triangle(self, no_persist, monkeypatch):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        triangles = plotter.solidus_triangles()
+        cold = plotter.conds[0] - 5.0
+        low = [{**triangles[-1], "T": cold}, *triangles[:-1]]
+        monkeypatch.setattr(TLIPlotter, "solidus_triangles", lambda self: low)
+        fig = plotter.get_plot("tx", solidus=True)
+        outline = next(trace for trace in fig.data if trace.name == "solidus")
+        assert min(z for z in outline.z if z is not None) == pytest.approx(cold)
+        floor = fig.layout.scene.zaxis.range[0]
+        assert plotter.conds[0] - plotter.T_incr <= floor <= cold
+
+    def test_three_solids_of_one_energy_are_one_triangle(self):
+        """Three elements with no compound: the solids' hull is flat."""
+
+        class Rows:
+            @staticmethod
+            def _row_arrays():
+                xy = np.array([[0.5, 0.25], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+                enthalpy = np.array([-900.0, 0.0, 0.0, 0.0, 150.0])
+                liquid = np.array([True, False, False, False, False])
+                return xy, enthalpy, np.zeros(5), liquid
+
+        facets = ternary_module._solid_facets(Rows(), 500.0)
+        assert np.sort(facets, axis=1).tolist() == [[1, 2, 3]]
+
+    def test_the_solids_hull_alone_gives_the_triangles_of_the_joints(self, no_persist):
+        plotter = self.plotter()
+        plotter.get_plot("tx")
+        joined = {t["phases"]: t for t in plotter.solidus_triangles()}
+        solved = {t["phases"]: t for t in plotter._unjoined_solidus([])}
+        assert set(solved) == set(joined) and len(joined) >= 3
+        for phases, triangle in solved.items():
+            assert triangle["T"] == pytest.approx(joined[phases]["T"], abs=1e-2)
+            assert triangle["liquid"] == pytest.approx(joined[phases]["liquid"], abs=1e-4)
 
 
 # -- Tangent, apply and replace --
