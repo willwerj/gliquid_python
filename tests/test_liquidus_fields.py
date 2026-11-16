@@ -223,6 +223,27 @@ def test_a_triple_point_beside_a_steep_edge_sits_where_the_sheets_meet():
         assert (part.surface.T[vertices] - temps[vertices, k]).max() < 1.0
 
 
+@pytest.mark.parametrize(
+    "tip, slope", [((0.317, 0.213), 0.1), ((0.431, 0.107), 0.15), ((0.26, 0.33), 0.3)]
+)
+def test_a_triple_point_outside_the_triangle_of_its_three_nodes_is_found(tip, slope):
+    """C leads in a wedge that narrows to ``tip``; the grid's only triangle with a node in each
+    of the three fields lies further up the wedge."""
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        a = 1000.0 - 500.0 * (points[:, 0] - tip[0])
+        b = 1000.0 + 500.0 * (points[:, 0] - tip[0])
+        c = 1000.0 + 500.0 * slope * (points[:, 1] - tip[1])
+        return np.column_stack([a, b, c])
+
+    comp, xy, triangles = _grid(0.1)
+    part = lf.partition_fields(xy, comp, triangles, sheets, "ABC", min_edge=np.inf)
+    (triple,) = [v for v, phases in enumerate(part.vertex_phases) if len(phases) == 3]
+    assert part.surface.comp[triple] == pytest.approx(tip, abs=1e-6)
+    assert np.ptp(sheets(part.surface.comp[triple])) < 1e-6
+
+
 def _wall_sheets(points):
     """Toward the side x1 = 0, B leads down to x1 = 1e-5, C from there to near 1e-10, then A."""
     points = np.atleast_2d(points)
@@ -607,3 +628,67 @@ def test_faces_sagging_visibly_under_a_curved_sheet_are_split(monkeypatch):
     inside = np.column_stack([1 - centre.sum(axis=1), centre]).min(axis=1) >= 1.4e-3
     assert ((sag > 25.0) & (across > 2 * 1.4e-3) & inside).sum() <= 1
     assert len(T) < 1.05 * len(plain.T)
+
+
+@pytest.mark.parametrize("tip, slope", [((0.317, 0.213), 0.1), ((0.431, 0.107), 0.15)])
+def test_a_two_liquid_joint_outside_the_triangle_of_its_three_nodes_is_found(tip, slope):
+    """L1 + L2 leads in a wedge that narrows to ``tip``; the grid's only triangle with a node in
+    each of the three fields lies further up the wedge."""
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        a = 1000.0 - 500.0 * (points[:, 0] - tip[0])
+        b = 1000.0 + 500.0 * (points[:, 0] - tip[0])
+        gap = 1000.0 + 500.0 * slope * (points[:, 1] - tip[1])
+        return np.column_stack([a, b, gap])
+
+    comp, xy, triangles = _grid(0.1)
+    part = lf.partition_fields(
+        xy, comp, triangles, sheets, ("A", "B", TWO_LIQUIDS), min_edge=np.inf
+    )
+    (joint,) = [v for v, phases in enumerate(part.vertex_phases) if len(phases) == 3]
+    at = sheets(part.surface.comp[joint])[0]
+    assert at[0] == pytest.approx(at[1], abs=1e-6)
+    assert at[2] == pytest.approx(at[0], abs=1e-2)
+    assert part.surface.comp[joint] == pytest.approx(tip, abs=1e-4)
+
+
+def test_two_solid_fields_meet_a_two_liquid_wall_where_their_sheets_are_equal():
+    """L1 + L2 stands 500 K above the solids where x0 < 0.33 and is absent beyond it; A leads
+    below x1 = 0.3 and B above."""
+    edge, line = 0.33, 0.3
+
+    def sheets(points):
+        points = np.atleast_2d(points)
+        a = 1000.0 - 500.0 * (points[:, 1] - line)
+        b = 1000.0 + 500.0 * (points[:, 1] - line)
+        return np.column_stack([a, b, np.where(points[:, 0] < edge, 1500.0, 0.0)])
+
+    comp, xy, triangles = _grid(0.05)
+    part = lf.partition_fields(xy, comp, triangles, sheets, ("A", "B", TWO_LIQUIDS))
+    joints = [v for v, phases in enumerate(part.vertex_phases) if len(phases) == 3]
+    assert joints
+    for v in joints:
+        at = sheets(part.surface.comp[v])[0]
+        assert at[0] == pytest.approx(at[1], abs=1e-6)
+        assert part.surface.comp[v] == pytest.approx((edge, line), abs=1e-4)
+        assert part.surface.T[v] == pytest.approx(1000.0, abs=1e-6)
+
+
+@pytest.mark.parametrize("apart, moved", [(0.5, False), (50.0, True)])
+def test_a_two_liquid_joint_off_the_solids_boundary_takes_the_point_the_sheets_meet_at(
+    monkeypatch, apart, moved
+):
+    """The solids' sheets ``apart`` K from each other everywhere but at one point."""
+    corners = np.array([[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]])
+    meeting = np.array([[0.2, 0.3, 0.5]])
+    monkeypatch.setattr(lf, "_triple_points", lambda *args: meeting.copy())
+
+    def columns(points, cols):
+        there = np.abs(points - meeting @ corners[0]).max(axis=1) < 1e-9
+        first = np.where(there, 10.0, 10.0 + apart)
+        return np.where(cols == 0, first[:, None], np.where(cols == 1, 10.0, -np.inf))
+
+    at_corners = np.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 5.0]]])
+    joint = lf._gap_joints(columns, corners, np.array([[0, 1, 2]]), at_corners, 2, meeting / 2)
+    assert np.allclose(joint, meeting) == moved

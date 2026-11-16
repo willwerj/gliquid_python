@@ -49,6 +49,29 @@ source tree carries a version literal that could disagree with this file.
 
 ### Fixed
 
+- **Three solid phase fields on the ternary liquidus now meet at their triple point.** Where
+  the triple point lay outside the mesh triangle whose three nodes carry the three phases, the
+  fields were joined at the nearest point of that triangle, and one triple point could be drawn
+  as several such joints. This happened next to a side or a corner of the diagram, where a
+  liquidus sheet is steep: on a 31-system sample, 23 systems had a joint whose three sheets
+  differed by more than 1 K and 7 by more than 25 K (251 K in Rb-Si-V). Such a triangle now has
+  an edge split, where the third phase is the hottest at the crossing of the edge's two phases,
+  until it holds the triple point; every joint of the sample is then within 0.005 K. Over a
+  2,300-system set the surface gains 0.9% more vertices (17% at most) and the figure is drawn
+  4% faster, because the refinement no longer samples new triangles that are too small to
+  split. The lowest and highest temperatures `TLIPlotter.liquidus_ranges` reports for a field
+  move with its joints.
+- **Two solid phase fields now meet the two-liquid field where their own boundary enters
+  it.** Such a joint was left at the nearest point of the mesh triangle whose nodes carry the
+  three fields: on 100 systems with a two-liquid field, 203 of 447 joints away from the sides
+  had the two solids' sheets more than 0.05 K apart (44 K at most). The edges of these
+  triangles are now split as those of three solid phases are, and the joint is placed by
+  bisecting the solids' boundary on whether the two-liquid sheet is the hottest
+  (`GAP_JOINT`), which also places a joint on a two-liquid wall, where the three sheets are
+  never equal. One of the 450 joints is then more than 0.05 K apart (0.18 K). A joint the
+  bisection leaves with the two solids' sheets more than 1 K apart, as against a side of the
+  triangle, takes the point where the three sheets meet when the solids are closer there. A
+  joint at a corner of the triangle can still be open.
 - `extract_digitized_liquidus` reads a narrow few-vertex `L` wedge (at most 0.05 wide in
   composition) from its whole outline instead of keeping its hottest tip as the only point.
 - `phase_transitions.json` cites the CRC Handbook instead of Wolfram ElementData for the
