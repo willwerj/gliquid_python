@@ -32,7 +32,7 @@ import gliquid.plotting.ternary_surface as ternary_surface
 import gliquid.solution as solution
 from gliquid.binary import BinaryLiquid, hull_phase_fields
 from gliquid.hsx import HSX, lower_convex_hull
-from gliquid.liquidus_sheets import LiquidusSheets, TstarField
+from gliquid.liquidus_sheets import TWO_LIQUIDS, LiquidusSheets, TstarField
 from gliquid.phase import (
     EV_ATOM_TO_J_MOL,
     UNARY,
@@ -61,6 +61,21 @@ T_INCR_BY_MODE = {"gtx": 25, "hsx": 10}
 #: Most, K, a node's hull liquidus may lie above the liquidus sheets before the liquidus is
 #: drawn without phase fields.
 SHEET_GUARD_K = 1.0
+#: Largest gap, K, between a phase's own liquidus and the drawn surface at a vertex that counts
+#: toward the phase's liquidus range.
+RANGE_TOLERANCE_K = 0.5
+#: Most, K, the three sheets of a joint of liquidus fields may differ, and least two joints of
+#: the same three phases lie apart, for :meth:`TLIPlotter.solidus_triangles` to report it.
+SOLIDUS_JOINT_K = 1.0
+#: Smallest solidus triangle reported, as a share of the composition triangle.
+SOLIDUS_MIN_AREA = 1e-6
+#: Most, J/mol-atom, a solid may lie below the plane of a solidus triangle.
+SOLIDS_HULL_TOL = 1e-6
+#: Most times the solidus triangles found off the liquidus joints are taken again from the
+#: solids' lower hull at a temperature one of them was placed at.
+SOLIDUS_ROUNDS = 4
+#: Field vertices checked per call when a liquidus range looks for its end.
+RANGE_PROBES = 16
 
 
 def ordered_binary_systems(elements):
@@ -322,6 +337,217 @@ def _plane_gap(ti, node_rows, plane_node, plane_rows, plane_weights):
         return ti._row_gibbs(temps, node_rows[nodes]) - lowest[nodes]
 
     return gap
+
+
+@dataclass(frozen=True)
+class _PlaneContact:
+    """Search for the liquid that a plane through three solids touches first
+    (:func:`_plane_contacts`)."""
+
+    #: Liquid nodes a search starts from: those of lowest contact lying ``apart`` grid steps or
+    #: more from each other.
+    starts: int = 3
+    apart: float = 3.0
+    #: Least mole fraction of a start.
+    dilute: float = 1e-10
+    #: Trial points lie up to this many steps from the best point, along each log ratio.
+    reach: int = 3
+    #: First step, and the step a search ends below, in the log ratio of two mole fractions.
+    step: float = 4.0
+    last_step: float = 1e-4
+    #: Most rounds of trial points.
+    rounds: int = 60
+    #: Times a contact is taken again with the liquid at its own temperature.
+    settling: int = 2
+    #: Most times a plane's contact is searched for, each after the first through the solids
+    #: stable at the contact found before.
+    takes: int = 3
+
+
+PLANE_CONTACT = _PlaneContact()
+
+
+def _solid_facets(ti, temp: float) -> np.ndarray:
+    """(m, 3) ``proc_df`` rows of the triangles of the solids' lower hull at ``temp`` (K) that
+    cover more than :data:`SOLIDUS_MIN_AREA` of the composition triangle. Each composition is
+    its solid of lowest Gibbs energy; three compositions are one triangle."""
+    xy, enthalpy, entropy, is_liquid = ti._row_arrays()
+    rows = np.flatnonzero(~is_liquid)
+    gibbs = enthalpy[rows] - temp * entropy[rows]
+    order = np.lexsort((gibbs, xy[rows, 1], xy[rows, 0]))
+    rows, gibbs = rows[order], gibbs[order]
+    lowest = np.r_[True, (np.diff(xy[rows], axis=0) != 0).any(axis=1)]
+    rows, gibbs = rows[lowest], gibbs[lowest]
+    if len(rows) == 3:
+        facets = rows[None]
+    else:
+        points = np.column_stack([xy[rows], gibbs])
+        simplices = np.asarray(lower_convex_hull(points, vertical_simplices=False), dtype=int)
+        facets = rows[simplices.reshape(-1, 3)]
+    legs = xy[facets[:, 1:]] - xy[facets[:, :1]]
+    area = np.abs(legs[:, 0, 0] * legs[:, 1, 1] - legs[:, 0, 1] * legs[:, 1, 0])
+    return facets[area > SOLIDUS_MIN_AREA]
+
+
+def _on_solids_hull(ti, rows, temps) -> np.ndarray:
+    """(k,) whether no solid of another composition lies below the plane through the three
+    solid ``proc_df`` rows of each of ``rows`` (k, 3) at its temperature of ``temps`` (k,), K."""
+    xy, enthalpy, entropy, is_liquid = ti._row_arrays()
+    solid = np.flatnonzero(~is_liquid)
+    weights = _barycentric(xy[rows][:, None], xy[solid][None])
+    corners = enthalpy[rows] - temps[:, None] * entropy[rows]
+    plane = (weights * corners[:, None]).sum(axis=2)
+    over = enthalpy[solid][None] - temps[:, None] * entropy[solid][None] - plane
+    apart = np.abs(xy[solid][None, :, None] - xy[rows][:, None]).max(axis=3)
+    at_corner = (apart < 1e-9).any(axis=2)
+    return np.where(at_corner, 0.0, over).min(axis=1) >= -SOLIDS_HULL_TOL
+
+
+def _just_below(temps):
+    """``temps``, K, lowered by :data:`SOLIDUS_JOINT_K`, or halved where that is the smaller
+    step."""
+    return temps - np.minimum(SOLIDUS_JOINT_K, 0.5 * temps)
+
+
+def _holds(ti, rows, temps) -> np.ndarray:
+    """(k,) whether the three solid ``proc_df`` rows of each of ``rows`` (k, 3) are a solidus
+    triangle at ``temps`` (k,), K: each the solid of lowest Gibbs energy at its composition
+    there (:func:`_stable_rows`), and no solid of another composition below their plane just
+    below it (:func:`_on_solids_hull`, :func:`_just_below`)."""
+    stable = (_stable_rows(ti, rows, temps) == rows).all(axis=1)
+    return stable & _on_solids_hull(ti, rows, _just_below(temps))
+
+
+def _stable_rows(ti, rows, temps) -> np.ndarray:
+    """``rows`` (k, 3) with each solid row replaced by the row at its composition of lowest
+    Gibbs energy at its plane's temperature ``temps`` (k,), K; unchanged where that is not
+    finite."""
+    xy, enthalpy, entropy, is_liquid = ti._row_arrays()
+    solid = np.flatnonzero(~is_liquid)
+    out = rows.copy()
+    for (i, j), row in np.ndenumerate(rows):
+        if np.isfinite(temps[i]):
+            same = solid[np.abs(xy[solid] - xy[row]).max(axis=1) < 1e-9]
+            out[i, j] = same[np.argmin(enthalpy[same] - temps[i] * entropy[same])]
+    return out
+
+
+def _plane_contacts(ti, rows) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per plane through three solid ``proc_df`` rows (``rows``, (k, 3)): the lowest temperature,
+    K, at which the liquid touches it, the liquid's independent fractions there, and the rows
+    the plane was taken through.
+
+    The liquid at ``x`` touches a plane at ``dH / dS``, its enthalpy and entropy over the plane's
+    at ``x``, the liquid taken at the contact's temperature; never where its entropy is not
+    above the plane's. The lowest contact over the liquid nodes picks, per corner, the solid of
+    lowest Gibbs energy at its composition (:func:`_stable_rows`). The lowest contacts over the
+    nodes then each start a search over trial points spaced in the log ratios of the mole
+    fractions (``PLANE_CONTACT``), which reaches a liquid arbitrarily dilute in a component. A
+    plane whose solids are not the stable ones at the contact found is searched again through
+    those, ``PLANE_CONTACT.takes`` times at most.
+    """
+    xy, enthalpy, entropy, is_liquid = ti._row_arrays()
+    model = ti.liquid_model()
+    count = len(rows)
+    nodes = xy[is_liquid]
+    grid = np.broadcast_to(nodes, (count, *nodes.shape))
+
+    def contact(points, temps, planes):
+        """(r, m) contact temperature of ``points`` (r, m, 2) with plane ``planes[i]``, the
+        liquid taken at ``temps`` (r,)."""
+        weights = _barycentric(xy[rows[planes]][:, None], points)
+        flat = points.reshape(-1, 2)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            h, s = model.h_s_grid((flat[:, 0], flat[:, 1]), np.repeat(temps, points.shape[1]))
+            d_h = np.reshape(h, weights.shape[:2]) - (
+                weights * enthalpy[rows[planes]][:, None]
+            ).sum(2)
+            d_s = np.reshape(s, weights.shape[:2]) - (weights * entropy[rows[planes]][:, None]).sum(
+                2
+            )
+            out = np.where(d_s > 0, d_h / d_s, np.inf)
+        return np.where(np.isnan(out), np.inf, out)
+
+    def over_nodes():
+        """(k, n) contact at every liquid node, the liquid taken at each plane's lowest."""
+        every = np.arange(count)
+        found = contact(grid, ti.linear_tstar(*xy[rows].mean(axis=1).T), every)
+        lowest = found.min(axis=1)
+        usable = np.isfinite(lowest) & (lowest > 0)
+        found[usable] = contact(grid[usable], lowest[usable], every[usable])
+        return found
+
+    best_t, best_x = np.full(count, np.inf), np.full((count, 2), np.nan)
+    ticks = np.arange(-PLANE_CONTACT.reach, PLANE_CONTACT.reach + 1)
+    offsets = np.array([(a, b) for a in ticks for b in ticks], dtype=float)
+
+    def fractions(ratio):
+        shift = np.maximum(ratio.max(axis=-1, keepdims=True), 0.0)
+        weight = np.exp(ratio - shift)
+        return weight / (np.exp(-shift) + weight.sum(axis=-1, keepdims=True))
+
+    def search(todo, at_nodes):
+        """Set ``best_t`` and ``best_x`` of the planes ``todo``."""
+        best_t[todo], best_x[todo] = np.inf, np.nan
+        plane, start = [], []
+        for i in todo:
+            picked = []
+            for node in np.argsort(at_nodes[i]):
+                if not np.isfinite(at_nodes[i, node]) or len(picked) == PLANE_CONTACT.starts:
+                    break
+                apart = np.abs(nodes[picked] - nodes[node]).max(axis=1, initial=np.inf)
+                if apart.min(initial=np.inf) >= PLANE_CONTACT.apart * ti.delta:
+                    picked.append(node)
+            plane += [i] * len(picked)
+            start += picked
+        plane = np.array(plane, dtype=int)
+        if not len(plane):
+            return
+        full = np.column_stack([1 - nodes[start].sum(axis=1), nodes[start]])
+        full = np.clip(full, PLANE_CONTACT.dilute, None)
+        ratio = np.log(full[:, 1:] / full[:, :1])
+
+        def settled(value):
+            """``value`` with the liquid taken at the contact itself."""
+            for _ in range(PLANE_CONTACT.settling):
+                value = contact(fractions(ratio)[:, None, :], value, plane)[:, 0]
+            return value
+
+        value = settled(at_nodes[plane, start])
+        step = np.full(len(plane), PLANE_CONTACT.step)
+        for _ in range(PLANE_CONTACT.rounds):
+            live = np.flatnonzero(step >= PLANE_CONTACT.last_step)
+            if not len(live):
+                break
+            trial = ratio[live, None, :] + step[live, None, None] * offsets[None]
+            found = contact(fractions(trial), value[live], plane[live])
+            pick = found.argmin(axis=1)
+            low = found[np.arange(len(live)), pick]
+            better = low < value[live]
+            ratio[live[better]] = trial[better, pick[better]]
+            value[live[better]] = low[better]
+            step[live[~better]] /= PLANE_CONTACT.reach
+        value = settled(value)
+        for i in todo:
+            mine = np.flatnonzero(plane == i)
+            if len(mine):
+                top = mine[value[mine].argmin()]
+                best_t[i], best_x[i] = value[top], fractions(ratio[top])
+
+    at_nodes = over_nodes()
+    at, todo = at_nodes.min(axis=1), np.arange(count)
+    for _ in range(PLANE_CONTACT.takes):
+        stable = _stable_rows(ti, rows, at)
+        moved = (stable != rows).any(axis=1)
+        if moved.any():
+            rows = stable
+            at_nodes = over_nodes()
+            todo = np.union1d(todo, np.flatnonzero(moved))
+        if not len(todo):
+            break
+        search(todo, at_nodes)
+        at, todo = best_t, np.array([], dtype=int)
+    return best_t, best_x, rows
 
 
 @dataclass(frozen=True)
@@ -825,7 +1051,8 @@ class TernaryLiquidInterpolation:
         object's store holds for the ternary system and for each of its three binary edges.
 
         One entry per ``entry_id``: an explicit entry wins over a stored one, and the ternary
-        record over an edge record.
+        record over an edge record. A stored entry whose id is in ``excluded_entries`` is left
+        out.
         """
         entries = list(self.imputed_entries)
         if not self.include_imputed:
@@ -836,8 +1063,10 @@ class TernaryLiquidInterpolation:
             for entry in api.read_imputed_entries(
                 system, api.DEFAULT_DFT_TYPE, data_dir=self.data_dir
             ):
-                if entry.get("entry_id") not in seen:
-                    seen.add(entry.get("entry_id"))
+                entry_id = entry.get("entry_id")
+                excluded = cache.canonical_entry_id(entry_id) in self.excluded_entries
+                if entry_id not in seen and not excluded:
+                    seen.add(entry_id)
                     entries.append(entry)
         return entries
 
@@ -946,11 +1175,11 @@ class TernaryLiquidInterpolation:
         ``imputed_entries`` are re-anchored onto this hull and compete on it exactly as a DFT
         phase does; ``ternary_meta['n_imputed_entries']`` and ``['n_imputed_stable']`` record
         how many were injected and how many reached the hull, and
-        ``ternary_meta['imputed_phase_names']`` the phase names of those that reached it.
-        ``ternary_meta['user_phase_names']`` names the ``user_entries`` placed on the solid side:
-        those on the 0 K hull and those carrying an entropy (``data[cache.ENTROPY_KEY]``), which
-        are placed even above it. A row's ``S`` is that entropy, J/mol-atom/K, and 0 for every
-        other phase.
+        ``ternary_meta['imputed_phase_names']`` the phase names of those placed on the solid
+        side. ``ternary_meta['user_phase_names']`` names the ``user_entries`` placed there. An
+        imputed or user-defined entry is placed when it is on the 0 K hull or carries an entropy
+        (``data[cache.ENTROPY_KEY]``), which places it even above the hull. A row's ``S`` is that
+        entropy, J/mol-atom/K, and 0 for every other phase.
 
         ``imputed_entries`` places those entries instead of :meth:`all_imputed_entries`, and
         ``exclude`` leaves those DFT entry ids out; either leaves ``ternary_meta`` untouched.
@@ -965,20 +1194,21 @@ class TernaryLiquidInterpolation:
         stable_ids = {str(e.entry_id) for e in pdia.stable_entries}
         meta["n_imputed_entries"] = len(injected)
         meta["n_imputed_stable"] = sum(1 for e in injected if str(e.entry_id) in stable_ids)
-        meta["imputed_phase_names"] = sorted(
-            {api.hull_entry_name(e) for e in injected if str(e.entry_id) in stable_ids}
-        )
         user_ids = {str(e.get("entry_id")) for e in self.user_entries}
+        imputed_ids = {str(e.entry_id) for e in injected}
         entropy_bearing = [
             e
             for e in pdia.all_entries
-            if str(e.entry_id) in user_ids
+            if str(e.entry_id) in user_ids | imputed_ids
             and str(e.entry_id) not in stable_ids
             and _entry_entropy(e)
         ]
+        placed = list(pdia.stable_entries) + entropy_bearing
+        meta["imputed_phase_names"] = sorted(
+            {api.hull_entry_name(e) for e in placed if str(e.entry_id) in imputed_ids}
+        )
         meta["user_phase_names"] = sorted(
-            {api.hull_entry_name(e) for e in pdia.stable_entries if str(e.entry_id) in user_ids}
-            | {api.hull_entry_name(e) for e in entropy_bearing}
+            {api.hull_entry_name(e) for e in placed if str(e.entry_id) in user_ids}
         )
 
         meta["n_ternary_compounds"] = sum(
@@ -1014,7 +1244,7 @@ class TernaryLiquidInterpolation:
 
         hull_rows = []
         deepest = []
-        for entry in list(pdia.stable_entries) + entropy_bearing:
+        for entry in placed:
             form_en = pdia.get_form_energy_per_atom(entry) * EV_ATOM_TO_J_MOL
             if str(entry.entry_id) in stable_ids:
                 deepest.append(form_en)
@@ -1092,8 +1322,9 @@ class TernaryLiquidInterpolation:
         self.ternary_meta = {}
         self._liquid_model_cache = None
 
-    def impute_phase(self, composition, temperature: float, **kwargs):
-        """Impute a solid phase that leaves this system's hull at ``temperature`` (K).
+    def impute_phase(self, composition, temperature: float | None = None, **kwargs):
+        """Impute a solid phase that leaves this system's hull at ``temperature`` (K), or one
+        placed by an ``enthalpy``, an ``entropy`` or a ``solidus`` without it.
 
         See :func:`gliquid.imputation.ternary_imputation.impute_ternary_phase` for the arguments.
         """
@@ -1111,6 +1342,35 @@ class TernaryLiquidInterpolation:
         from gliquid.imputation.ternary_imputation import adjust_ternary_phase_temperature
 
         return adjust_ternary_phase_temperature(self, phase, temperature, **kwargs)
+
+    def edit_phases(self, edits, **kwargs):
+        """Apply additions, temperature changes and removals of solid phases to this system.
+
+        See :func:`gliquid.imputation.ternary_imputation.edit_ternary_phases` for the arguments.
+        """
+        from gliquid.imputation.ternary_imputation import edit_ternary_phases
+
+        return edit_ternary_phases(self, edits, **kwargs)
+
+    def export_entries(self) -> list[dict]:
+        """The entries of this system's 0 K solid hull as a list ``pymatgen`` reads, each with
+        its entropy.
+
+        See :func:`gliquid.imputation.entry_list.export_entries`.
+        """
+        from gliquid.imputation.entry_list import export_entries
+
+        return export_entries(self)
+
+    def entry_list_edits(self, entry_dicts):
+        """The edits (:meth:`edit_phases`) that give this system the phases of a list of
+        entries.
+
+        See :func:`gliquid.imputation.entry_list.entry_list_edits`.
+        """
+        from gliquid.imputation.entry_list import entry_list_edits
+
+        return entry_list_edits(self, entry_dicts)
 
     def interpolate(self):
         # create the hsx dataframe for the ternary system
@@ -2041,6 +2301,8 @@ class TLIPlotter:
         # Re-frames the held model onto ``order``.
         self._ti = ternary_interp.with_component_order(order)
         self._partition_cache = (None, None, None)
+        self._partition_sheets = None
+        self._solidus_cache = (None, [])
 
     @classmethod
     def from_components(
@@ -2116,7 +2378,7 @@ class TLIPlotter:
         )
         logger.info("Initialization complete")
 
-    def impute_phase(self, composition, temperature: float, **kwargs):
+    def impute_phase(self, composition, temperature: float | None = None, **kwargs):
         """:meth:`TernaryLiquidInterpolation.impute_phase` on the plotted model."""
         return self._ti.impute_phase(composition, temperature, **kwargs)
 
@@ -2147,6 +2409,7 @@ class TLIPlotter:
         *,
         highlight_phase: str | None = None,
         interactive_legend: bool | None = None,
+        solidus: bool = False,
         **kwargs,
     ) -> go.Figure:
         """Generate a ternary plot (mirrors ``BLPlotter.get_plot``).
@@ -2161,6 +2424,9 @@ class TLIPlotter:
             interactive_legend: 'tx' only, on unless ``False``. Embed the highlighted view of
                 every legend phase in the figure, so that clicking a legend entry in a browser
                 switches to it.
+            solidus: 'tx' only. Draw the solidus triangles (:meth:`solidus_triangles`), each flat
+                at its temperature, and reach the temperature window down to the coldest unless
+                ``temp_range`` pins its floor.
             kwargs: forwarded to the underlying builder (``T_celsius`` for 'ch').
 
         Returns:
@@ -2190,10 +2456,14 @@ class TLIPlotter:
             if not hasattr(self, "equil_df_list"):
                 self.process_data()
             return self._plot_tx(
-                highlight_phase=highlight_phase, interactive_legend=interactive_legend
+                highlight_phase=highlight_phase,
+                interactive_legend=interactive_legend,
+                solidus=solidus,
             )
-        if highlight_phase is not None or interactive_legend:
-            raise ValueError("highlight_phase and interactive_legend apply to get_plot('tx') only.")
+        if highlight_phase is not None or interactive_legend or solidus:
+            raise ValueError(
+                "highlight_phase, interactive_legend and solidus apply to get_plot('tx') only."
+            )
         # 'ch' — single-temperature lower-hull slice
         if "T_celsius" not in kwargs:
             raise ValueError("get_plot('ch', ...) requires a T_celsius=<float> keyword.")
@@ -2245,7 +2515,7 @@ class TLIPlotter:
         (draw body in gliquid.plotting.ternary_surface)."""
         return ternary_surface.render_hull_slice(self.get_convex_hull(T_celsius), self.components)
 
-    def _plot_tx(self, highlight_phase=None, interactive_legend=None):
+    def _plot_tx(self, highlight_phase=None, interactive_legend=None, solidus=False):
         self.plotting_df = pd.concat(self.equil_df_list)
 
         # Each facet's solid assemblage keyed by the globally unique simplex_id, from the raw
@@ -2332,13 +2602,34 @@ class TLIPlotter:
         elif partition is None and (highlight_phase is not None or interactive_legend):
             logger.warning(f"{self.sys_name}: the liquidus has no phase fields to highlight.")
 
-        # The drawn window reaches the partition's hottest vertex unless temp_range pins its top.
+        # The drawn window reaches the partition's hottest vertex and, with ``solidus``, the
+        # coldest solidus triangle unless temp_range pins that end.
         conds = list(self.conds)
-        pinned_high = (self._ti._temp_range_arg or (None, None))[1]
+        pinned_low, pinned_high = self._ti._temp_range_arg or (None, None)
         if partition is not None and pinned_high is None:
             top = float(np.max(partition.surface.T))
             if top > conds[1]:
                 conds[1] = self._ti._pad_ceiling(top + 273.15) - 273.15
+        triangles_drawn = self.solidus_triangles() if solidus else []
+        if triangles_drawn and pinned_low is None:
+            coldest = min(tri["T"] for tri in triangles_drawn) + 273.15
+            step = self._ti.T_incr
+            conds[0] = min(conds[0], max(np.floor(coldest / step) * step, 0.0) - 273.15)
+
+        solidus = [
+            (
+                tri["phases"],
+                np.column_stack(
+                    [
+                        tri["comp"][:, 0] + 0.5 * tri["comp"][:, 1],
+                        tri["comp"][:, 1] * np.sqrt(3) / 2,
+                    ]
+                ),
+                tri["T"],
+            )
+            for tri in triangles_drawn
+            if conds[0] <= tri["T"] <= conds[1]
+        ]
 
         return ternary_surface.render_tx_surface(
             self.solid_plotting_df,
@@ -2352,6 +2643,7 @@ class TLIPlotter:
             partition=partition,
             highlight_phase=highlight_phase,
             interactive_legend=interactive_legend is not False,
+            solidus=solidus,
         )
 
     def _liquidus_partition(self, triangles) -> liquidus_fields.Partition | None:
@@ -2404,7 +2696,193 @@ class TLIPlotter:
                 f"{len(unbounded)} surface vertices; the liquidus is drawn without phase fields."
             )
             return None
+        self._partition_sheets = sheets
         return partition
+
+    def liquidus_ranges(self) -> dict[str, tuple[float, float]]:
+        """Each solid phase's lowest and highest temperature (C) in contact with the liquid, from
+        the phase fields of the last ``'tx'`` plot.
+
+        A phase's range spans the vertices of its field that its own liquidus sheet reaches. Its
+        top is raised to its liquidus at its own composition where no other phase's is hotter
+        there, and its bottom is lowered to the coldest hull facet it shares with the liquid
+        where that lies more than ``T_incr`` below its field, and to the coldest solidus
+        triangle it is a corner of (:meth:`solidus_triangles`). A phase without a field is left
+        out. Empty when the last ``'tx'`` plot drew no phase fields.
+        """
+        processed, _, partition = self._partition_cache
+        sheets = self._partition_sheets
+        if partition is None or sheets is None or processed is not self.equil_df_list:
+            return {}
+        surface = partition.surface
+
+        def reached(vertices, column) -> float | None:
+            for start in range(0, len(vertices), RANGE_PROBES):
+                batch = vertices[start : start + RANGE_PROBES]
+                own = sheets.columns(surface.comp[batch], np.full((len(batch), 1), column))
+                held = own[:, 0] - 273.15 >= surface.T[batch] - RANGE_TOLERANCE_K
+                if held.any():
+                    return float(surface.T[batch[held.argmax()]])
+            return None
+
+        frame = pd.concat(self.equil_df_list, ignore_index=True)
+        liquid = frame["Phase"] == "L"
+        shared = frame["simplex_id"].isin(frame.loc[liquid, "simplex_id"]) & ~liquid
+        floors = frame[shared].groupby("Phase")["T"].min()
+        solids = self._ti.proc_df
+        solids = solids[solids["Phase"] != "L"].drop_duplicates(["Phase", "x0", "x1"])
+        ranges = {}
+        for column, name in enumerate(partition.phases):
+            if name == TWO_LIQUIDS:
+                continue
+            vertices = np.unique(surface.faces[partition.owner == column])
+            vertices = vertices[np.argsort(surface.T[vertices])]
+            low, high = reached(vertices, column), reached(vertices[::-1], column)
+            points = solids.loc[solids["Phase"] == name, ["x0", "x1"]].to_numpy(float)
+            if len(points) == 1:
+                at_phase = sheets(points)[0] - 273.15
+                top = float(at_phase[column])
+                hotter = np.delete(at_phase, column) > top + RANGE_TOLERANCE_K
+                if np.isfinite(top) and not hotter.any():
+                    low, high = (top if low is None else low), max(top, high or top)
+            if low is None:
+                continue
+            if name in floors.index and floors[name] < low - self._ti.T_incr:
+                low = float(floors[name])
+            ranges[name] = (low, high)
+        for triangle in self.solidus_triangles():
+            for name in triangle["phases"]:
+                if name in ranges and triangle["T"] < ranges[name][0]:
+                    ranges[name] = (triangle["T"], ranges[name][1])
+        return ranges
+
+    def solidus_triangles(self) -> list[dict]:
+        """The triangles of three solid phases the liquid leaves, from the three-field joints of
+        the last ``'tx'`` plot and, where the liquid of a triangle is too dilute in a component
+        for the plot to hold its joint, from the solids' lower hull (:meth:`_unjoined_solidus`).
+
+        At a joint of three solid phases' liquidus fields the liquid is in equilibrium with all
+        three; the triangle joining their compositions at the joint's temperature bounds the
+        region where the three coexist without liquid. A phase with several hull points takes
+        the one in contact with the joint's liquid. A joint is reported where its three sheets
+        agree within :data:`SOLIDUS_JOINT_K`, no other sheet is hotter there by more than that,
+        its solids are a solidus triangle at its temperature (:func:`_holds`), and the triangle
+        covers more than :data:`SOLIDUS_MIN_AREA` of the composition triangle;
+        of joints of the same three phases within :data:`SOLIDUS_JOINT_K` of each other, the one
+        whose sheets agree best.
+
+        Returns:
+            list[dict]: ``{'phases': the three names, 'comp': (3, 2) independent fractions of
+            ``components[1:]`` of the three phases, 'liquid': (2,) those of the joint's liquid,
+            'T': degrees C}``, hottest first. Empty when the last ``'tx'`` plot drew no phase
+            fields.
+        """
+        processed, _, partition = self._partition_cache
+        sheets = self._partition_sheets
+        if partition is None or sheets is None or processed is not self.equil_df_list:
+            return []
+        if self._solidus_cache[0] is not partition:
+            self._solidus_cache = (partition, self._solidus(partition, sheets))
+        return [dict(triangle) for triangle in self._solidus_cache[1]]
+
+    def _solidus(self, partition, sheets) -> list[dict]:
+        solids = [
+            tuple(phase for phase in phases if phase != TWO_LIQUIDS)
+            for phases in partition.vertex_phases
+        ]
+        at = np.array([i for i, phases in enumerate(solids) if len(phases) == 3], dtype=int)
+        found: dict[tuple, list[dict]] = {}
+        ti = self._ti
+        xy, _, _, is_liquid = ti._row_arrays()
+        names = ti.proc_df["Phase"].to_numpy(object)
+        row_of = {
+            (str(names[row]), *np.round(xy[row], 9)): row for row in np.flatnonzero(~is_liquid)
+        }
+        if len(at):
+            columns = np.array([[partition.phases.index(phase) for phase in solids[i]] for i in at])
+            comp = partition.surface.comp[at]
+            temps = sheets.columns(comp, columns)
+            spread = np.ptp(temps, axis=1)
+            under = sheets(comp).max(axis=1) - temps.max(axis=1)
+            corners = sheets.contact_points(comp, columns)
+            legs = corners[:, 1:] - corners[:, :1]
+            area = np.abs(legs[:, 0, 0] * legs[:, 1, 1] - legs[:, 0, 1] * legs[:, 1, 0])
+            kept = np.flatnonzero(
+                np.isfinite(spread)
+                & (spread <= SOLIDUS_JOINT_K)
+                & (under <= SOLIDUS_JOINT_K)
+                & (area > SOLIDUS_MIN_AREA)
+            )
+            rows = np.array(
+                [
+                    [
+                        row_of.get((phase, *np.round(corner, 9)), -1)
+                        for phase, corner in zip(solids[at[i]], corners[i])
+                    ]
+                    for i in kept
+                ],
+                dtype=int,
+            ).reshape(-1, 3)
+            known = (rows >= 0).all(axis=1)
+            kept, rows = kept[known], rows[known]
+            kept = kept[_holds(ti, rows, temps[kept].max(axis=1))]
+            for i in kept[np.argsort(spread[kept], kind="stable")]:
+                phases, temp = solids[at[i]], float(temps[i].max()) - 273.15
+                seen = found.setdefault(phases, [])
+                if all(abs(temp - other["T"]) > SOLIDUS_JOINT_K for other in seen):
+                    seen.append(
+                        {"phases": phases, "comp": corners[i], "liquid": comp[i], "T": temp}
+                    )
+        triangles = [tri for group in found.values() for tri in group]
+        triangles += self._unjoined_solidus(triangles)
+        return sorted(triangles, key=lambda tri: -tri["T"])
+
+    def _unjoined_solidus(self, joined) -> list[dict]:
+        """The solidus triangles, as :meth:`solidus_triangles` reports them, that no joint of
+        ``joined`` gives: the triangles of the solids' lower hull at the bottom of the
+        temperature window whose three compositions no triangle of ``joined`` joins, each at
+        the lowest temperature the liquid touches its plane at (:func:`_plane_contacts`).
+
+        A triangle its solids do not hold at that temperature (:func:`_holds`) is replaced by
+        the triangles the solids' lower hull holds just below it (:func:`_just_below`), at most
+        :data:`SOLIDUS_ROUNDS` times.
+        """
+        ti = self._ti
+        xy = ti._row_arrays()[0]
+        phase = ti.proc_df["Phase"].to_numpy(object)
+
+        def key(facet):
+            return tuple(sorted(map(tuple, np.round(xy[facet], 9))))
+
+        taken = {tuple(sorted(map(tuple, np.round(tri["comp"], 9)))) for tri in joined}
+        tried: set[tuple] = set()
+        pending = list(_solid_facets(ti, max(self.conds[0] + 273.15, 1.0)))
+        out = []
+        for _ in range(SOLIDUS_ROUNDS):
+            rows = [f for f in pending if key(f) not in taken and tuple(sorted(f)) not in tried]
+            rows = np.unique(np.sort(np.array(rows, dtype=int).reshape(-1, 3), axis=1), axis=0)
+            if not len(rows):
+                break
+            tried |= {tuple(facet) for facet in rows}
+            temps, liquid, rows = _plane_contacts(ti, rows)
+            pending = []
+            for facet, temp, x in zip(rows, temps, liquid):
+                if not np.isfinite(temp) or temp <= 0 or key(facet) in taken:
+                    continue
+                if not _holds(ti, facet[None], np.array([temp]))[0]:
+                    pending += list(_solid_facets(ti, float(_just_below(temp))))
+                    continue
+                taken.add(key(facet))
+                order = np.argsort([str(name) for name in phase[facet]])
+                out.append(
+                    {
+                        "phases": tuple(str(name) for name in phase[facet][order]),
+                        "comp": xy[facet][order],
+                        "liquid": x,
+                        "T": float(temp) - 273.15,
+                    }
+                )
+        return out
 
     def get_inter_melting_temps(self, interphases_for_melting: list[str]):
         """Max stability temperature per requested phase (computation on the model)."""

@@ -20,6 +20,7 @@ _EXPORTS: dict[str, str] = {
     "list_binary_imputation_targets": "gliquid.imputation.binary_imputation",
     "impute_ternary_phase": "gliquid.imputation.ternary_imputation",
     "adjust_ternary_phase_temperature": "gliquid.imputation.ternary_imputation",
+    "edit_ternary_phases": "gliquid.imputation.ternary_imputation",
     "IMPUTED_ID_PREFIX": "gliquid.cache",
     "PROVENANCE_KEY": "gliquid.imputation.core",
     "REPLACES_KEY": "gliquid.imputation.core",

@@ -1360,6 +1360,19 @@ class LiquidusSheets:
             out[rows] = np.where(wanted[rows], found[:, None], out[rows])
         return out
 
+    def contact_points(self, comp, which) -> np.ndarray:
+        """(m, k, 2) independent fractions of the point of solid phase column ``which[i, j]``
+        whose contact with the liquid's tangent plane at ``comp[i]`` is the hottest, the liquid
+        taken at T*."""
+        comp = _snap_to_sides(comp)
+        which = np.asarray(which, dtype=int).reshape(len(comp), -1)
+        temps = self.point_temperatures(comp)
+        out = np.empty((*which.shape, 2))
+        for j in range(which.shape[1]):
+            own = np.where(self._row_phase[None, :] == which[:, j, None], temps, -np.inf)
+            out[:, j] = self._row_comp[own.argmax(axis=1)]
+        return out
+
     def liquidus(self, comp) -> np.ndarray:
         """(m,) liquidus temperature, K: the hottest sheet."""
         return self(comp).max(axis=1)

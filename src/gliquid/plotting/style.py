@@ -51,6 +51,11 @@ DIMMED_PHASE_COLOR = "#c8c8c8"
 FIELD_OUTLINE_COLOR = "#1a1a1a"
 FIELD_OUTLINE_WIDTH = 5
 # The boundary of the two-liquid field, drawn in every view.
+# The solidus triangles of the ternary liquidus figure: the colour of a binary tie line, the
+# outline's width and the opacity of the fill.
+SOLIDUS_OUTLINE_COLOR = "Silver"
+SOLIDUS_OUTLINE_WIDTH = 4
+SOLIDUS_FILL_OPACITY = 0.25
 GAP_OUTLINE_COLOR = "#7f7f7f"
 GAP_OUTLINE_DASH = "dot"
 # Mole fraction from a side of the composition triangle within which that boundary is not drawn;

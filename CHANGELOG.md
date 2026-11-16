@@ -9,6 +9,65 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Added
+
+- **The ternary liquidus figure draws the solidus with `get_plot('tx', solidus=True)`** (off by
+  default). Each triangle of three solid phases is drawn flat at the temperature the liquid leaves
+  it, outlined in the colour of a binary tie line. In a browser, the parts of an outline that lie
+  behind the liquidus from the camera are not drawn, and the triangle under the pointer is lightly
+  filled with the three phases' colours, each strongest at its own corner; a static export draws
+  every outline whole and no fill.
+  `TLIPlotter.solidus_triangles()` returns the triangles: the three phases, their
+  compositions, the liquid's composition and the temperature. They are read from the
+  three-field joints of the drawn liquidus; a triangle whose last liquid is too dilute in a
+  component for the surface to hold its joint (next to a low-melting element that does not mix
+  with the others) is solved from the solids' lower hull instead. The bottom of a phase's
+  `liquidus_ranges()` is lowered to its coldest solidus triangle whether or not the triangles
+  are drawn; with `solidus=True` the drawn temperature window reaches down to the coldest
+  triangle unless `temp_range` pins its floor.
+- **`TLIPlotter.liquidus_ranges()`** returns each solid phase's lowest and highest temperature
+  in contact with the liquid, read from the phase fields of the last `'tx'` plot. The hull
+  table reports a phase's top on its `T_incr` ladder (25 K with `hull_mode='gtx'`); the field
+  gives it to the mesh, and exactly for a phase that melts congruently.
+- **`TernaryLiquidInterpolation.edit_phases(edits)`** (`gliquid.imputation.edit_ternary_phases`)
+  applies a list of phase removals, temperature changes and additions in one call. A removal
+  leaves every DFT entry at the phase's composition off the hull.
+- **`hold_hull=True`** on the ternary imputation calls places a phase that would push a stable
+  phase off the 0 K hull instead of refusing it: its enthalpy is held at the deepest value that
+  keeps those phases, and it carries the entropy at which it still leaves the hull at the
+  requested temperature. The record reports that entropy (`entropy`) and the phases the
+  unheld enthalpy would have displaced (`displaces`).
+- **A ternary system's entries as a list, and a list read back.**
+  `TernaryLiquidInterpolation.export_entries()` lists the entries of the 0 K solid hull as
+  `ComputedEntry` dicts of plain JSON types, imputed and user-defined phases included, each
+  with its corrections folded into its energy and its entropy under
+  `data["entropy_j_per_mol_k"]`;
+  `PhaseDiagram([ComputedEntry.from_dict(d) for d in entries])` builds the same hull.
+  `entry_list_edits(entries)` compares such a list with the system and returns the `edit_phases`
+  edits that give it the list's phases: a phase whose formation enthalpy or entropy differs is
+  changed, a phase at a new composition is added, and a phase the list has no entry for is
+  removed. Formation enthalpies are taken against the list's own elemental references, and the
+  elements whose reference differs from the system's are reported (`reference_shifts`).
+- **`edit_phases` removes a phase the store imputed**, with the entries it stands in for, and
+  takes `"force": True` on a single edit.
+- **`enthalpy=` and `entropy=`** on the ternary imputation calls and in `edit_phases` place a
+  phase by its formation enthalpy (J/mol-atom) or its entropy (J/mol-atom/K). Given both, the
+  phase carries them as they are. Given one with a temperature, the other is solved so the
+  phase leaves the hull at that temperature; given one with a `solidus` and no temperature, so
+  it joins the hull there on heating. A phase above the 0 K hull needs a positive entropy, and
+  a given enthalpy that would push a stable phase off the 0 K hull is refused (`hold_hull` does
+  not move it) unless `force` is set. `impute_phase` takes its temperature as optional.
+- **`solidus=`** on the ternary imputation calls and in `edit_phases` places a phase on the
+  hull between two temperatures: it joins the hull at the solidus on heating and leaves it at
+  its temperature. Its enthalpy and entropy are solved from the envelope at both, so it lies
+  above the 0 K hull and displaces nothing there. The solidus must be a temperature at which
+  the liquid reaches the phase's composition, and the solved entropy may take up to 0.9 of the
+  envelope's at the top (`SOLIDUS_ENTROPY_SHARE`); a refusal reports the nearest solidus that
+  works (`solidus_limit_k`).
+- **An imputed entry carrying an entropy is placed above the 0 K hull**, as a user-defined
+  one already was, and a binary edge figure draws a hull entry with the entropy it carries
+  (it used zero).
+
 ### Changed
 
 - **Ternary phase fields with a two-liquid region are drawn faster in both hull modes: about
@@ -49,6 +108,11 @@ source tree carries a version literal that could disagree with this file.
 
 ### Fixed
 
+- **`adjust_phase_temperature` no longer refuses a move because of a phase that is only
+  stable while the adjusted phase is lifted out.** The 0 K hull guard protected every compound
+  stable once the phase's DFT entries were left off, including ones the phase normally hides
+  (Ag-Na: moving NaAg2 was refused for displacing NaAg3, which is not on the hull). It now
+  protects the compounds that are stable with those entries in place.
 - **Three solid phase fields on the ternary liquidus now meet at their triple point.** Where
   the triple point lay outside the mesh triangle whose three nodes carry the three phases, the
   fields were joined at the nearest point of that triangle, and one triple point could be drawn

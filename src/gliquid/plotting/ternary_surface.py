@@ -14,7 +14,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # The binary field-label formatter.
-from gliquid.plotting import liquidus_fields, phase_highlight, ternary_labels
+from gliquid.plotting import liquidus_fields, phase_highlight, solidus_view, ternary_labels
 from gliquid.plotting.export import side_by_side_html
 from gliquid.plotting.style import (
     FIELD_OUTLINE_COLOR,
@@ -257,6 +257,7 @@ def render_tx_surface(
     partition=None,
     highlight_phase=None,
     interactive_legend=False,
+    solidus=(),
 ) -> LiquidusFigure:
     """The 3-D ternary liquidus figure: solid-phase lines, liquidus mesh, isotherms,
     legend markers, and the base triangle with its composition ticks and flat labels
@@ -284,6 +285,12 @@ def render_tx_surface(
     phases' lines dimmed; ``interactive_legend`` embeds every such view for a browser-side legend
     handler (see :mod:`gliquid.plotting.phase_highlight`). Without a ``partition`` neither draws
     anything.
+
+    ``solidus`` lists the triangles of three solid phases the liquid leaves, each ``(phases,
+    (3, 2) plot coordinates of the three phases, temperature in C)``. Each is drawn flat at its
+    temperature and outlined in the colour of a binary tie line
+    (:mod:`gliquid.plotting.solidus_view`). In a browser, the parts of an outline behind the liquidus are not drawn, and the triangle
+    under the pointer is filled with the three phases' colours, each strongest at its own corner.
 
     Raises:
         ValueError: ``highlight_phase`` is not a solid phase of the figure.
@@ -410,6 +417,9 @@ def render_tx_surface(
             fig, compute_isotherm_contours(np.column_stack([surface.xy, surface.T]), surface.faces)
         )
 
+    if len(solidus):
+        fig.add_traces(solidus_view.traces(solidus, color_map, display_name))
+
     for n, phase in enumerate(legend_phases):
         if highlight:
             tags.legend[str(phase)] = f"gliquid-legend-{n}"
@@ -523,7 +533,10 @@ def render_tx_surface(
     return fig
 
 
-_ATTACH_ALL = "window.gliquidAttachLabelViews(gd); window.gliquidAttachPhaseHighlight(gd);"
+_ATTACH_ALL = (
+    "window.gliquidAttachLabelViews(gd); window.gliquidAttachPhaseHighlight(gd); "
+    "window.gliquidAttachSolidusView(gd);"
+)
 
 
 def post_script() -> str:
@@ -532,12 +545,15 @@ def post_script() -> str:
     anything else that draws the figure's JSON.
 
     It shows the view of the base triangle's labels (:mod:`gliquid.plotting.ternary_labels`)
-    whose edge is lowest on screen as the camera turns, and on a figure built with
-    ``interactive_legend`` it handles legend clicks (:mod:`gliquid.plotting.phase_highlight`).
+    whose edge is lowest on screen as the camera turns, on a figure built with
+    ``interactive_legend`` it handles legend clicks (:mod:`gliquid.plotting.phase_highlight`),
+    and it draws the solidus triangles for the camera and the pointer
+    (:mod:`gliquid.plotting.solidus_view`).
     """
     return (
         ternary_labels.ATTACH_JS
         + phase_highlight.ATTACH_JS
+        + solidus_view.ATTACH_JS
         + "(function (gd) { "
         + _ATTACH_ALL
         + " })(document.getElementById('{plot_id}'));\n"
@@ -563,6 +579,7 @@ def dash_clientside_function() -> str:
         "function (figure, graphId) {\n"
         + ternary_labels.ATTACH_JS
         + phase_highlight.ATTACH_JS
+        + solidus_view.ATTACH_JS
         + """
   var attempts = 0;
   (function attach() {
