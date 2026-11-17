@@ -28,7 +28,11 @@
       },
       {
         "name": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017)",
-        "description": "Melting points ('Melting, Boiling, Triple, and Critical Points of the Elements') and enthalpies of fusion ('Enthalpy of Fusion')."
+        "description": "Melting points ('Melting, Boiling, Triple, and Critical Points of the Elements') and enthalpies of fusion ('Enthalpy of Fusion'); enthalpies of fusion of Tb, Dy, Ho, Lu and Pm from 'Physical Properties of the Rare Earth Metals' (K.A. Gschneidner, Jr.), Table 6, where Ho, Lu and Pm are estimates."
+      },
+      {
+        "name": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)",
+        "description": "Melting points of Ce, Nd, Tb, Ho and Yb ('Melting, Boiling, Triple, and Critical Points of the Elements')."
       },
       {
         "name": "periodictable.com / Wolfram ElementData",
@@ -6990,7 +6994,7 @@
           "metadata": {
             "enthalpy_source": "Konings, R.J.M. & Beneš, O., J. Phys. Chem. Ref. Data 39, 043102 (2010) — enthalpy of fusion",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
-            "transition_temperature_source": "periodictable.com (Wolfram Research ElementData)"
+            "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)"
           }
         },
         {
@@ -7263,7 +7267,7 @@
           "metadata": {
             "enthalpy_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017) — enthalpy of fusion",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
-            "transition_temperature_source": "periodictable.com (Wolfram Research ElementData)"
+            "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)"
           }
         },
         {
@@ -7324,7 +7328,7 @@
           "delta_S_J_per_mol_K": null,
           "metadata": {
             "note": "No DFT solid-phase reference available. Cumulative values cannot be computed.",
-            "enthalpy_source": "periodictable.com (Wolfram Research ElementData) — enthalpy of fusion",
+            "enthalpy_source": "Gschneidner, K.A., Jr., 'Physical Properties of the Rare Earth Metals', in Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017), Table 6 — enthalpy of fusion (estimated)",
             "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017)"
           }
         },
@@ -7754,9 +7758,9 @@
           "delta_H_J_per_mol": 10790.0,
           "delta_S_J_per_mol_K": 6.6237,
           "metadata": {
-            "enthalpy_source": "periodictable.com (Wolfram Research ElementData) — enthalpy of fusion",
+            "enthalpy_source": "Gschneidner, K.A., Jr., 'Physical Properties of the Rare Earth Metals', in Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017), Table 6 — enthalpy of fusion",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
-            "transition_temperature_source": "periodictable.com (Wolfram Research ElementData)"
+            "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)"
           }
         },
         {
@@ -7870,7 +7874,7 @@
           "delta_H_J_per_mol": 11060.0,
           "delta_S_J_per_mol_K": 6.5638,
           "metadata": {
-            "enthalpy_source": "periodictable.com (Wolfram Research ElementData) — enthalpy of fusion",
+            "enthalpy_source": "Gschneidner, K.A., Jr., 'Physical Properties of the Rare Earth Metals', in Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017), Table 6 — enthalpy of fusion",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
             "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017)"
           }
@@ -7969,9 +7973,9 @@
           "delta_H_J_per_mol": 17000.0,
           "delta_S_J_per_mol_K": 9.731,
           "metadata": {
-            "enthalpy_source": "periodictable.com (Wolfram Research ElementData) — enthalpy of fusion",
+            "enthalpy_source": "Gschneidner, K.A., Jr., 'Physical Properties of the Rare Earth Metals', in Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017), Table 6 — enthalpy of fusion (estimated)",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
-            "transition_temperature_source": "periodictable.com (Wolfram Research ElementData)"
+            "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)"
           }
         },
         {
@@ -8338,7 +8342,7 @@
           "metadata": {
             "enthalpy_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017) — enthalpy of fusion",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
-            "transition_temperature_source": "periodictable.com (Wolfram Research ElementData)"
+            "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 92nd ed., CRC Press (2011)"
           }
         },
         {
@@ -8404,7 +8408,7 @@
           "delta_H_J_per_mol": 22000.0,
           "delta_S_J_per_mol_K": 11.3636,
           "metadata": {
-            "enthalpy_source": "periodictable.com (Wolfram Research ElementData) — enthalpy of fusion",
+            "enthalpy_source": "Gschneidner, K.A., Jr., 'Physical Properties of the Rare Earth Metals', in Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017), Table 6 — enthalpy of fusion (estimated)",
             "entropy_method": "ΔS = ΔH_fusion / T_melt",
             "transition_temperature_source": "Haynes, W.M. (ed.), CRC Handbook of Chemistry and Physics, 97th ed., CRC Press (2017)"
           }
