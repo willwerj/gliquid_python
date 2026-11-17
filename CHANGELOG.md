@@ -13,6 +13,10 @@ source tree carries a version literal that could disagree with this file.
 
 - `extract_digitized_liquidus` reads a narrow few-vertex `L` wedge (at most 0.05 wide in
   composition) from its whole outline instead of keeping its hottest tip as the only point.
+- `phase_transitions.json` cites the CRC Handbook instead of Wolfram ElementData for the
+  melting points of Ce, Nd, Tb, Ho and Yb (92nd ed.) and the enthalpies of fusion of Tb, Dy, Ho,
+  Lu and Pm (97th ed., "Physical Properties of the Rare Earth Metals"; Ho, Lu and Pm are
+  estimates). No value changes.
 
 ## [0.3.3] - 2026-11-09
 
