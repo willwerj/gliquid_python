@@ -157,7 +157,7 @@ class TestTheReductionDropsShapesAndKeepsTheRest:
             mpds._GLIQUID_KEY,
         }
 
-    @pytest.mark.parametrize("name", ["Hf-Zr_MPDS_PD_0.json", "Al-Cu.json", "C-Nb.json"])
+    @pytest.mark.parametrize("name", ["Hf-Zr.json", "Al-Cu.json", "C-Nb.json"])
     def test_the_reduction_is_smaller_on_real_diagrams(self, package_corpus, name):
         """On real cached diagrams the lean record is at least 1.5x smaller. The kept
         liquidus points are full-precision floats, never rounded."""
@@ -420,8 +420,8 @@ class TestLeanStore:
     def test_records_round_trip_through_the_store(self, package_corpus, lean_store):
         backend = cache.SqliteBackend(lean_store)
         try:
-            source = json.loads((package_corpus / "Hf-Zr_MPDS_PD_0.json").read_text())
-            key = cache.CacheKey("Hf-Zr", cache.KIND_MPDS, "0")
+            source = json.loads((package_corpus / "Hf-Zr.json").read_text())
+            key = cache.CacheKey("Hf-Zr", cache.KIND_MPDS, "")
             assert backend.read_json(key) == mpds.lean_record(source)
         finally:
             backend.close()

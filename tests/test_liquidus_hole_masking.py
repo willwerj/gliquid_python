@@ -286,7 +286,7 @@ class TestRealDisjointSystems:
         from gliquid.cache import CacheKey
 
         name = f"{system}_MPDS_PD_0.json"
-        candidates = [api.resolve_cache_path(CacheKey(system, "mpds", "0"))]
+        candidates = [api.resolve_cache_path(CacheKey(system, "mpds", v)) for v in ("0", "")]
         root = config.project_root
         parents = Path(root).resolve().parents if root is not None else ()
         candidates += [parent / "matrix_data" / system / name for parent in parents]
