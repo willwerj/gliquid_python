@@ -53,24 +53,20 @@ PINS_PATH = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "decomp
 SYSTEMS = {
     "Ag-V": {},
     "Al-Cu": {},
-    "Bi-La": {},
     "C-Nb": {},
     "Cr-Eu": {},
     "Cu-Mg": {},
     "Hf-Zr": {"pd_ind": 0},
-    "Pb-Rb": {},
 }
 
 INVARIANT_CASES = {
     "Ag-V": ("Ag-V", {}),
     "Al-Cu": ("Al-Cu", {}),
-    "Bi-La": ("Bi-La", {}),
     "C-Nb": ("C-Nb", {}),
     "Cr-Eu": ("Cr-Eu", {}),
     "Cu-Mg@t_tol=15": ("Cu-Mg", {"t_tol": 15}),
     "Hf-Zr@check_full_ss=True": ("Hf-Zr", {"check_full_ss": True}),
     "Hf-Zr@check_full_ss=False": ("Hf-Zr", {"check_full_ss": False}),
-    "Pb-Rb": ("Pb-Rb", {}),
 }
 
 FIGURES = ("Cu-Mg:fit+liq", "Cu-Mg:pred", "Hf-Zr:plot_tx", "Hf-Zr:ss:fit+liq")

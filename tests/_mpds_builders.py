@@ -92,9 +92,10 @@ def liquidus_record(shapes, elements=("Hf", "Zr"), temp=(0, 2600)):
 
 
 def load_cached_mpds(system):
-    """A cached ``<sys>_MPDS_PD_0.json``, or skip when it is not on this machine."""
+    """A cached ``<sys>_MPDS_PD_0.json`` or ``<sys>.json``, or skip when neither is on this
+    machine."""
     name = f"{system}_MPDS_PD_0.json"
-    candidates = [api.resolve_cache_path(CacheKey(system, "mpds", "0"))]
+    candidates = [api.resolve_cache_path(CacheKey(system, "mpds", v)) for v in ("0", "")]
     root = config.project_root
     parents = Path(root).resolve().parents if root is not None else ()
     candidates += [parent / "matrix_data" / system / name for parent in parents]

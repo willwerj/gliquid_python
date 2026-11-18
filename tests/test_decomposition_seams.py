@@ -422,7 +422,7 @@ def _without(report_canon, knob):
 
 
 class TestLatentCoverageBugs:
-    @pytest.mark.parametrize("system", ["Al-Cu", "Bi-La"])
+    @pytest.mark.parametrize("system", ["Al-Cu", "Cu-Mg"])
     def test_dft_cover_tol_is_recorded_and_does_not_move_the_gate(self, system):
         """A dft_cover_tol override changes report.thresholds['dft_cover_tol'] and nothing else."""
         knob = "dft_cover_tol"
@@ -444,7 +444,7 @@ class TestLatentCoverageBugs:
         knob = "low_temp_axis_fraction"
         assert _without(canon(moved), knob) != _without(canon(base), knob)
 
-    @pytest.mark.parametrize("system", ["Al-Cu", "Bi-La"])
+    @pytest.mark.parametrize("system", ["Al-Cu", "Cu-Mg"])
     def test_latent_l1_dft_cover_tol_config_value_moves_nothing(self, system, monkeypatch):
         """No reader of config.coverage_dft_cover_tol sits on the coverage path, so even the
         config value changes only report.thresholds."""

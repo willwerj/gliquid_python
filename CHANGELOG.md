@@ -112,6 +112,9 @@ source tree carries a version literal that could disagree with this file.
   `pymatgen-core` release needs `requests>=2.32.5`, so `pymatgen<2026` kept neither Colab's
   `requests` 2.32.4 nor a single pymatgen version. pip still notes that google-colab pins
   `requests==2.32.4`; the install and the notebooks work.
+- **The Hf-Zr diagram in `cache/` is `cache/Hf-Zr.json`**, named like the others, and loads
+  with `pd_ind=0` or `pd_ind=None`. The Pb-Rb and Bi-La diagrams and DFT entries and the Al-Mg
+  DFT entries are no longer in `cache/`.
 
 ### Fixed
 

@@ -8,7 +8,7 @@ accuracy pin and an accuracy regression cannot hide behind a re-fit.
 This module gates the shipped subjects only and carries no claim about the method's
 accuracy at large.
 
-Everything runs offline against the shipped Cu-Mg / Al-Cu / Pb-Rb / Bi-La data fixtures.
+Everything runs offline against the shipped Cu-Mg / Al-Cu data fixtures.
 """
 
 import numpy as np
@@ -79,45 +79,6 @@ SUBJECTS = {
             {"held": "Al4Cu9", "x": 0.692308},
             {"held": "AlCu3", "x": 0.75},
         ],
-    },
-    "Pb-Rb": {
-        "params": [-53513.451772942535, -6.688814675517017, -40559.502187713966, 0.0],
-        "scored": [
-            {
-                "held": "RbPb",
-                "x": 0.5,
-                "imputed_as": "RbPb",
-                "anchor": "cmp",
-                "dft_h_form_j": -21395.3811,
-                "imputed_h_form_j": -21396.1115,
-                "clamped": False,
-            },
-        ],
-        "unreachable": [{"held": "Rb4Pb9", "x": 0.307692}],
-    },
-    "Bi-La": {
-        "params": [-287901.79447405384, -35.98772430925674, -71831.34895841485, 0.0],
-        "scored": [
-            {
-                "held": "LaBi",
-                "x": 0.5,
-                "imputed_as": "LaBi",
-                "anchor": "per",
-                "dft_h_form_j": -101059.8399,
-                "imputed_h_form_j": -98168.7896,
-                "clamped": False,
-            },
-            {
-                "held": "La2Bi",
-                "x": 0.666667,
-                "imputed_as": "La2Bi",
-                "anchor": "per",
-                "dft_h_form_j": -73361.9681,
-                "imputed_h_form_j": -71799.6272,
-                "clamped": True,
-            },
-        ],
-        "unreachable": [{"held": "LaBi3", "x": 0.25}],
     },
 }
 

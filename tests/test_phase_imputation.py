@@ -241,6 +241,21 @@ class TestImputationRecovery:
         impute_binary_phases(bl, fitting_data=None, write_cache=False, unmask=False)
         assert bl.unsupported_comp_ranges == [[0.2, 0.5]]
 
+    def test_an_entry_the_screen_drops_is_not_returned_and_is_reported(
+        self, stripped, caplog, monkeypatch
+    ):
+        bl, _ = stripped
+        assert impute_binary_phases(copy.deepcopy(bl), fitting_data=None, write_cache=False)
+
+        def drop_all(bl_, entry_dicts, *, unmask=True):
+            return [], [("DROPPED", "draws no field")], set()
+
+        monkeypatch.setattr(imp_binary, "screen_unrealizable_entries", drop_all)
+        with caplog.at_level(logging.INFO, logger=imp_binary.__name__):
+            imputed = impute_binary_phases(bl, fitting_data=None, write_cache=False)
+        assert imputed == []
+        assert "skip DROPPED: draws no field" in [r.getMessage() for r in caplog.records]
+
     def test_verbose_reports_through_the_logger_not_stdout(self, stripped, caplog, capsys):
         """The package reports through ``logging``; ``test_logging_boundary`` enforces it."""
         bl, orig = stripped
