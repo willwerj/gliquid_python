@@ -107,6 +107,11 @@ source tree carries a version literal that could disagree with this file.
 - **A piece of the two-liquid field that leads the solids by at most 10 K (`SHALLOW_GAP`)
   belongs to the solids' fields**: it has no outline, and each of its faces goes to the solid
   hottest there. The surface keeps its temperatures.
+- **The Colab notebooks install `gliquid` without capping pymatgen.** emmet-core reaches
+  `pymatgen-core` through `pymatgen-io-validation` whatever pymatgen is capped at, and every
+  `pymatgen-core` release needs `requests>=2.32.5`, so `pymatgen<2026` kept neither Colab's
+  `requests` 2.32.4 nor a single pymatgen version. pip still notes that google-colab pins
+  `requests==2.32.4`; the install and the notebooks work.
 
 ### Fixed
 
