@@ -9,6 +9,107 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A ternary imputation record reports the enthalpies that bound it on the 0 K hull.**
+  `hull_enthalpy` is the hull's formation enthalpy at the phase's composition without the phase:
+  below it the phase is on the 0 K hull. `hull_limit_enthalpy`, on a phase that names
+  `displaces` and was placed with `force` or `hold_hull`, is the deepest enthalpy that keeps
+  those phases.
+- **`force=True` with `hold_hull=True`** holds a phase at the hull limit where an entropy still
+  reaches its temperature and places it at its inverted enthalpy where none does; a phase given
+  an `enthalpy` or an `entropy` is placed as given. Before, `force` switched `hold_hull` off.
+- **`build_binary_edge_figures(tie_lines={})`** fills the dict with the tie lines each edge
+  figure draws.
+- **`plot_tx(canvas=TxCanvas(...))` draws a binary figure at a given size** (figure, margins,
+  phase-label and `L` fonts) and places its labels to fit that size; a figure resized after
+  `plot_tx` keeps labels placed for the default 750 × 600 px and can overlap at a smaller size.
+  `build_binary_edge_figures(canvas=...)` and `TLIPlotter(edge_canvas=...)` pass it to the
+  edge figures.
+- **`build_phase_color_map(keep={...})` keeps phase colors across redraws.** A phase listed
+  in `keep` keeps its color; a listed phase that is absent holds its color until the palette
+  has no other free, and new phases take the free colors. Before, editing a phase moved it to
+  the imputed group and shifted the colors after it. `TLIPlotter(keep_colors=...)` passes it to
+  the ternary and edge figures.
+- **`TernaryLiquidInterpolation.modified_phase_names()`** names the imputed phases on the solid
+  hull that stand in for a DFT entry.
+- **`gliquid.imputation.phase_tops(ti)` gives each line phase's highest stable temperature**
+  and what it becomes above it (`PhaseTop`): it melts congruently or incongruently, turns
+  into another solid of its composition, or decomposes into other solids. `phase_top` does
+  the same for a solid with a given composition, enthalpy and entropy.
+- **A ternary imputation refused for a temperature below the liquid reports
+  `lowest_top_k`**, the lowest temperature the phase can be given to leave the hull at, to
+  0.01 K.
+- **`refine_liquid=True` places a ternary phase against the liquid itself.**
+  `impute_ternary_phases`, `edit_phases`, `phase_top` and `phase_tops` then read the liquid at
+  the phase's own composition and on a fine lattice around the liquid its envelope rests on,
+  not on the composition grid alone, and the guard margin raises the phase's temperature by at
+  most 0.05 K. The phase leaves the hull where the liquidus sheets of the ternary figure put it;
+  the processed diagram reads the liquid on the grid and can show it higher, so use it with
+  `screen=False`.
+
+### Changed
+
+- **`get_plot('tx', solidus=True)` draws the binary solidus lines in place of the solidus
+  triangles**: the tie lines of the three binary edge figures, each on its side of the figure at
+  its temperature. In a browser the parts of a line behind the liquidus are still not drawn.
+  The triangles' outlines and hover fill are gone, and the temperature window no longer reaches
+  down to the coldest triangle. `TLIPlotter.solidus_triangles()` and the bottoms of
+  `liquidus_ranges()` are unchanged.
+- **The temperature-axis title of the ternary liquidus figure stands beside the axis.** It is a
+  scene annotation at the vertical edge of the box plotly draws the z axis on, upright as before;
+  in a browser it follows the axis as the camera turns, and
+  `gliquid.plotting.ternary_labels.orient_labels` places it for a camera set in Python. It was
+  an annotation fixed to the left margin of the figure.
+- **An imputed phase that stands in for a DFT entry is named `(modified)`** in the legend and
+  hover text of the ternary liquidus figure; any other imputed phase is still `(imputed)`.
+- **The line of an imputed or user-defined phase in the ternary liquidus figure is dashed more
+  densely**: each dash is 1.4% of the temperature window long, each gap 0.6%
+  (`gliquid.plotting.style.SOLID_LINE_DASH_3D`). The dashes are drawn as separate segments, so
+  the trace's `line.dash` is no longer set.
+- **The ternary liquidus legend lists the elemental polymorphs by component, in the order of
+  the system name, and then by transition temperature**, ahead of the other phases; the other
+  line phases follow by composition, richest in the first component first, and the solid
+  solutions come last.
+  `TernaryLiquidInterpolation.color_map` keeps that order; the colours are unchanged. They were
+  listed in the order of the hull's phase names.
+
+- **`edit_phases` keeps the interpolated liquid when it removes no phase.** It was interpolated
+  again for every edit.
+- **A ternary phase given an `enthalpy` or an `entropy` beside its `temperature` leaves the
+  hull at that temperature in the diagram drawn with it.** Its energy is solved without the
+  phases without an entropy that it pushes off the 0 K hull, which the hull drawn with it leaves
+  out. It was solved with them, and the phase could top out at another temperature.
+- **A ternary phase given an `enthalpy` or an `entropy` beside its `temperature` can leave the
+  hull into solids alone.** Where no liquid lies around it at that temperature it takes the
+  entropy, below theirs, that puts it on their tie line there: it decomposes into them on
+  heating. It was refused as `below_solidus`.
+
+### Fixed
+
+- **An imputed phase whose name reads as a formula other than its composition keeps that name**
+  in the legend and hover text of the ternary liquidus figure. A phase named `Ce12Fe34Si56` at
+  Ce2FeSi was shown as Ce6Fe17Si28, the name's formula reduced.
+- **Where two solid phases meet on one vertical line of the ternary liquidus figure, the
+  change is drawn at the temperature at which their Gibbs energies cross**, so an elemental
+  polymorph transition lies at its transition temperature, level with the binary solidus line
+  of that transition. It was drawn at the last temperature of the grid below it.
+- **A solid phase's line in the ternary liquidus figure ends on the liquidus surface** where
+  the surface lies below its last stable temperature or within one grid step above it, so no
+  line rises through the surface; a line that ends
+  further below the surface (a phase that decomposes in the solid state or melts
+  incongruently) ends on the binary edge tie line through it where one lies within that grid
+  step, and otherwise still ends at its last stable grid temperature.
+- **The ternary liquidus figure and its binary edge figures name compounds in the order of the
+  system's components** (`gliquid.plotting.style.standard_formula`), in the legend, the hover
+  text and the field labels: `Ga3Y` in Ga-Y, where they showed pymatgen's `YGa3`. The phase
+  names the model stores and returns are unchanged.
+- **An edge figure's MAPE chip names the ranges a gapped digitized liquidus covers**:
+  `MAPE 13.2% (0–7, 89–100 at.% Ba)` where its points leave a gap wider than
+  `gliquid.ternary.LIQUIDUS_GAP`. The MAPE is taken over whatever the liquidus covers, so an
+  edge whose liquidus covers less than 70% of the composition range now gets a chip; it had
+  none.
+
 ## [0.3.4] - 2026-11-16
 
 ### Added
