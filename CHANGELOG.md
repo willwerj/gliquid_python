@@ -9,6 +9,8 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-20
+
 ### Added
 
 - **A ternary imputation record reports the enthalpies that bound it on the 0 K hull.**
@@ -84,6 +86,14 @@ source tree carries a version literal that could disagree with this file.
   hull into solids alone.** Where no liquid lies around it at that temperature it takes the
   entropy, below theirs, that puts it on their tie line there: it decomposes into them on
   heating. It was refused as `below_solidus`.
+- **The Colab notebooks install `gliquid` without capping pymatgen.** emmet-core reaches
+  `pymatgen-core` through `pymatgen-io-validation` whatever pymatgen is capped at, and every
+  `pymatgen-core` release needs `requests>=2.32.5`, so `pymatgen<2026` kept neither Colab's
+  `requests` 2.32.4 nor a single pymatgen version. pip still notes that google-colab pins
+  `requests==2.32.4`; the install and the notebooks work.
+- **The Hf-Zr diagram in `cache/` is `cache/Hf-Zr.json`**, named like the others, and loads
+  with `pd_ind=0` or `pd_ind=None`. The Pb-Rb and Bi-La diagrams and DFT entries and the Al-Mg
+  DFT entries are no longer in `cache/`.
 
 ### Fixed
 
@@ -208,14 +218,6 @@ source tree carries a version literal that could disagree with this file.
 - **A piece of the two-liquid field that leads the solids by at most 10 K (`SHALLOW_GAP`)
   belongs to the solids' fields**: it has no outline, and each of its faces goes to the solid
   hottest there. The surface keeps its temperatures.
-- **The Colab notebooks install `gliquid` without capping pymatgen.** emmet-core reaches
-  `pymatgen-core` through `pymatgen-io-validation` whatever pymatgen is capped at, and every
-  `pymatgen-core` release needs `requests>=2.32.5`, so `pymatgen<2026` kept neither Colab's
-  `requests` 2.32.4 nor a single pymatgen version. pip still notes that google-colab pins
-  `requests==2.32.4`; the install and the notebooks work.
-- **The Hf-Zr diagram in `cache/` is `cache/Hf-Zr.json`**, named like the others, and loads
-  with `pd_ind=0` or `pd_ind=None`. The Pb-Rb and Bi-La diagrams and DFT entries and the Al-Mg
-  DFT entries are no longer in `cache/`.
 
 ### Fixed
 
@@ -1207,7 +1209,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/willwerj/gliquid_python/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/willwerj/gliquid_python/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/willwerj/gliquid_python/compare/v0.3.1...v0.3.2
