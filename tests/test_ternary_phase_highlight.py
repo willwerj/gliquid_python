@@ -25,6 +25,7 @@ from gliquid.plotting.style import (
     GAP_OUTLINE_CLEARANCE,
     GAP_OUTLINE_COLOR,
     GAP_OUTLINE_DASH,
+    abbreviate_phase_name,
 )
 from gliquid.plotting.ternary_surface import FIELD_COORD_DECIMALS, composition_at_pct
 
@@ -191,9 +192,16 @@ def test_junctions_and_field_vertices_sit_on_their_own_sheets(plotter, tx):
 def test_liquidus_hover_names_the_phases_meeting_at_each_vertex(plotter, tx):
     (surface,) = [trace for trace in tx(plotter).data if trace.name == "liquidus"]
     part = plotter._liquidus_partition(plotter.triangulation.simplices)
-    assert list(np.asarray(surface.customdata)[:, 3]) == [
-        ", ".join(phases) for phases in part.vertex_phases
-    ]
+    names = list(plotter.color_map)
+
+    def shown(phase):
+        if phase == "L" or phase not in plotter.color_map:
+            return phase
+        return abbreviate_phase_name(phase, names, plotter.components)
+
+    hover = list(np.asarray(surface.customdata)[:, 3])
+    assert hover == [", ".join(map(shown, phases)) for phases in part.vertex_phases]
+    assert any("Al<sub>12</sub>Mg<sub>17</sub>" in text for text in hover)
 
 
 def test_liquidus_hover_gives_the_at_pct_of_each_element_in_sys_name_order(plotter, tx):

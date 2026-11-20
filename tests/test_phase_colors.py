@@ -91,3 +91,20 @@ class TestSsCollisionGuard:
         assert cmap["BCC"] == SS_FIXED_COLORS["BCC"]
         assert cmap["BCC2"] == "#6c5ce7"  # first fallback (BCC2 has no reserved color)
         assert len(set(cmap.values())) == len(cmap)
+
+
+class TestKeep:
+    def test_kept_phases_keep_their_colors_when_one_turns_imputed(self):
+        names = ["A", "B", "C", "L"]
+        before = build_phase_color_map(names)
+        assert build_phase_color_map(names, imputed_names={"A"}) != before
+        assert build_phase_color_map(names, imputed_names={"A"}, keep=before) == before
+
+    def test_an_absent_phase_holds_its_color_until_the_palette_runs_out(self):
+        before = build_phase_color_map(["A", "B", "L"])
+        fresh = [f"N{i}" for i in range(len(PHASE_PALETTE) - 1)]
+        few = build_phase_color_map(["B", *fresh[:-1], "L"], keep=before)
+        assert before["A"] not in few.values()
+        full = build_phase_color_map(["B", *fresh, "L"], keep=before)
+        assert full["B"] == before["B"] and full[fresh[-1]] == before["A"]
+        assert {full[p] for p in ["B", *fresh]} == set(PHASE_PALETTE)

@@ -513,6 +513,23 @@ class TestTxFigureLabels:
         assert {_drawn(_named(fig, name)) for name in LABEL_TRACES} == {"bottom"}
         assert fig.layout.scene.camera.eye.x == -1.9
 
+    def test_the_z_title_stands_at_the_box_edge_furthest_left_on_screen(self, figure):
+        fig = go.Figure(figure)
+        scene = fig.layout.scene
+        (title,) = scene.annotations
+        assert (title.name, title.text, title.textangle) == (
+            tl.Z_TITLE_NAME,
+            "Temperature (°C)",
+            -90,
+        )
+        assert title.z == pytest.approx(sum(scene.zaxis.range) / 2)
+        assert (title.x, title.y) == (scene.xaxis.range[1], scene.yaxis.range[0])
+        assert not fig.layout.annotations
+        tl.orient_labels(fig, _camera((-1.25, -1.25, 1.25)))
+        (title,) = fig.layout.scene.annotations
+        assert (title.x, title.y) == (scene.xaxis.range[0], scene.yaxis.range[1])
+        assert tl.Z_TITLE_NAME in tl.ATTACH_JS
+
     def test_the_figure_carries_the_spec_of_its_views(self, figure):
         spec = figure.layout.meta[tl.SPEC_KEY]
         assert spec["version"] == tl.SPEC_VERSION

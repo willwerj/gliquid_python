@@ -7,6 +7,10 @@ edge and each corner's element name are set flat in the triangle's plane as fill
 Each kind of label is one mesh that carries every view's vertices and draws the view whose edge
 is lowest on screen (:func:`label_view`, :func:`orient_labels`); in a browser, :data:`ATTACH_JS`
 redraws it in the view of the turning camera.
+
+The temperature-axis title (:func:`z_title`) is a scene annotation set upright beside the
+vertical edge of the scene's box that plotly draws the z axis on: the edge furthest left on
+screen (:func:`orient_labels`), and in a browser the one :data:`ATTACH_JS` reads from plotly.
 """
 
 from __future__ import annotations
@@ -54,6 +58,11 @@ VIEW_KEY = "gliquid_label_view"
 XY_KEY = "gliquid_label_xy"
 SPEC_KEY = "gliquid_label_views"
 SPEC_VERSION = 2
+
+# The z-axis title: its annotation ``name``, its font size and its distance from the z axis, px.
+Z_TITLE_NAME = "gliquid-z-title"
+Z_TITLE_SIZE = 17
+Z_TITLE_SHIFT = 62
 
 # plotly's camera where a figure leaves it unset, in its normalised scene coordinates.
 _DEFAULT_CAMERA = {"eye": (1.25, 1.25, 1.25), "center": (0.0, 0.0, 0.0), "up": (0.0, 0.0, 1.0)}
@@ -107,6 +116,21 @@ def _camera_dict(camera) -> dict:
     return dict(camera or {})
 
 
+def _camera_vectors(camera) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``camera``'s ``eye``, ``center`` and ``up``, any part left unset taking plotly's default."""
+    camera = _camera_dict(camera)
+    return tuple(
+        np.array(
+            [
+                d if (camera.get(name) or {}).get(a) is None else camera[name][a]
+                for a, d in zip("xyz", default)
+            ],
+            dtype=float,
+        )
+        for name, default in _DEFAULT_CAMERA.items()
+    )
+
+
 def label_view(camera=None) -> str:
     """The view whose edge of the base triangle is lowest on screen under ``camera``: the edge
     whose outward normal points most nearly down the screen. With ``up`` along z and the camera
@@ -121,17 +145,7 @@ def label_view(camera=None) -> str:
     Returns:
         str: one of :data:`VIEWS`; 'bottom' when the camera looks along the floor.
     """
-    camera = _camera_dict(camera)
-    eye, center, up = (
-        np.array(
-            [
-                d if (camera.get(name) or {}).get(a) is None else camera[name][a]
-                for a, d in zip("xyz", default)
-            ],
-            dtype=float,
-        )
-        for name, default in _DEFAULT_CAMERA.items()
-    )
+    eye, center, up = _camera_vectors(camera)
     forward = center - eye
     if not forward @ forward > 0:
         return VIEWS[0]
@@ -420,10 +434,40 @@ def _turntable(fig, camera) -> bool:
     return True
 
 
+def z_title(text: str, z_range) -> dict:
+    """The scene annotation titling the z axis with ``text``, upright and reading upwards, at
+    the middle of ``z_range``. :func:`orient_labels` sets its place in the plane."""
+    return dict(
+        name=Z_TITLE_NAME,
+        text=text,
+        textangle=-90,
+        x=0.0,
+        y=0.0,
+        z=0.5 * (z_range[0] + z_range[1]),
+        xshift=-Z_TITLE_SHIFT,
+        showarrow=False,
+        font=dict(size=Z_TITLE_SIZE, color="black"),
+    )
+
+
+def _place_z_title(fig, camera) -> None:
+    """Move ``fig``'s z-axis title to the vertical edge of the scene's box furthest left on
+    screen under ``camera``."""
+    eye, center, up = _camera_vectors(camera)
+    right = np.cross(center - eye, up)
+    scene = fig.layout.scene
+    for annotation in scene.annotations:
+        if annotation.name == Z_TITLE_NAME:
+            annotation.x = scene.xaxis.range[int(right[0] < 0)]
+            annotation.y = scene.yaxis.range[int(right[1] < 0)]
+            annotation.xshift = -Z_TITLE_SHIFT
+
+
 def orient_labels(fig, camera=None) -> str:
-    """Draw ``fig``'s labels in its view under ``camera`` (:func:`label_view`). Where plotly
-    turns the scene as a turntable, the view is that of ``camera`` with its ``up`` along z, as
-    plotly draws it.
+    """Draw ``fig``'s labels in its view under ``camera`` (:func:`label_view`), and its z-axis
+    title (:func:`z_title`) beside the vertical edge of the scene's box furthest left on screen.
+    Where plotly turns the scene as a turntable, the view is that of ``camera`` with its ``up``
+    along z, as plotly draws it.
 
     Args:
         fig: a figure drawn by :func:`draw_composition_axes`.
@@ -441,6 +485,7 @@ def orient_labels(fig, camera=None) -> str:
         if isinstance(meta, dict) and XY_KEY in meta:
             trace.x, trace.y = meta[XY_KEY][view]
             trace.meta = {**meta, VIEW_KEY: view}
+    _place_z_title(fig, camera)
     return view
 
 
@@ -449,6 +494,60 @@ ATTACH_JS = (
 (function () {
   if (window.gliquidAttachLabelViews) { return; }
   var VERSION = __SPEC_VERSION__, KEY = "__SPEC_KEY__", TAG = "__VIEW_KEY__", XY = "__XY_KEY__";
+  var TITLE = "__Z_TITLE_NAME__", SHIFT = __Z_TITLE_SHIFT__;
+  // Sets the z-axis title beside the vertical edge of the box plotly draws the z axis on, on
+  // the side of it away from the box.
+  function placeTitle(gd) {
+    var layout = gd._fullLayout && gd._fullLayout.scene, scene = layout && layout._scene;
+    var glplot = scene && scene.glplot, params = glplot && glplot.cameraParams;
+    var props = glplot && glplot.axes && glplot.axes.lastCubeProps;
+    if (!props || !params || !scene.dataScale || !layout.annotations) { return; }
+    var edge = props.cubeEdges[2], xr = layout.xaxis.range, yr = layout.yaxis.range;
+    var zr = layout.zaxis.range, x = xr[edge & 1 ? 1 : 0], y = yr[edge & 2 ? 1 : 0];
+    function across(px, py) {
+      var v = [px * scene.dataScale[0], py * scene.dataScale[1],
+               0.5 * (zr[0] + zr[1]) * scene.dataScale[2], 1];
+      [params.model, params.view, params.projection].forEach(function (m) {
+        v = [0, 1, 2, 3].map(function (r) {
+          return m[r] * v[0] + m[4 + r] * v[1] + m[8 + r] * v[2] + m[12 + r] * v[3];
+        });
+      });
+      return v[0] / v[3];
+    }
+    var shift = across(x, y) > across(0.5 * (xr[0] + xr[1]), 0.5 * (yr[0] + yr[1])) ? SHIFT : -SHIFT;
+    // plotly draws from the scene's own copy of the layout, which a relayout can leave behind.
+    var given = (gd.layout.scene && gd.layout.scene.annotations) || [];
+    var drawn = (scene.fullSceneLayout && scene.fullSceneLayout.annotations) || [];
+    layout.annotations.forEach(function (annotation, n) {
+      if (annotation.name !== TITLE) { return; }
+      [annotation, drawn[n], given[annotation._index]].forEach(function (target) {
+        if (target) { target.x = x; target.y = y; target.xshift = shift; }
+      });
+    });
+    return edge;
+  }
+  // Places the title in every frame, before plotly draws the scene's annotations, and draws
+  // one more frame where plotly moved the z axis during that one.
+  function followAxis(gd) {
+    var scene = gd._fullLayout && gd._fullLayout.scene && gd._fullLayout.scene._scene;
+    var glplot = scene && scene.glplot;
+    if (!glplot || typeof glplot.onrender !== "function") { return; }
+    if (!glplot.onrender._gliquidTitle) {
+      var render = glplot.onrender;
+      glplot.onrender = function () {
+        var edge = placeTitle(gd);
+        window.requestAnimationFrame(function () {
+          var props = glplot.axes && glplot.axes.lastCubeProps;
+          if (props && props.cubeEdges[2] !== edge && typeof glplot.redraw === "function") {
+            glplot.redraw();
+          }
+        });
+        return render.apply(this, arguments);
+      };
+      glplot.onrender._gliquidTitle = true;
+    }
+    if (typeof glplot.redraw === "function") { glplot.redraw(); }
+  }
   function viewOf(spec, camera) {
     var eye = camera.eye, center = camera.center || {x: 0, y: 0, z: 0};
     var up = camera.up || {x: 0, y: 0, z: 1};
@@ -511,10 +610,13 @@ ATTACH_JS = (
       });
     }
     show(gd);
+    followAxis(gd);
   };
 })();
 """.replace("__SPEC_VERSION__", str(SPEC_VERSION))
     .replace("__SPEC_KEY__", SPEC_KEY)
     .replace("__VIEW_KEY__", VIEW_KEY)
     .replace("__XY_KEY__", XY_KEY)
+    .replace("__Z_TITLE_NAME__", Z_TITLE_NAME)
+    .replace("__Z_TITLE_SHIFT__", str(Z_TITLE_SHIFT))
 )

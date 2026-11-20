@@ -40,7 +40,12 @@ from gliquid.phase import (
     resolve_component_order,
     validate_and_format_system,
 )
-from gliquid.plotting.binary_tx import _plot_tx_inputs, add_corner_note, plot_tx
+from gliquid.plotting.binary_tx import (
+    _plot_tx_inputs,
+    add_corner_note,
+    plot_tx,
+    record_tie_lines,
+)
 from gliquid.plotting.style import build_phase_color_map, mape_color
 from gliquid.solution import DEFAULT_TAU, RKPolyExp, SolutionModel, t_sym
 
@@ -267,6 +272,12 @@ def _user_entry_dict(hull: PhaseDiagram, entry, entropy: float = 0.0) -> dict:
 #: Least |determinant| of a triangle's edge vectors, mole fraction squared, that places a point
 #: on it.
 FLAT_TRIANGLE = 1e-12
+#: Greatest distance, in plot coordinates, between a solid phase's line and an edge tie line
+#: that ends it.
+TIE_TOLERANCE = 1e-3
+#: Least composition gap, mole fraction, between digitized liquidus points that an edge's MAPE
+#: chip names.
+LIQUIDUS_GAP = 0.1
 
 
 def _barycentric(corners, points) -> np.ndarray:
@@ -290,6 +301,18 @@ def _containing(corners, points) -> np.ndarray:
     least = np.where(np.isnan(least), -np.inf, least)
     best = least.argmax(axis=1)
     return np.where(least[np.arange(len(points)), best] >= -1e-9, best, -1)
+
+
+def _surface_heights(surface, points) -> np.ndarray:
+    """The height of ``surface`` (its ``xy``, ``T`` and ``faces``) over each of ``points``
+    (m, 2); NaN where no face holds the point."""
+    points = np.asarray(points, dtype=float).reshape(-1, 2)
+    faces = np.asarray(surface.faces, dtype=int)
+    corners = np.asarray(surface.xy, dtype=float)[faces]
+    face = _containing(corners, points)
+    weights = _barycentric(corners[face], points)
+    heights = (weights * np.asarray(surface.T, dtype=float)[faces[face]]).sum(axis=1)
+    return np.where(face >= 0, heights, np.nan)
 
 
 def _spans_plane(points) -> bool:
@@ -1176,7 +1199,8 @@ class TernaryLiquidInterpolation:
         phase does; ``ternary_meta['n_imputed_entries']`` and ``['n_imputed_stable']`` record
         how many were injected and how many reached the hull, and
         ``ternary_meta['imputed_phase_names']`` the phase names of those placed on the solid
-        side. ``ternary_meta['user_phase_names']`` names the ``user_entries`` placed there. An
+        side, ``ternary_meta['modified_phase_names']`` those of them that stand in for a DFT
+        entry. ``ternary_meta['user_phase_names']`` names the ``user_entries`` placed there. An
         imputed or user-defined entry is placed when it is on the 0 K hull or carries an entropy
         (``data[cache.ENTROPY_KEY]``), which places it even above the hull. A row's ``S`` is that
         entropy, J/mol-atom/K, and 0 for every other phase.
@@ -1206,6 +1230,14 @@ class TernaryLiquidInterpolation:
         placed = list(pdia.stable_entries) + entropy_bearing
         meta["imputed_phase_names"] = sorted(
             {api.hull_entry_name(e) for e in placed if str(e.entry_id) in imputed_ids}
+        )
+        meta["modified_phase_names"] = sorted(
+            {
+                api.hull_entry_name(e)
+                for e in placed
+                if str(e.entry_id) in imputed_ids
+                and (getattr(e, "data", None) or {}).get(imp_core.REPLACES_KEY)
+            }
         )
         meta["user_phase_names"] = sorted(
             {api.hull_entry_name(e) for e in placed if str(e.entry_id) in user_ids}
@@ -1304,6 +1336,13 @@ class TernaryLiquidInterpolation:
         if not hasattr(self, "hsx_df"):
             self.interpolate()
         return list(self.ternary_meta.get("imputed_phase_names", []))
+
+    def modified_phase_names(self) -> list[str]:
+        """Names of the imputed phases on the solid hull that stand in for a DFT entry, sorted.
+        Interpolates first when needed."""
+        if not hasattr(self, "hsx_df"):
+            self.interpolate()
+        return list(self.ternary_meta.get("modified_phase_names", []))
 
     def user_phase_names(self) -> list[str]:
         """Names of the user-defined phases on the solid hull, sorted. Interpolates first when
@@ -1595,14 +1634,17 @@ class TernaryLiquidInterpolation:
             low = min(candidates)
         return max(0.0, float(low)), float(high)
 
-    def _init_sys(self, color_map=None):
+    def _init_sys(self, color_map=None, keep_colors=None):
         """Prepare hull-evaluation inputs on a processed copy (``proc_df``).
 
         Interpolates lazily, then rounds/relabels/colors a COPY of ``hsx_df`` (the
         pristine interpolated frame is never mutated), computes the temperature grid,
         and (gtx mode) slices per-T Gibbs frames (:meth:`_row_gibbs`) into ``df_Tgroups``.
         ``color_map`` overrides the palette; the default is the shared build_phase_color_map
-        scheme.
+        scheme, with ``keep_colors`` as its ``keep``, ordered with the elemental polymorphs first, by component in the order of the
+        system name and then by transition temperature, then the other line phases by
+        composition, richest in the first component first and ties broken by the second, then
+        the solid solutions. The 'tx' legend lists the phases in ``color_map`` order.
         """
         self.proc_df = self.hull_table()
         self.sys_name = "-".join(sorted(self.components))
@@ -1614,18 +1656,32 @@ class TernaryLiquidInterpolation:
             # Elemental polymorph ladder entries, as in get_ternary_form_en.
             exclude_spacegroups = {solution.SS_SPACEGROUPS[p] for p in self.ss_models}
             component_data = UNARY.component_data(self.components)
-            polymorph_names = {
-                p.name or f"{comp} (sg {p.spacegroup_number})"
-                for comp in self.components
+            rank = {
+                p.name or f"{comp} (sg {p.spacegroup_number})": (n, p.t_transition or 0.0)
+                for n, comp in enumerate(sorted(self.components))
                 for p in polymorph_ladder(component_data[comp], exclude_spacegroups)
-            } & set(self.phase_names)
+            }
+            polymorph_names = set(rank) & set(self.phase_names)
             # The binary plots' color builder.
-            self.color_map = build_phase_color_map(
+            colors = build_phase_color_map(
                 self.phase_names,
                 ss_names=list(self.ss_models),
                 polymorph_names=polymorph_names,
                 imputed_names=self.imputed_phase_names() + self.user_phase_names(),
+                keep=keep_colors,
             )
+            first = self.proc_df.drop_duplicates("Phase Name").set_index("Phase Name")
+
+            def legend_key(phase):
+                if phase in polymorph_names:
+                    return 0, rank[phase]
+                if phase in first.index and phase not in self.ss_models:
+                    x1, x2 = float(first.at[phase, "x0"]), float(first.at[phase, "x1"])
+                    return 1, (x1 + x2 - 1, -x1, -x2)
+                return 2, ()
+
+            order = sorted(colors, key=legend_key)
+            self.color_map = {phase: colors[phase] for phase in order}
 
         self.proc_df = self.proc_df.rename(columns={"Phase Name": "Phase"})
         self.proc_df["Colors"] = self.proc_df["Phase"].map(self.color_map)
@@ -2184,12 +2240,37 @@ def _edge_mape(sys: "BinaryLiquid") -> float:
     sys.init_error = False
     try:
         mape = sys.calculate_deviation_metrics(
-            allow_sparse_data=True, unsupported_range_mode="score"
+            allow_sparse_data=True, unsupported_range_mode="score", min_comp_span=0.0
         )[2]
     except Exception:
         logger.warning("No liquidus MAPE for the %s edge", sys.sys_name, exc_info=True)
         return float("inf")
     return float(mape)
+
+
+def _liquidus_coverage(sys: "BinaryLiquid") -> list[tuple[float, float]]:
+    """The composition ranges, in mole fraction of the second component, that the digitized
+    liquidus of ``sys`` covers, split where two points lie more than :data:`LIQUIDUS_GAP`
+    apart."""
+    xs = np.sort([float(point[0]) for point in sys.digitized_liq or []])
+    if not len(xs):
+        return []
+    breaks = np.flatnonzero(np.diff(xs) > LIQUIDUS_GAP)
+    return list(zip(np.r_[xs[0], xs[breaks + 1]], np.r_[xs[breaks], xs[-1]]))
+
+
+def _mape_note(mape: float, sys: "BinaryLiquid") -> str:
+    """The MAPE chip's text: ``"MAPE x.x%"``, followed by the ranges the digitized liquidus
+    covers where it leaves a gap (:func:`_liquidus_coverage`)."""
+    note = f"MAPE {mape:.1f}%"
+    covered = _liquidus_coverage(sys)
+    whole = (
+        len(covered) == 1 and covered[0][0] <= LIQUIDUS_GAP and covered[0][1] >= 1 - LIQUIDUS_GAP
+    )
+    if covered and not whole:
+        spans = ", ".join(f"{100 * low:.0f}–{100 * high:.0f}" for low, high in covered)
+        note += f" ({spans} at.% {sys.components[1]})"
+    return note
 
 
 def build_binary_edge_figures(
@@ -2198,6 +2279,8 @@ def build_binary_edge_figures(
     edge_mape: bool = False,
     pred_liquidus: bool = False,
     progress=None,
+    tie_lines: dict | None = None,
+    canvas=None,
 ):
     """Build one TX figure per parameterized binary edge of ``ti``.
 
@@ -2212,7 +2295,9 @@ def build_binary_edge_figures(
     edge that has one. With ``edge_mape``, each edge that draws a digitized liquidus and whose
     liquidus MAPE against it is finite gets a ``"MAPE x.x%"`` chip
     (:func:`gliquid.plotting.binary_tx.add_corner_note`) colored by
-    :func:`gliquid.plotting.style.mape_color`.
+    :func:`gliquid.plotting.style.mape_color`. The MAPE is taken over whatever range the
+    digitized liquidus covers; where it leaves a gap wider than :data:`LIQUIDUS_GAP`, the chip
+    names the ranges it covers, e.g. ``"MAPE 13.2% (0–7, 89–100 at.% Ba)"``.
 
     Args:
         ti: the ternary interpolation whose edges are drawn.
@@ -2220,6 +2305,11 @@ def build_binary_edge_figures(
         edge_mape: add the MAPE chip.
         pred_liquidus: draw the digitized MPDS liquidus on predicted edges too.
         progress: called as ``progress("edges", done, total)`` after each edge figure.
+        tie_lines: a dict that receives, per edge named in alphabetical element order, the tie
+            lines its figure draws as ``(x0, x1, temperature)``: the compositions in at. % of
+            the second element, the temperature in C.
+        canvas: the :class:`~gliquid.plotting.binary_tx.TxCanvas` the figures are drawn at;
+            None uses ``plot_tx``'s.
 
     Raises:
         ConfigError: the global store is the implicit ``<cwd>/gliquid_cache`` default and
@@ -2248,17 +2338,22 @@ def build_binary_edge_figures(
         fit = ti.fit_or_pred.get(sys_name, "pred") == "fit"
         with_liquidus = fit or (pred_liquidus and bool(sys.digitized_liq))
         hsx, shared = _plot_tx_inputs(sys)
-        fig = plot_tx(
-            hsx,
-            pred=not fit,
-            digitized_liquidus=sys.digitized_liq if with_liquidus else None,
-            ternary_color_map=ternary_color_map,
-            **shared,
-        )
+        with record_tie_lines() as ties:
+            fig = plot_tx(
+                hsx,
+                pred=not fit,
+                digitized_liquidus=sys.digitized_liq if with_liquidus else None,
+                ternary_color_map=ternary_color_map,
+                components=sys.components,
+                canvas=canvas,
+                **shared,
+            )
+        if tie_lines is not None:
+            tie_lines[alphabetical_order] = [(tie["x0"], tie["x1"], tie["temp"]) for tie in ties]
         if edge_mape and with_liquidus:
             mape = _edge_mape(sys)
             if np.isfinite(mape):
-                add_corner_note(fig, f"MAPE {mape:.1f}%", mape_color(mape))
+                add_corner_note(fig, _mape_note(mape, sys), mape_color(mape))
         bin_fig_list.append(fig)
 
     for done, sys_name in enumerate(edges, start=1):
@@ -2280,8 +2375,10 @@ class TLIPlotter:
 
     The hull-evaluation settings (``temp_slider``, ``T_incr``, ``hull_mode``) are the held
     model's. ``edge_mape`` puts a MAPE chip on each binary edge figure that draws a digitized
-    liquidus, and ``pred_liquidus`` draws the digitized liquidus on predicted edges too (see
-    :func:`build_binary_edge_figures`).
+    liquidus, ``pred_liquidus`` draws the digitized liquidus on predicted edges too, and
+    ``edge_canvas`` (a :class:`~gliquid.plotting.binary_tx.TxCanvas`) is the size the edge
+    figures are drawn at (see :func:`build_binary_edge_figures`). ``keep_colors`` maps phases
+    to the colors they keep (see :func:`~gliquid.plotting.style.build_phase_color_map`).
     """
 
     @cfg._removed_keywords(
@@ -2294,15 +2391,20 @@ class TLIPlotter:
         *,
         edge_mape: bool = False,
         pred_liquidus: bool = False,
+        edge_canvas=None,
+        keep_colors=None,
     ):
         self.edge_mape = bool(edge_mape)
         self.pred_liquidus = bool(pred_liquidus)
+        self.edge_canvas = edge_canvas
+        self.keep_colors = keep_colors
         self._ti_raw = ternary_interp
         # Re-frames the held model onto ``order``.
         self._ti = ternary_interp.with_component_order(order)
         self._partition_cache = (None, None, None)
         self._partition_sheets = None
         self._solidus_cache = (None, [])
+        self._edge_tie_lines = {}
 
     @classmethod
     def from_components(
@@ -2362,9 +2464,10 @@ class TLIPlotter:
         ``bin_fig_list`` (when the edges are parameterized), then the completion print.
         ``progress`` is called as in :meth:`process_data`.
         """
-        self._ti._init_sys()
+        self._ti._init_sys(keep_colors=self.keep_colors)
         if progress is not None:
             progress("model", 1, 1)
+        self._edge_tie_lines = {}
         self.bin_fig_list = (
             build_binary_edge_figures(
                 self._ti,
@@ -2372,6 +2475,8 @@ class TLIPlotter:
                 edge_mape=self.edge_mape,
                 pred_liquidus=self.pred_liquidus,
                 progress=progress,
+                tie_lines=self._edge_tie_lines,
+                canvas=self.edge_canvas,
             )
             if self._ti.fit_or_pred and self._ti.xs_mix
             else []
@@ -2424,9 +2529,8 @@ class TLIPlotter:
             interactive_legend: 'tx' only, on unless ``False``. Embed the highlighted view of
                 every legend phase in the figure, so that clicking a legend entry in a browser
                 switches to it.
-            solidus: 'tx' only. Draw the solidus triangles (:meth:`solidus_triangles`), each flat
-                at its temperature, and reach the temperature window down to the coldest unless
-                ``temp_range`` pins its floor.
+            solidus: 'tx' only. Draw the tie lines of the binary edge figures
+                (``bin_fig_list``) on the sides of the figure, each at its temperature.
             kwargs: forwarded to the underlying builder (``T_celsius`` for 'ch').
 
         Returns:
@@ -2541,16 +2645,39 @@ class TLIPlotter:
         solids = [str(x) for x in solids]
 
         # Each phase is a vertical segment up to its stability ceiling, starting at the plot floor
-        # or at the ceiling of the phase below it.
-        floor_rows = []
+        # or at the ceiling of the phase below it. Where two line phases meet at one composition,
+        # the ceiling is the temperature at which their Gibbs energies cross.
+        self.solid_plotting_df = self.solid_plotting_df.reset_index(drop=True)
+        energies = self._ti.proc_df.drop_duplicates("Phase").set_index("Phase")[["H", "S"]]
+        energies = energies.drop(index=list(self._ti.ss_models), errors="ignore")
+        grid = np.sort(np.asarray(self._ti.T_grid, float) - 273.15)
+
+        def junction(below, above, ceiling):
+            if below not in energies.index or above not in energies.index:
+                return ceiling
+            (h_low, s_low), (h_high, s_high) = energies.loc[below], energies.loc[above]
+            if s_high == s_low:
+                return ceiling
+            crossing = (h_high - h_low) / (s_high - s_low) - 273.15
+            hotter = grid[grid > ceiling]
+            first_above = hotter[0] if len(hotter) else ceiling
+            return crossing if ceiling <= crossing <= first_above else ceiling
+
+        floor_rows, ceilings = [], {}
         for (x0, x1), grp in self.solid_plotting_df.groupby(["x0", "x1"], sort=False):
             # conds[0] is the bottom of the temperature grid in Celsius.
             base = self.conds[0]
-            for _, row in grp.sort_values("T").iterrows():
+            ordered = grp.sort_values("T")
+            above = [*ordered["Phase"].iloc[1:], None]
+            for (index, row), next_phase in zip(ordered.iterrows(), above):
                 floor_rows.append(
                     {"x0": x0, "x1": x1, "T": base, "Phase": row["Phase"], "Colors": row["Colors"]}
                 )
                 base = row["T"]
+                if next_phase is not None:
+                    base = ceilings[index] = junction(row["Phase"], next_phase, row["T"])
+        if ceilings:
+            self.solid_plotting_df.loc[list(ceilings), "T"] = list(ceilings.values())
         if floor_rows:
             self.solid_plotting_df = pd.concat(
                 [self.solid_plotting_df, pd.DataFrame(floor_rows)], ignore_index=True
@@ -2590,8 +2717,38 @@ class TLIPlotter:
             self.triangulation = None
             triangles = np.empty((0, 3), dtype=int)
 
-        self.plotting_df = pd.concat([self.solid_plotting_df, self.liq_plotting_df])
         partition = self._liquidus_partition(triangles) if len(triangles) else None
+        # A line ends on the surface where the surface lies below its ceiling or within one grid
+        # step above it.
+        if partition is not None:
+            solid = self.solid_plotting_df
+            tops = solid.groupby(["x0", "x1"])["T"].idxmax().to_numpy()
+            ceilings = solid.loc[tops, "T"].to_numpy(float)
+            heights = _surface_heights(partition.surface, solid.loc[tops, ["x0", "x1"]])
+            above = np.searchsorted(grid, ceilings, side="right")
+            first_above = np.where(
+                above < len(grid), grid[np.minimum(above, len(grid) - 1)], ceilings
+            )
+            reach = heights <= first_above
+            solid.loc[tops[reach], "T"] = heights[reach]
+            # A line that ends below the surface ends on the edge tie line through it.
+            ties = self._edge_solidus((-np.inf, np.inf))
+            if ties:
+                starts = np.array([xy[0] for xy, _ in ties])
+                spans = np.array([xy[1] - xy[0] for xy, _ in ties])
+                tie_T = np.array([temp for _, temp in ties])
+                points = solid.loc[tops, ["x0", "x1"]].to_numpy(float)
+                for top, point, ceiling, high, reached in zip(
+                    tops, points, ceilings, first_above, reach
+                ):
+                    along = np.clip(
+                        ((point - starts) * spans).sum(axis=1) / (spans**2).sum(axis=1), 0, 1
+                    )
+                    off = np.hypot(*(starts + along[:, None] * spans - point).T)
+                    hits = tie_T[(off < TIE_TOLERANCE) & (tie_T > ceiling) & (tie_T <= high)]
+                    if not reached and len(hits):
+                        solid.loc[top, "T"] = hits.min()
+        self.plotting_df = pd.concat([self.solid_plotting_df, self.liq_plotting_df])
         in_window = self.liq_plotting_df["T"].to_numpy(float) <= self.conds[1]
         if not _spans_plane(nodes[in_window]):
             logger.warning(
@@ -2602,34 +2759,13 @@ class TLIPlotter:
         elif partition is None and (highlight_phase is not None or interactive_legend):
             logger.warning(f"{self.sys_name}: the liquidus has no phase fields to highlight.")
 
-        # The drawn window reaches the partition's hottest vertex and, with ``solidus``, the
-        # coldest solidus triangle unless temp_range pins that end.
+        # The drawn window reaches the partition's hottest vertex unless temp_range pins it.
         conds = list(self.conds)
-        pinned_low, pinned_high = self._ti._temp_range_arg or (None, None)
+        pinned_high = (self._ti._temp_range_arg or (None, None))[1]
         if partition is not None and pinned_high is None:
             top = float(np.max(partition.surface.T))
             if top > conds[1]:
                 conds[1] = self._ti._pad_ceiling(top + 273.15) - 273.15
-        triangles_drawn = self.solidus_triangles() if solidus else []
-        if triangles_drawn and pinned_low is None:
-            coldest = min(tri["T"] for tri in triangles_drawn) + 273.15
-            step = self._ti.T_incr
-            conds[0] = min(conds[0], max(np.floor(coldest / step) * step, 0.0) - 273.15)
-
-        solidus = [
-            (
-                tri["phases"],
-                np.column_stack(
-                    [
-                        tri["comp"][:, 0] + 0.5 * tri["comp"][:, 1],
-                        tri["comp"][:, 1] * np.sqrt(3) / 2,
-                    ]
-                ),
-                tri["T"],
-            )
-            for tri in triangles_drawn
-            if conds[0] <= tri["T"] <= conds[1]
-        ]
 
         return ternary_surface.render_tx_surface(
             self.solid_plotting_df,
@@ -2640,11 +2776,29 @@ class TLIPlotter:
             conds,
             imputed_phases=self._ti.imputed_phase_names(),
             user_phases=self._ti.user_phase_names(),
+            modified_phases=self._ti.modified_phase_names(),
             partition=partition,
             highlight_phase=highlight_phase,
             interactive_legend=interactive_legend is not False,
-            solidus=solidus,
+            solidus=self._edge_solidus(conds) if solidus else (),
         )
+
+    def _edge_solidus(self, conds) -> list[tuple]:
+        """The tie lines of the binary edge figures between ``conds`` (C), each as ``((2, 2)
+        plot coordinates of its ends, temperature in C)``."""
+        lines = []
+        for name, ties in self._edge_tie_lines.items():
+            first, second = name.split("-")
+            for x0, x1, temp in ties:
+                if not x0 < x1 or not conds[0] <= temp <= conds[1]:
+                    continue
+                ends = []
+                for share in (x0 / 100, x1 / 100):
+                    fractions = {first: 1 - share, second: share}
+                    c1, c2 = (fractions.get(element, 0.0) for element in self.components[1:])
+                    ends.append((c1 + 0.5 * c2, c2 * np.sqrt(3) / 2))
+                lines.append((np.array(ends), float(temp)))
+        return lines
 
     def _liquidus_partition(self, triangles) -> liquidus_fields.Partition | None:
         """The liquidus surface split into primary-phase fields by the liquidus sheets, with a

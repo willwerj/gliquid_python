@@ -23,6 +23,7 @@ import pytest
 
 import gliquid.ternary as ternary_mod
 from gliquid.binary import BinaryLiquid, build_phases_from_chull
+from gliquid.phase import UNARY
 from gliquid.ternary import TernaryLiquidInterpolation
 
 # The package names under test, one line each.
@@ -305,3 +306,17 @@ def test_color_map_polymorph_names(monkeypatch):
     ti.process_data()
     assert captured, "process_data never built a colour map"
     assert captured[0] == COLOR_MAP_POLYMORPH_NAMES["Hf-Ti-Zr"]
+    rank = {
+        p.name: (n, p.t_transition or 0.0)
+        for n, comp in enumerate(sorted(ti.components))
+        for p in UNARY[comp].polymorphs
+    }
+    names = list(ti.color_map)
+    polymorphs = sorted(captured[0], key=rank.get)
+    assert names[: len(polymorphs)] == polymorphs
+    assert ti.color_map == original(
+        ti.phase_names,
+        ss_names=list(ti.ss_models),
+        polymorph_names=set(captured[0]),
+        imputed_names=ti.imputed_phase_names() + ti.user_phase_names(),
+    )

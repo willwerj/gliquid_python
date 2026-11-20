@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import plotly.graph_objects as go
+from pymatgen.core import Composition, Element
 
 # The binary field-label formatter.
 from gliquid.plotting import liquidus_fields, phase_highlight, solidus_view, ternary_labels
@@ -23,6 +24,8 @@ from gliquid.plotting.style import (
     GAP_OUTLINE_COLOR,
     GAP_OUTLINE_DASH,
     IMPUTED_LEGEND_LABEL,
+    MODIFIED_LEGEND_LABEL,
+    SOLID_LINE_DASH_3D,
     USER_DEFINED_LEGEND_LABEL,
     abbreviate_phase_name,
 )
@@ -37,6 +40,7 @@ FIELD_T_DECIMALS = 3
 
 # A 3-D legend draws every line key solid, so an imputed phase is named rather than keyed.
 IMPUTED_SUFFIX = f" ({IMPUTED_LEGEND_LABEL.lower()})"
+MODIFIED_SUFFIX = f" ({MODIFIED_LEGEND_LABEL.lower()})"
 USER_DEFINED_SUFFIX = f" ({USER_DEFINED_LEGEND_LABEL.lower()})"
 
 # Height in pixels of a notebook cell's figure without a ``layout.height``.
@@ -245,6 +249,23 @@ def draw_isotherms(fig, contours) -> None:
             )
 
 
+def _names_other_composition(phase, rows, components) -> bool:
+    """Whether ``phase`` reads as a formula whose atomic fractions differ by more than 1e-3 from
+    its composition, the ``x0_orig``/``x1_orig`` of the first of its ``rows`` on ``components``."""
+    if "x0_orig" not in rows:
+        return False
+    try:
+        formula = Composition(str(phase))
+    except (ValueError, KeyError):
+        return False
+    x0, x1 = float(rows["x0_orig"].iloc[0]), float(rows["x1_orig"].iloc[0])
+    at = dict(zip((str(c) for c in components), (1.0 - x0 - x1, x0, x1)))
+    symbols = {str(el) for el in formula.elements} | {
+        el for el, share in at.items() if share > 1e-9
+    }
+    return any(abs(formula.get_atomic_fraction(el) - at.get(el, 0.0)) > 1e-3 for el in symbols)
+
+
 def render_tx_surface(
     solid_df,
     liq_df,
@@ -254,6 +275,7 @@ def render_tx_surface(
     conds,
     imputed_phases=(),
     user_phases=(),
+    modified_phases=(),
     partition=None,
     highlight_phase=None,
     interactive_legend=False,
@@ -269,8 +291,14 @@ def render_tx_surface(
     derived from (:meth:`gliquid.ternary.TernaryLiquidInterpolation._init_sys`), so this
     function takes no slider of its own.
 
+    Solid phases in the legend and hover text are named by
+    :func:`gliquid.plotting.style.abbreviate_phase_name` with ``components``, so a compound
+    reads in the order of ``components``; a user-defined phase, and an imputed one whose name
+    reads as a formula other than its composition, keeps its own label.
+
     ``imputed_phases`` names phases whose energy was imputed; their lines are drawn dashed
-    and their legend entries and hover text carry an ``(imputed)`` suffix. ``user_phases``
+    (``SOLID_LINE_DASH_3D``) and their legend entries and hover text carry an ``(imputed)``
+    suffix, or ``(modified)`` for those also named in ``modified_phases``. ``user_phases``
     names user-defined phases, drawn the same way with a ``(user-defined)`` suffix.
 
     ``partition`` (a :class:`gliquid.plotting.liquidus_fields.Partition`) replaces the mesh of
@@ -286,12 +314,10 @@ def render_tx_surface(
     handler (see :mod:`gliquid.plotting.phase_highlight`). Without a ``partition`` neither draws
     anything.
 
-    ``solidus`` lists the triangles of three solid phases the liquid leaves, each ``(phases,
-    (3, 2) plot coordinates of the three phases, temperature in C)``. Each is drawn flat at its
-    temperature and outlined in the colour of a binary tie line
-    (:mod:`gliquid.plotting.solidus_view`). In a browser, the parts of an outline behind the
-    liquidus are not drawn, and the triangle under the pointer is filled with the three phases'
-    colours, each strongest at its own corner.
+    ``solidus`` lists the tie lines of the binary sides, each ``((2, 2) plot coordinates of its
+    ends, temperature in C)``. Each is drawn at its temperature in the colour of a binary tie
+    line (:mod:`gliquid.plotting.solidus_view`). In a browser, the parts of a line behind the
+    liquidus are not drawn.
 
     Raises:
         ValueError: ``highlight_phase`` is not a solid phase of the figure.
@@ -317,9 +343,27 @@ def render_tx_surface(
     phase_names = list(color_map)
     imputed_phases = set(imputed_phases)
     user_phases = set(user_phases)
+    modified_phases = set(modified_phases) & imputed_phases
+    dash, gap = (share * (conds[1] - conds[0]) for share in SOLID_LINE_DASH_3D)
+
+    ordered = all(Element.is_valid_symbol(str(c)) for c in components)
+    misnamed = {
+        phase
+        for phase, rows in solid_df.groupby("Phase")
+        if ordered and phase in imputed_phases and _names_other_composition(phase, rows, components)
+    }
+
+    def shown_name(phase):
+        if phase not in legend_phases:
+            return str(phase)
+        if phase in user_phases or not ordered or phase in misnamed:
+            return abbreviate_phase_name(phase, phase_names)
+        return abbreviate_phase_name(phase, phase_names, components)
 
     def display_name(phase):
-        name = abbreviate_phase_name(phase, phase_names)
+        name = shown_name(phase)
+        if phase in modified_phases:
+            return f"{name}{MODIFIED_SUFFIX}"
         if phase in imputed_phases:
             return f"{name}{IMPUTED_SUFFIX}"
         if phase in user_phases:
@@ -329,17 +373,19 @@ def render_tx_surface(
     for n, (label, group) in enumerate(solid_df.groupby("Phase")):
         # One vertical segment per composition, broken from the next by None.
         x, y, z, colors = [], [], [], []
+        dashed = label in imputed_phases or label in user_phases
         for _, segment in group.sort_values("T").groupby(["x0", "x1"], sort=False):
-            x += [*segment["x0"], None]
-            y += [*segment["x1"], None]
-            z += [*segment["T"], None]
-            colors += [*segment["Colors"], segment["Colors"].iloc[-1]]
+            heights, shades = segment["T"].tolist(), segment["Colors"].tolist()
+            if dashed:
+                heights, shades = _dashes(heights, shades, dash, gap)
+            x += [segment["x0"].iloc[0]] * len(heights) + [None]
+            y += [segment["x1"].iloc[0]] * len(heights) + [None]
+            z += [*heights, None]
+            colors += [*shades, shades[-1]]
         x, y, z, colors = x[:-1], y[:-1], z[:-1], colors[:-1]
         line = dict(color=colors[0] if len(set(colors)) == 1 else colors, width=10)
         if highlight:
             tags.solids[str(label)] = (f"gliquid-solid-{n}", line["color"])
-        if label in imputed_phases or label in user_phases:
-            line["dash"] = "dash"
         fig.add_trace(
             go.Scatter3d(
                 x=x,
@@ -365,7 +411,8 @@ def render_tx_surface(
     if partition is not None:
         surface = partition.surface
         coexistent = np.array(
-            [", ".join(phases) for phases in partition.vertex_phases], dtype=object
+            [", ".join(map(shown_name, phases)) for phases in partition.vertex_phases],
+            dtype=object,
         )
         unlisted = [phase for phase in partition.fields if phase not in legend_phases]
     else:
@@ -377,7 +424,13 @@ def render_tx_surface(
             parent=np.arange(len(liq_df)),
             faces=np.asarray(triangles),
         )
-        coexistent = liq_df["coexistent_phases"].to_numpy(dtype=object)
+        coexistent = np.array(
+            [
+                ", ".join(shown_name(phase) for phase in text.split(", ") if phase)
+                for text in liq_df["coexistent_phases"]
+            ],
+            dtype=object,
+        )
 
     if len(surface.faces):
         fig.add_trace(
@@ -419,7 +472,7 @@ def render_tx_surface(
         )
 
     if len(solidus):
-        fig.add_traces(solidus_view.traces(solidus, color_map, display_name))
+        fig.add_traces(solidus_view.traces(solidus))
 
     for n, phase in enumerate(legend_phases):
         if highlight:
@@ -459,31 +512,15 @@ def render_tx_surface(
     fig.update_layout(
         legend=_LEGEND,
         autosize=True,
-        # The z-axis title, a screen-space annotation.
-        annotations=[
-            dict(
-                text="Temperature (°C)",
-                textangle=-90,
-                # Negative paper x places the text in the left margin, beside the scene's tick
-                # labels.
-                xref="paper",
-                yref="paper",
-                x=-0.03,
-                y=0.5,
-                xanchor="center",
-                yanchor="middle",
-                showarrow=False,
-                font=dict(size=17, color="black"),
-            )
-        ],
-        # t leaves room for the figure title; l holds the z-axis title.
+        # t leaves room for the figure title.
         margin=dict(l=30, r=0, b=0, t=40),
         scene=dict(
+            annotations=[ternary_labels.z_title("Temperature (°C)", conds)],
             zaxis=dict(
                 # The plotted window: conds is the temperature grid in Celsius, temp_slider already
                 # folded in.
                 range=[conds[0], conds[1]],
-                # Blank; the title is drawn as a paper annotation.
+                # Blank; the title is drawn as a scene annotation.
                 title="",
             ),
             xaxis=dict(
@@ -534,6 +571,21 @@ def render_tx_surface(
     return fig
 
 
+def _dashes(heights, colors, dash, gap) -> tuple[list, list]:
+    """The vertical line through ``heights`` (ascending) as dashes ``dash`` long and ``gap``
+    apart, a ``None`` between two dashes, with each dash in the colour of the point above it.
+
+    Returns:
+        tuple: the heights and the colours of the dashes' ends and breaks.
+    """
+    out, shades = [], []
+    for low, high, colour in zip(heights, heights[1:], colors[1:]):
+        for start in np.arange(low, high, dash + gap):
+            out += [float(start), float(min(start + dash, high)), None]
+            shades += [colour] * 3
+    return out[:-1], shades[:-1]
+
+
 _ATTACH_ALL = (
     "window.gliquidAttachLabelViews(gd); window.gliquidAttachPhaseHighlight(gd); "
     "window.gliquidAttachSolidusView(gd);"
@@ -548,7 +600,7 @@ def post_script() -> str:
     It shows the view of the base triangle's labels (:mod:`gliquid.plotting.ternary_labels`)
     whose edge is lowest on screen as the camera turns, on a figure built with
     ``interactive_legend`` it handles legend clicks (:mod:`gliquid.plotting.phase_highlight`),
-    and it draws the solidus triangles for the camera and the pointer
+    and it draws the binary solidus lines for the camera
     (:mod:`gliquid.plotting.solidus_view`).
     """
     return (
