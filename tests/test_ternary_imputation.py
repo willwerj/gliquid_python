@@ -11,6 +11,7 @@ compound, so every imputed phase is synthetic.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import warnings
@@ -35,6 +36,7 @@ from gliquid.cache import (
     imputed_entry_label,
 )
 from gliquid.phase import EV_ATOM_TO_J_MOL, UNARY
+from gliquid.plotting import style
 from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
 
 COMPONENTS = ["Al", "Mg", "Si"]
@@ -316,6 +318,22 @@ class TestProtection:
         assert record.enthalpy == record.inverted_enthalpy
         assert [n for n in record.displaces if n.startswith("Mg2AlSi")]
         assert not synthetic_stable(ti)
+        assert record.enthalpy < record.hull_limit_enthalpy < record.hull_enthalpy
+
+    def test_the_hull_limit_force_reports_keeps_what_fell(self, no_persist, synthetic_store):
+        ti = build("hsx", data_dir=synthetic_store)
+        forced = ti.impute_phase(
+            self.DISPLACER, 2500.0, name="TX", screen=False, force=True, apply=False
+        )
+        kept = ti.impute_phase(
+            self.DISPLACER,
+            name="TX",
+            screen=False,
+            enthalpy=forced.hull_limit_enthalpy,
+            entropy=0.0,
+        )
+        assert kept.accepted and kept.displaces == () and kept.hull_limit_enthalpy is None
+        assert synthetic_stable(ti)
 
     def test_an_imputed_phase_is_protected_too(self, no_persist):
         ti = build("hsx")
@@ -456,6 +474,27 @@ class TestHoldHull:
     def test_control_a_phase_that_displaces_nothing_carries_no_entropy(self, no_persist):
         record = build("hsx").impute_phase(TARGET, 1000.0, name="TX", screen=False, hold_hull=True)
         assert record.accepted and record.entropy == 0.0 and record.displaces == ()
+        assert record.hull_limit_enthalpy is None and record.enthalpy < record.hull_enthalpy
+
+    def test_with_force_it_is_held_where_an_entropy_reaches_and_placed_as_it_is_otherwise(
+        self, no_persist, synthetic_store, monkeypatch
+    ):
+        ti = build("hsx", data_dir=synthetic_store)
+        both = dict(name="TX", screen=False, hold_hull=True, force=True, apply=False)
+        held = ti.impute_phase(self.DISPLACER, 2500.0, **both)
+        assert held.accepted and held.entropy > 0.0
+        assert held.enthalpy == held.hull_limit_enthalpy > held.inverted_enthalpy
+
+        refined = imp_ternary._HullRows.refined
+
+        def flat(rows, temp):
+            return dataclasses.replace(refined(rows, temp), entropy=held.entropy)
+
+        monkeypatch.setattr(imp_ternary._HullRows, "refined", flat)
+        placed = ti.impute_phase(self.DISPLACER, 2500.0, **both)
+        assert placed.accepted and placed.entropy == 0.0
+        assert placed.enthalpy == placed.inverted_enthalpy < placed.hull_limit_enthalpy
+        assert [n for n in placed.displaces if n.startswith("Mg2AlSi")]
 
 
 class TestSolidus:
@@ -851,6 +890,131 @@ class TestLiquidusRanges:
             assert top == pytest.approx(tops[name], abs=imp_ternary.HSX_TOLERANCE_K)
 
 
+class TestPhaseTops:
+    """The highest temperature each solid phase is stable at, and what it becomes there."""
+
+    def test_an_imputed_phase_tops_out_at_its_temperature_into_its_decomposition(self, no_persist):
+        ti = build("hsx")
+        record = ti.impute_phase(TARGET, 1000.0, name="TX", screen=False)
+        top = imp_ternary.phase_tops(ti, ["TX"])["TX"]
+        assert top.temperature_k == pytest.approx(1000.0, abs=0.5)
+        merged = {}
+        for phase, weight in record.decomposition:
+            merged[phase] = merged.get(phase, 0.0) + weight
+        assert dict(top.products) == pytest.approx(merged, abs=1e-6)
+        assert top.kind == imp_ternary._top_kind(merged)
+
+    def test_the_processed_diagram_start_finds_the_same_tops(self, no_persist):
+        ti = build("hsx")
+        cold = imp_ternary.phase_tops(ti)
+        ti.process_data()
+        hinted = imp_ternary.phase_tops(ti)
+        assert set(hinted) == set(cold) and hinted
+        for name, top in hinted.items():
+            assert top.temperature_k == pytest.approx(cold[name].temperature_k, abs=0.05)
+            assert top.kind == cold[name].kind
+
+    def test_a_solid_above_the_hull_without_an_entropy_is_never_stable(self, no_persist):
+        assert imp_ternary.phase_top(build("hsx"), TARGET, 50000.0, 0.0) is None
+
+    def test_a_temperature_below_the_liquid_is_refused_with_the_lowest_that_works(self, no_persist):
+        ti = build("hsx")
+        tol = imp_ternary.TOP_TOL_K
+
+        def record(temp):
+            return ti.impute_phase(TARGET, temp, name="TX", apply=False, screen=False)
+
+        cold = record(300.0)
+        assert cold.code == "below_solidus" and cold.lowest_top_k > 300.0
+        assert record(cold.lowest_top_k - 2 * tol).code == "below_solidus"
+        assert record(cold.lowest_top_k).code != "below_solidus"
+
+    def test_a_phase_given_its_enthalpy_below_the_liquid_decomposes_into_solids(self, no_persist):
+        ti = build("hsx")
+        deep = imp_core.phase_diagram_enthalpy_at(ti.solid_hull(), TARGET) - 2000.0
+        target = {"composition": TARGET, "temperature": 300.0, "enthalpy": deep, "name": "TX"}
+        record = imp_ternary.impute_ternary_phases(ti, [target], screen=False, refine_liquid=True)[
+            0
+        ]
+        assert record.accepted and record.entropy < 0.0, record.reason
+        assert "L" not in dict(record.decomposition)
+        top = imp_ternary.phase_tops(ti, ["TX"], refine_liquid=True)["TX"]
+        assert top.temperature_k == pytest.approx(300.0, abs=imp_ternary.TOP_TOL_K)
+        assert top.kind == "decomposition"
+
+    def test_a_phase_given_its_enthalpy_tops_out_without_the_phase_it_pushes_off(self, no_persist):
+        ti = build("hsx")
+        ti.impute_phase({"Al": 0.2, "Mg": 0.45, "Si": 0.35}, 1300.0, name="QX", screen=False)
+        deep = imp_core.phase_diagram_enthalpy_at(ti.solid_hull(), TARGET) - 3000.0
+        target = {"composition": TARGET, "temperature": 1000.0, "enthalpy": deep, "name": "PX"}
+        record = imp_ternary.impute_ternary_phases(
+            ti, [target], force=True, screen=False, refine_liquid=True
+        )[0]
+        assert record.accepted and "QX" in record.displaces, record.reason
+        assert "QX" not in dict(record.decomposition)
+        top = imp_ternary.phase_tops(ti, ["PX"], refine_liquid=True)["PX"]
+        assert abs(top.temperature_k - 1000.0) <= imp_ternary.TOP_MARGIN_K + imp_ternary.TOP_TOL_K
+
+    def test_a_phase_stable_in_a_window_keeps_the_top_its_search_lands_on(self, monkeypatch):
+        class Window:
+            def __init__(self, *args):
+                pass
+
+            def envelope(self, temp, lattice=None):
+                above, below = 5.0 * (temp - 1000.0), 800.0 - temp
+                if above >= below:
+                    return imp_core.Envelope(-(above + 1e-13), (0,), (1.0,), ("L",), 5.0)
+                return imp_core.Envelope(-(below + 1e-13), (1,), (1.0,), ("A",), -1.0)
+
+            def lattice(self, env):
+                return None
+
+        monkeypatch.setattr(imp_ternary, "_HullRows", Window)
+        top = imp_ternary._phase_top(None, None, None, 0.0, 0.0, [], 1075.0)
+        assert top.temperature_k == pytest.approx(1000.0, abs=imp_ternary.TOP_TOL_K)
+        assert dict(top.products) == {"L": 1.0}
+
+    @pytest.mark.parametrize(
+        "products, kind",
+        [
+            ({"L": 1.0}, "congruent"),
+            ({"L": 0.6, "A": 0.4}, "incongruent"),
+            ({"A": 1.0}, "transition"),
+            ({"A": 0.5, "B": 0.5}, "decomposition"),
+        ],
+    )
+    def test_the_kind_follows_from_the_products(self, products, kind):
+        assert imp_ternary._top_kind(products) == kind
+
+
+class TestRefinedLiquid:
+    """``refine_liquid``: a phase is placed against the liquid itself, not against its grid."""
+
+    OFF_GRID = {"Al": 0.23, "Mg": 0.41, "Si": 0.36}
+
+    def placed(self, temp, **kwargs):
+        ti = build("hsx")
+        return ti, ti.impute_phase(self.OFF_GRID, temp, name="TX", screen=False, **kwargs)
+
+    def test_a_phase_that_melts_alone_carries_the_liquids_energy_at_its_composition(
+        self, no_persist
+    ):
+        ti, record = self.placed(1500.0, refine_liquid=True)
+        liquid = float(ti.liquid_gibbs([self.OFF_GRID["Mg"], self.OFF_GRID["Si"]], 1500.0))
+        assert {phase for phase, _ in record.decomposition} == {"L"}
+        assert record.enthalpy == pytest.approx(liquid - imp_core.HULL_GUARD_MARGIN_J, abs=1e-6)
+        assert self.placed(1500.0)[1].enthalpy > record.enthalpy + 10.0
+
+    @pytest.mark.parametrize("temp", [900.0, 1500.0])
+    def test_it_tops_out_at_its_temperature_against_the_refined_liquid(self, no_persist, temp):
+        ti, record = self.placed(temp, refine_liquid=True)
+        assert record.accepted, record.reason
+        top = imp_ternary.phase_tops(ti, ["TX"], refine_liquid=True)["TX"]
+        reach = imp_ternary.TOP_MARGIN_K + imp_ternary.TOP_TOL_K
+        assert abs(top.temperature_k - temp) <= reach
+        assert imp_ternary.phase_tops(ti, ["TX"])["TX"].temperature_k > temp + 1.0
+
+
 class TestSolidusTriangles:
     """The triangles of three solid phases the liquid leaves."""
 
@@ -887,11 +1051,9 @@ class TestSolidusTriangles:
     def test_empty_before_a_plot(self, no_persist):
         assert self.plotter().solidus_triangles() == []
 
-    def test_the_triangles_tile_the_system_and_are_drawn_where_the_liquid_leaves(self, no_persist):
+    def test_the_triangles_tile_the_system_where_the_liquid_leaves(self, no_persist):
         plotter = self.plotter()
-        plain = plotter.get_plot("tx")
-        assert not {"solidus", "solidus fill"} & {trace.name for trace in plain.data}
-        fig = plotter.get_plot("tx", solidus=True)
+        plotter.get_plot("tx")
         triangles = plotter.solidus_triangles()
         temps = [triangle["T"] for triangle in triangles]
         assert temps == sorted(temps, reverse=True)
@@ -900,16 +1062,30 @@ class TestSolidusTriangles:
         for triangle in triangles:
             assert self.liquid_over_plane(plotter._ti, triangle) == pytest.approx(0.0, abs=0.5)
 
-        outline = next(trace for trace in fig.data if trace.name == "solidus")
-        assert sorted({z for z in outline.z if z is not None}) == pytest.approx(sorted(temps))
-        fill = next(trace for trace in fig.data if trace.name == "solidus fill")
-        assert list(fill.z) == pytest.approx(np.repeat(temps, 3))
-        assert len(fill.vertexcolor) == 3 * len(triangles)
-
         ranges = plotter.liquidus_ranges()
         for triangle in triangles:
             for phase in triangle["phases"]:
                 assert ranges[phase][0] <= triangle["T"]
+
+    def test_solidus_draws_the_binary_tie_lines_inside_the_window_on_their_sides(self, no_persist):
+        plotter = self.plotter()
+        plain = plotter.get_plot("tx")
+        assert "solidus" not in {trace.name for trace in plain.data}
+        assert "solidus" not in {trace.name for trace in plotter.get_plot("tx", solidus=True).data}
+
+        low, high = plotter.conds
+        inside = 0.5 * (low + high)
+        plotter._edge_tie_lines = {
+            "Mg-Si": [(0.0, 50.0, inside), (20.0, 20.0, inside), (0.0, 50.0, high + 100.0)],
+            "Al-Si": [(40.0, 100.0, low)],
+        }
+        (drawn,) = [t for t in plotter.get_plot("tx", solidus=True).data if t.name == "solidus"]
+        assert list(drawn.z) == [inside, inside, None, low, low]
+        assert [x for x in drawn.x if x is not None] == pytest.approx([1.0, 0.75, 0.2, 0.5])
+        height = np.sqrt(3) / 2
+        assert [y for y in drawn.y if y is not None] == pytest.approx(
+            [0.0, 0.5 * height, 0.4 * height, height]
+        )
 
     def test_a_joint_under_a_hotter_sheet_gives_no_triangle(self, no_persist, monkeypatch):
         plotter = self.plotter()
@@ -1028,19 +1204,6 @@ class TestSolidusTriangles:
         assert rows.tolist() == [other.tolist()]
         assert asked[1] == pytest.approx(alone[:1], abs=1e-6)
         assert temps == pytest.approx(alone[1:], abs=1e-6)
-
-    def test_the_drawn_window_reaches_down_to_the_coldest_triangle(self, no_persist, monkeypatch):
-        plotter = self.plotter()
-        plotter.get_plot("tx")
-        triangles = plotter.solidus_triangles()
-        cold = plotter.conds[0] - 5.0
-        low = [{**triangles[-1], "T": cold}, *triangles[:-1]]
-        monkeypatch.setattr(TLIPlotter, "solidus_triangles", lambda self: low)
-        fig = plotter.get_plot("tx", solidus=True)
-        outline = next(trace for trace in fig.data if trace.name == "solidus")
-        assert min(z for z in outline.z if z is not None) == pytest.approx(cold)
-        floor = fig.layout.scene.zaxis.range[0]
-        assert plotter.conds[0] - plotter.T_incr <= floor <= cold
 
     def test_three_solids_of_one_energy_are_one_triangle(self):
         """Three elements with no compound: the solids' hull is flat."""
@@ -1234,7 +1397,15 @@ class TestStaleness:
 
 
 def dashed(fig) -> list:
-    return [t for t in fig.data if t.type == "scatter3d" and t.line.dash == "dash"]
+    """The solid-phase lines of ``fig`` that are broken into dashes at one composition."""
+    return [
+        t
+        for t in fig.data
+        if t.type == "scatter3d"
+        and (t.hovertemplate or "").startswith("<b>Phase:")
+        and None in t.z
+        and len({x for x in t.x if x is not None}) == 1
+    ]
 
 
 def tx_figure(ti, order="given"):
@@ -1250,6 +1421,23 @@ class TestPlot:
         lines = dashed(fig)
         assert len(lines) == 1 and "TX (imputed)" in lines[0].hovertemplate
         assert "TX (imputed)" in {t.name for t in fig.data}
+        assert ti.modified_phase_names() == []
+        low, high = fig.layout.scene.zaxis.range
+        ends = [z for z in lines[0].z if z is not None]
+        assert ends[1] - ends[0] == pytest.approx(style.SOLID_LINE_DASH_3D[0] * (high - low))
+        assert ends[2] - ends[1] == pytest.approx(style.SOLID_LINE_DASH_3D[1] * (high - low))
+
+    def test_a_phase_standing_in_for_a_dft_entry_is_named_modified(
+        self, no_persist, synthetic_store
+    ):
+        ti, name, t0 = TestAdjustPhaseTemperature.synthetic(synthetic_store)
+        assert ti.adjust_phase_temperature(name, t0 - 150.0).accepted
+        assert ti.modified_phase_names() == ti.imputed_phase_names() == [name]
+        fig = tx_figure(ti)
+        (line,) = dashed(fig)
+        assert "(modified)" in line.hovertemplate
+        names = [t.name or "" for t in fig.data]
+        assert any("(modified)" in n for n in names) and not any("(imputed)" in n for n in names)
 
     def test_control_without_imputation_nothing_is_dashed(self):
         ti = build("hsx")

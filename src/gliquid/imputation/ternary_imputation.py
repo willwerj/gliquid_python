@@ -4,7 +4,7 @@ Gives a solid phase of a :class:`~gliquid.ternary.TernaryLiquidInterpolation` th
 enthalpy at which it leaves the ternary hull at a given temperature. The enthalpy is read off
 the lower convex envelope, at that temperature and at the phase's composition, of every other
 phase in the H-S-x table the hull is built from: the liquid surface, any solid-solution
-surfaces, and the solid phases (:func:`gliquid.imputation.core.envelope_energy`). With a
+surfaces, and the solid phases (:func:`gliquid.imputation.core.lower_envelope_at`). With a
 ``liquid_composition`` it is instead the liquid's tangent at that composition
 (:func:`gliquid.imputation.core.tangent_value`), the ternary counterpart of the binary
 peritectic/eutectic construction; a liquid composition equal to the phase's own gives the
@@ -19,7 +19,9 @@ a later ternary object built on the same store with ``include_imputed=True`` rea
 A phase that would push a stable phase off the 0 K hull is not placed: the call warns, naming
 the phases it would displace, and ``force=True`` places it anyway. ``hold_hull=True`` places it
 at the deepest enthalpy that keeps those phases, with the entropy that still takes it off the
-hull at its temperature.
+hull at its temperature. With both, a phase is held where an entropy reaches its temperature
+and placed as it is otherwise; either way its record names the phases (``displaces``) and the
+enthalpy that keeps them (``hull_limit_enthalpy``).
 
 A target with a ``solidus`` is placed between two temperatures: its enthalpy and entropy put it
 on the envelope at its solidus and again at the temperature it leaves the hull at, so it is on
@@ -47,7 +49,10 @@ import warnings
 from collections.abc import Sequence
 
 import numpy as np
+import pandas as pd
+from pymatgen.analysis.phase_diagram import PhaseDiagram
 from pymatgen.core import Composition
+from pymatgen.entries.computed_entries import ComputedEntry
 
 import gliquid.api as api
 import gliquid.cache as cache
@@ -57,15 +62,16 @@ from gliquid.imputation.core import (
     HULL_GUARD_MARGIN_J,
     PROVENANCE_KEY,
     REPLACES_KEY,
+    Envelope,
     HullOps,
     accept_growing,
     augmented_hull,
     clamp_bisect,
     entry_at_enthalpy,
     entry_fractions,
-    envelope_energy,
     hull_ref_energy_per_atom,
     independent_coords,
+    lower_envelope_at,
     normalize_fractions,
     phase_diagram_enthalpy_at,
     protected_clearance,
@@ -98,6 +104,18 @@ SOLIDUS_LIMIT_TOL_K = 1.0  # resolution of the nearest solidus reported on a rej
 # Largest share of the envelope's entropy at a phase's top temperature that the entropy solved
 # from its solidus may take.
 SOLIDUS_ENTROPY_SHARE = 0.9
+#: What a solid phase becomes where it leaves the hull on heating (see :class:`PhaseTop`).
+TOP_KINDS = ("congruent", "incongruent", "transition", "decomposition")
+TOP_TOL_K = 0.01  # resolution of PhaseTop.temperature_k
+TOP_ITERATIONS = 60
+#: Lattice steps per liquid grid step where an envelope reads the liquid it rests on again.
+LIQUID_REFINE = 6
+#: The most, K, the guard margin of an envelope enthalpy raises the temperature it is read at.
+TOP_MARGIN_K = 0.05
+#: A top moves where the lattice leaves the phase this far above the envelope, J/mol-atom.
+LATTICE_GAIN_J = 1e-3
+#: Most solves of a target whose solved enthalpy changes the phases it pushes off the hull.
+HIDDEN_ROUNDS = 3
 
 
 @dataclasses.dataclass
@@ -124,6 +142,11 @@ class TernaryImputationResult:
         reason: a sentence describing ``code``.
         enthalpy: the formation enthalpy the phase carries, J/mol-atom.
         inverted_enthalpy: the enthalpy the inversion produced, J/mol-atom.
+        hull_enthalpy: the formation enthalpy of the 0 K solid hull at the phase's composition
+            without the phase, J/mol-atom; below it the phase is on the 0 K hull.
+        hull_limit_enthalpy: for a phase with ``displaces`` placed with ``force`` or
+            ``hold_hull``, the deepest formation enthalpy that keeps those phases on the 0 K
+            hull, J/mol-atom; ``None`` when no enthalpy on the 0 K hull keeps them.
         entropy: the entropy the phase carries, J/mol-atom/K. Nonzero where ``hold_hull`` held
             the enthalpy at the 0 K hull limit, and for a phase with a ``solidus_k``.
         support_entropy: the entropy of the envelope under the phase at ``temperature_k``,
@@ -133,6 +156,9 @@ class TernaryImputationResult:
         decomposition: ``(phase, weight)`` pairs spanning the envelope at the phase's
             composition -- what it decomposes into at ``temperature_k``. Empty for the tangent.
         melts: the decomposition includes the liquid. ``None`` for the tangent.
+        lowest_top_k: on a ``'below_solidus'`` rejection of ``temperature_k``, the lowest
+            temperature, K to :data:`TOP_TOL_K`, the phase can be given to leave the hull at;
+            ``None`` when there is none below :data:`gliquid.ternary.PRESCREEN_CEILING_K`.
         realized_temperature_k: the highest temperature the processed diagram shows the phase
             at, K; ``None`` when the diagram was not processed.
         entry_dict: the tagged ``ComputedEntry.as_dict()`` payload.
@@ -153,11 +179,14 @@ class TernaryImputationResult:
     reason: str = ""
     enthalpy: float | None = None
     inverted_enthalpy: float | None = None
+    hull_enthalpy: float | None = None
+    hull_limit_enthalpy: float | None = None
     entropy: float = 0.0
     support_entropy: float | None = None
     displaces: tuple[str, ...] = ()
     decomposition: tuple[tuple[str, float], ...] = ()
     melts: bool | None = None
+    lowest_top_k: float | None = None
     realized_temperature_k: float | None = None
     entry_dict: dict | None = None
     written: bool = False
@@ -166,6 +195,26 @@ class TernaryImputationResult:
 
     def reject(self, code: str, reason: str) -> None:
         self.accepted, self.code, self.reason = False, code, reason
+
+
+@dataclasses.dataclass(frozen=True)
+class PhaseTop:
+    """The highest temperature a solid phase is stable at, and what it becomes above it.
+
+    Attributes:
+        temperature_k: that temperature, K; ``None`` for a phase still stable at
+            :data:`gliquid.ternary.PRESCREEN_CEILING_K`.
+        kind: one of :data:`TOP_KINDS`: the phase melts into the liquid alone
+            (``'congruent'``) or into the liquid and other solids (``'incongruent'``), or turns
+            into another solid of its composition (``'transition'``) or into other solids
+            (``'decomposition'``). ``None`` with no temperature.
+        products: ``(phase, weight)`` pairs of what it becomes, the liquid as one ``'L'``
+            however many liquid compositions take part.
+    """
+
+    temperature_k: float | None
+    kind: str | None
+    products: tuple[tuple[str, float], ...] = ()
 
 
 # -- Pieces --
@@ -223,27 +272,81 @@ def _ternary_provenance(tli, record, liquid_fractions, margin_j, base) -> dict:
     }
 
 
-def _liquid_at(tli, table, temp: float):
-    """A copy of ``table`` whose liquid rows carry the liquid's H and S at ``temp`` (K)."""
-    out = table.copy()
-    liquid = (out["Phase Name"] == LIQUID_PHASE).to_numpy()
-    with np.errstate(divide="ignore", invalid="ignore"):
-        h, s = tli.liquid_model().h_s_grid(
-            (out["x0"].to_numpy(float)[liquid], out["x1"].to_numpy(float)[liquid]), float(temp)
+class _HullRows:
+    """The rows of a hull table without some phases, for envelopes at one composition with the
+    liquid read at each temperature on the table's grid and, with ``refine``, at that
+    composition and on a :meth:`lattice`."""
+
+    def __init__(self, tli, table, x_query, exclude, refine=False):
+        rows = table[~table["Phase Name"].isin(list(exclude))]
+        self.model = tli.liquid_model()
+        self.step = tli.delta / LIQUID_REFINE
+        self.x_query = np.asarray(x_query, float)
+        self.names = rows["Phase Name"].to_numpy()
+        self.points = rows[["x0", "x1"]].to_numpy(float)
+        self.h = rows["H"].to_numpy(float)
+        self.s = rows["S"].to_numpy(float)
+        self.liquid = self.names == LIQUID_PHASE
+        on_grid = (np.abs(self.points[self.liquid] - self.x_query).max(axis=1) < 1e-12).any()
+        self.refine = refine
+        self.own = self.x_query[None, :] if refine and not on_grid else np.empty((0, 2))
+
+    def envelope(self, temp: float, lattice=None) -> Envelope:
+        """The envelope at ``temp`` (K), the liquid also read on ``lattice`` (:meth:`lattice`)."""
+        more = self.own if lattice is None else np.vstack([self.own, lattice])
+        points = np.vstack([self.points, more])
+        liquid = np.concatenate([self.liquid, np.ones(len(more), bool)])
+        h = np.concatenate([self.h, np.zeros(len(more))])
+        s = np.concatenate([self.s, np.zeros(len(more))])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            h_liquid, s_liquid = self.model.h_s_grid(
+                (points[liquid, 0], points[liquid, 1]), float(temp)
+            )
+        h[liquid] = np.where(np.isfinite(h_liquid), h_liquid, 0)
+        s[liquid] = np.where(np.isfinite(s_liquid), s_liquid, 0)
+        env = lower_envelope_at(points, h - float(temp) * s, self.x_query)
+        return dataclasses.replace(
+            env,
+            phases=tuple(
+                str(self.names[i]) if i < len(self.names) else LIQUID_PHASE for i in env.rows
+            ),
+            entropy=float(sum(w * s[i] for w, i in zip(env.weights, env.rows))),
         )
-    out.loc[liquid, "H"] = np.where(np.isfinite(h), h, 0)
-    out.loc[liquid, "S"] = np.where(np.isfinite(s), s, 0)
-    return out
+
+    def lattice(self, env: Envelope) -> np.ndarray | None:
+        """The compositions within one grid step of each liquid row that ``env``
+        (:meth:`envelope` without a lattice) rests on, ``tli.delta / LIQUID_REFINE`` apart;
+        ``None`` where it rests on none."""
+        nodes = [
+            self.points[i] if i < len(self.names) else self.x_query
+            for i, weight in zip(env.rows, env.weights)
+            if weight > 1e-9 and (i >= len(self.names) or self.liquid[i])
+        ]
+        if not self.refine or not nodes:
+            return None
+        if max(*self.x_query, 1.0 - self.x_query.sum()) > 1.0 - 1e-9:
+            return None
+        steps = self.step * np.arange(-LIQUID_REFINE, LIQUID_REFINE + 1)
+        offsets = np.stack(np.meshgrid(steps, steps, indexing="ij"), axis=-1).reshape(-1, 2)
+        near = (np.array(nodes)[:, None, :] + offsets).reshape(-1, 2)
+        near = np.unique(np.round(near, 12), axis=0)
+        return near[(near >= 0).all(axis=1) & (near.sum(axis=1) <= 1)]
+
+    def refined(self, temp: float) -> Envelope:
+        """:meth:`envelope` with the liquid it rests on read on its :meth:`lattice`."""
+        env = self.envelope(temp)
+        lattice = self.lattice(env)
+        return env if lattice is None else self.envelope(temp, lattice)
 
 
 def _invert_ternary_phase_energy(
-    tli, record, table, liquid_fractions, margin_j, dx, given
+    tli, record, table, liquid_fractions, margin_j, dx, given, refine=False, hidden=()
 ) -> float | None:
     """The enthalpy for ``record``, or ``None`` after rejecting it.
 
     ``given`` holds the target's ``enthalpy`` (J/mol-atom) and ``entropy`` (J/mol-atom/K), where
     it names them; the one it does not name is solved from the target's temperature or solidus
-    and set on ``record``.
+    and set on ``record``. The envelope at its temperature leaves out the phases ``hidden``.
     """
     components = list(tli.components)
     if record.method == "tangent":
@@ -260,26 +363,27 @@ def _invert_ternary_phase_energy(
         record.entropy = float(given["entropy"])
         return float(given["enthalpy"])
     if record.temperature_k is None:
-        return _join_at_solidus(tli, record, table, x_query, margin_j, given)
-    env = envelope_energy(
-        _liquid_at(tli, table, record.temperature_k),
-        x_query,
-        record.temperature_k,
-        comp_cols=["x0", "x1"],
-        exclude=[record.name],
-    )
+        return _join_at_solidus(tli, record, table, x_query, margin_j, given, refine)
+    exclude = [record.name, *hidden]
+    rows = _HullRows(tli, table, x_query, exclude, refine)
+    env = rows.refined(record.temperature_k)
     record.decomposition = tuple(
         (p, float(w)) for p, w in zip(env.phases, env.weights) if w > 1e-12
     )
     record.melts = LIQUID_PHASE in env.phases
     record.support_entropy = float(env.entropy or 0.0)
-    if record.support_entropy <= MIN_SUPPORT_ENTROPY:
+    if record.support_entropy <= MIN_SUPPORT_ENTROPY and not given:
+        record.lowest_top_k = _lowest_top_k(
+            tli, table, x_query, exclude, record.temperature_k, refine
+        )
         record.reject(
             "below_solidus",
             f"at {record.temperature_k:g} K every phase around this composition carries zero "
             f"entropy, so no enthalpy makes the phase leave the hull at that temperature",
         )
         return None
+    if refine:
+        margin_j = min(margin_j, TOP_MARGIN_K * record.support_entropy)
     if given:
         top = float(env.value) - margin_j
         if "enthalpy" in given:
@@ -304,13 +408,7 @@ def _invert_ternary_phase_energy(
         """The entropy that also puts the phase on the envelope at ``solidus`` (None where the
         liquid is absent there, or the phase would be off the hull between the two
         temperatures), and whether the liquid is there."""
-        low = envelope_energy(
-            _liquid_at(tli, table, solidus),
-            x_query,
-            solidus,
-            comp_cols=["x0", "x1"],
-            exclude=[record.name],
-        )
+        low = rows.envelope(solidus)
         if not any(p == LIQUID_PHASE and w > 1e-12 for p, w in zip(low.phases, low.weights)):
             return None, False
         entropy = (float(low.value) - float(env.value)) / (record.temperature_k - solidus)
@@ -362,16 +460,30 @@ def _invert_ternary_phase_energy(
     return None
 
 
-def _join_at_solidus(tli, record, table, x_query, margin_j, given) -> float | None:
+def _lowest_top_k(tli, table, x_query, exclude, cold, refine=False) -> float | None:
+    """The lowest temperature above ``cold``, K, to TOP_TOL_K, at which the envelope at
+    ``x_query`` without the phases ``exclude`` carries entropy, read as the inversion reads it;
+    ``None`` when it carries none at ``PRESCREEN_CEILING_K``."""
+    from gliquid.ternary import PRESCREEN_CEILING_K
+
+    rows = _HullRows(tli, table, x_query, exclude, refine)
+
+    def carries(temp) -> bool:
+        return float(rows.refined(temp).entropy or 0.0) > MIN_SUPPORT_ENTROPY
+
+    hot = PRESCREEN_CEILING_K
+    if not carries(hot):
+        return None
+    while hot - cold > TOP_TOL_K:
+        middle = 0.5 * (cold + hot)
+        cold, hot = (cold, middle) if carries(middle) else (middle, hot)
+    return hot
+
+
+def _join_at_solidus(tli, record, table, x_query, margin_j, given, refine=False) -> float | None:
     """The enthalpy that puts ``record`` on the envelope at its solidus with the enthalpy or the
     entropy of ``given``, or ``None`` after rejecting it; the other one is set on ``record``."""
-    low = envelope_energy(
-        _liquid_at(tli, table, record.solidus_k),
-        x_query,
-        record.solidus_k,
-        comp_cols=["x0", "x1"],
-        exclude=[record.name],
-    )
+    low = _HullRows(tli, table, x_query, [record.name], refine).envelope(record.solidus_k)
     record.decomposition = tuple(
         (p, float(w)) for p, w in zip(low.phases, low.weights) if w > 1e-12
     )
@@ -461,6 +573,7 @@ def impute_ternary_phases(
     screen: bool = True,
     margin_j: float = HULL_GUARD_MARGIN_J,
     dx: float = 1e-3,
+    refine_liquid: bool = False,
 ) -> list[TernaryImputationResult]:
     """Impute ternary solid phases from their compositions and the temperatures they leave the
     hull at, or from an enthalpy or an entropy given for them.
@@ -472,7 +585,10 @@ def impute_ternary_phases(
     checks. A target that names an ``enthalpy`` or an ``entropy`` carries it as given, with the
     other solved from its ``temperature`` or its ``solidus``, or carries both as given; above the
     0 K hull it is admitted without the 0 K checks and, unless ``force`` is set, needs a
-    positive entropy; ``hold_hull`` does not move it. A phase that would push a stable phase --
+    positive entropy; ``hold_hull`` does not move it. Its temperature is solved without the
+    phases without an entropy that it pushes off the 0 K hull, as the hull drawn with it is, and
+    it may leave the hull into solids alone with an entropy below theirs; a target given neither
+    is refused where no phase around it carries entropy at its temperature. A phase that would push a stable phase --
     DFT or imputed, and stable before any entry a target ``replaces`` is left off -- off the 0 K
     hull is rejected with a warning naming those phases, unless ``force`` or ``hold_hull`` is
     set. With ``apply``, admitted phases replace any imputed phase of the same name in
@@ -494,17 +610,26 @@ def impute_ternary_phases(
         force: place a phase even when it pushes stable phases off the 0 K hull.
         hold_hull: place an envelope phase that would push stable phases off the 0 K hull at
             the deepest enthalpy that keeps them (:func:`gliquid.imputation.core.clamp_bisect`),
-            with the entropy at which it still leaves the hull at its temperature. The phase
-            is rejected when that entropy is not below the envelope's.
+            with the entropy at which it still leaves the hull at its temperature. Where that
+            entropy is not below the envelope's, the phase is rejected, or with ``force``
+            placed at its inverted enthalpy.
         write_cache: also write admitted phases to ``tli.data_dir``. ``None`` uses
             :data:`gliquid.config.persist_ternary_imputed`. Requires ``apply``.
         apply: add admitted phases to ``tli``. False computes only and leaves ``tli`` as it was.
         screen: with ``apply``, process the diagram, drop any admitted phase it does not show,
             and record each phase's ``realized_temperature_k``.
-        margin_j: J/mol-atom. The envelope enthalpy is lowered by this much, so the phase is
+        margin_j: J/mol-atom. The envelope enthalpy is lowered by this much, or by what raises
+            the phase's temperature :data:`TOP_MARGIN_K` where that is less, so the phase is
             strictly stable below its temperature; it is also the clearance required below the
             0 K hull.
         dx: half-width of the tangent's finite difference.
+        refine_liquid: read the liquid of an envelope target at the phase's own composition and,
+            where the envelope rests on the liquid elsewhere, ``tli.delta /``
+            :data:`LIQUID_REFINE` apart around it, instead of on the composition grid alone,
+            and lower the envelope enthalpy by no more than raises the phase's temperature
+            :data:`TOP_MARGIN_K`. The phase then leaves the hull of the liquid itself at its
+            temperature; the processed diagram reads the liquid on the grid and can show it
+            higher, so use it with ``screen=False``.
 
     Returns:
         list[TernaryImputationResult]: one record per target, in the order given.
@@ -579,6 +704,19 @@ def impute_ternary_phases(
     if excluded:
         protected &= {str(e.entry_id) for e in tli.solid_hull(kept).stable_entries}
     names = {str(e.entry_id): api.hull_entry_name(e) for e in base.stable_entries}
+    ops = _hull_ops(base)
+    compounds = {eid for eid, _, _ in stable}
+    no_entropy = set(table["Phase Name"]) - set(table.loc[table["S"] != 0.0, "Phase Name"])
+
+    def hidden_by(record, h_form) -> tuple[str, ...]:
+        """The phases without an entropy that ``record`` at ``h_form`` (J/mol-atom) pushes off
+        the 0 K hull, which the hull drawn with it leaves out."""
+        energy = hull_ref_energy_per_atom(base, record.fractions) + h_form / EV_ATOM_TO_J_MOL
+        composition = Composition(record.fractions)
+        entry = ComputedEntry(composition, energy * composition.num_atoms)
+        hull = PhaseDiagram([*base.stable_entries, entry], elements=list(base.elements))
+        kept = {str(e.entry_id) for e in hull.stable_entries}
+        return tuple(sorted({names[eid] for eid in compounds - kept} & no_entropy))
 
     candidates = []
     for record, liquid_fractions, given in zip(records, liquids, givens):
@@ -597,14 +735,29 @@ def impute_ternary_phases(
             )
             continue
 
-        h_form = _invert_ternary_phase_energy(
-            tli, record, table, liquid_fractions, margin_j, dx, given
+        solved = record.method == "envelope" and record.temperature_k is not None and given
+        hidden = (
+            hidden_by(record, float(given["enthalpy"])) if solved and "enthalpy" in given else ()
         )
+        for _ in range(HIDDEN_ROUNDS):
+            h_form = _invert_ternary_phase_energy(
+                tli, record, table, liquid_fractions, margin_j, dx, given, refine_liquid, hidden
+            )
+            if h_form is None or not solved or "enthalpy" in given:
+                break
+            now = hidden_by(record, h_form)
+            if now == hidden:
+                break
+            hidden = now
         if h_form is None:
             continue
         record.inverted_enthalpy = h_form
         h_hull = phase_diagram_enthalpy_at(base, record.fractions)
-        on_hull = h_form < h_hull - margin_j
+        record.hull_enthalpy = float(h_hull)
+        guard_j = margin_j
+        if refine_liquid and not given and record.support_entropy is not None:
+            guard_j = min(margin_j, TOP_MARGIN_K * record.support_entropy)
+        on_hull = h_form < h_hull - guard_j
         joins = record.solidus_k is not None
         floating = joins or bool(given) and not on_hull
         if given and floating and not joins and not record.entropy > 0.0 and not force:
@@ -622,7 +775,7 @@ def impute_ternary_phases(
                 f"{record.solidus_k:g} K is already on the 0 K hull",
             )
             continue
-        if not floating and not h_form < h_hull - margin_j:
+        if not floating and not h_form < h_hull - guard_j:
             record.reject(
                 "unstable",
                 f"the imputed enthalpy {h_form:.0f} J/mol-atom does not clear the solid hull "
@@ -655,7 +808,6 @@ def impute_ternary_phases(
             }
         )
 
-    ops = _hull_ops(base)
     by_name = {r.name: r for r in records}
     as_given = {c["name"] for c in candidates if c["given"]}
 
@@ -668,23 +820,24 @@ def impute_ternary_phases(
     def held(entry_dict, admitted, protected_ids):
         record = by_name[imputed_entry_label(entry_dict)]
         record.displaces = displaced_by(entry_dict, admitted)
-        if not hold_hull or record.support_entropy is None or record.name in as_given:
+        if not hold_hull and not force:
             return None
         clamped = clamp_bisect(ops, entry_dict, admitted, protected_ids)
-        if clamped is None:
-            return None
-        lift = float(clamped["data"]["h_form_j_per_mol"]) - record.inverted_enthalpy
-        entropy = lift / record.temperature_k
-        if not entropy < record.support_entropy:
-            return None
-        clamped["data"][cache.ENTROPY_KEY] = entropy
-        return clamped
+        if clamped is not None:
+            record.hull_limit_enthalpy = float(clamped["data"]["h_form_j_per_mol"])
+            if hold_hull and record.support_entropy is not None and record.name not in as_given:
+                lift = record.hull_limit_enthalpy - record.inverted_enthalpy
+                entropy = lift / record.temperature_k
+                if entropy < record.support_entropy:
+                    clamped["data"][cache.ENTROPY_KEY] = entropy
+                    return clamped
+        return entry_dict if force else None
 
     accepted, rejected = accept_growing(
         ops,
         [c for c in candidates if not c["floating"]],
         protected,
-        protect=not force,
+        protect=True,
         clamp=held,
         vertex_noun="phase(s)",
     )
@@ -883,7 +1036,8 @@ def edit_ternary_phases(tli, edits: Sequence[dict], **kwargs) -> list[TernaryImp
             ids = set(_dft_ids_at(hull, _hull_compound(hull, phase)))
         ids = {cache.canonical_entry_id(i) for i in ids} - {None}
         tli.excluded_entries = sorted({*tli.excluded_entries, *ids})
-    tli.reset_derived_state()
+    if any("remove" in e for e in edits):
+        tli.reset_derived_state()
 
     records = []
     for edit in edits:
@@ -906,3 +1060,139 @@ def edit_ternary_phases(tli, edits: Sequence[dict], **kwargs) -> list[TernaryImp
         record.previous_enthalpy = before
         records.append(record)
     return records
+
+
+def _top_kind(products: dict[str, float]) -> str:
+    if set(products) == {LIQUID_PHASE}:
+        return "congruent"
+    if LIQUID_PHASE in products:
+        return "incongruent"
+    return "transition" if len(products) == 1 else "decomposition"
+
+
+def _phase_top(
+    tli, table, x_query, enthalpy, entropy, exclude, start_k, refine=False
+) -> PhaseTop | None:
+    from gliquid.ternary import PRESCREEN_CEILING_K
+
+    rows = _HullRows(tli, table, x_query, exclude, refine)
+
+    def gap(temp, lattice=None):
+        env = rows.envelope(temp, lattice)
+        return (
+            enthalpy - temp * entropy - float(env.value),
+            float(env.entropy or 0.0) - entropy,
+            env,
+        )
+
+    def leaves(hot, hot_at, lattice=None):
+        """``(temperature, gap there)`` where the gap turns positive below ``hot``, where it
+        is ``hot_at``; ``None`` where it is positive down to 0 K."""
+        cold = cold_at = None
+        for _ in range(TOP_ITERATIONS):
+            floor = 0.0 if cold is None else cold
+            temp = 0.5 * (floor + hot)
+            ends = [(hot, hot_at)] + ([] if cold is None else [(cold, cold_at)])
+            for end, (value, slope, _) in ends:
+                # Keep <= hot: a step too small to leave hot must end the search, not bisect.
+                if slope > 0 and floor < end - value / slope <= hot:
+                    temp = end - value / slope
+                    break
+            at = gap(temp, lattice)
+            if at[0] > 0:
+                moved, hot, hot_at = hot - temp, temp, at
+            else:
+                moved, cold, cold_at = temp - floor, temp, at
+            if moved < TOP_TOL_K or (cold is not None and hot - cold < TOP_TOL_K):
+                break
+            if cold is None and hot < 1.0:
+                return None
+        return temp, at
+
+    starts = [PRESCREEN_CEILING_K]
+    if start_k is not None and start_k < PRESCREEN_CEILING_K:
+        starts.insert(0, float(start_k))
+    for hot in starts:
+        hot_at = gap(hot)
+        if hot_at[0] > 0:
+            break
+    else:
+        return PhaseTop(None, None)
+    found = leaves(hot, hot_at)
+    if found is None:
+        return None
+    temp, at = found
+    lattice = rows.lattice(at[2])
+    fine = None if lattice is None else gap(temp, lattice)
+    if fine is not None and fine[0] > LATTICE_GAIN_J:
+        found = leaves(temp, fine, lattice)
+        if found is None:
+            return None
+        temp, at = found
+    env = at[2]
+    products = {}
+    for phase, weight in zip(env.phases, env.weights):
+        if weight > 1e-9:
+            products[phase] = products.get(phase, 0.0) + float(weight)
+    return PhaseTop(temp, _top_kind(products), tuple(products.items()))
+
+
+def phase_top(
+    tli, fractions, enthalpy, entropy, *, exclude=(), start_k=None, refine_liquid=False
+) -> PhaseTop | None:
+    """Where a solid of ``fractions`` (element -> fraction) with formation ``enthalpy``
+    (J/mol-atom) and ``entropy`` (J/mol-atom/K) would leave the hull of ``tli`` on heating,
+    against every phase but those named in ``exclude``.
+
+    The search starts at ``start_k`` (K), which should lie above the answer, and otherwise at
+    :data:`gliquid.ternary.PRESCREEN_CEILING_K`. ``refine_liquid`` reads the liquid as
+    :func:`impute_ternary_phases` does with it. Returns ``None`` for a solid stable at no
+    temperature.
+    """
+    x_query = np.round(independent_coords(fractions, list(tli.components)), tli.HULL_COMP_DECIMALS)
+    return _phase_top(
+        tli,
+        tli.hull_table(),
+        x_query,
+        float(enthalpy),
+        float(entropy),
+        list(exclude),
+        start_k,
+        refine_liquid,
+    )
+
+
+def phase_tops(
+    tli, names: Sequence[str] | None = None, *, refine_liquid=False
+) -> dict[str, PhaseTop | None]:
+    """:func:`phase_top` of each line phase of ``tli`` named in ``names`` (default: every one),
+    with its own enthalpy and entropy and ``refine_liquid``, against the other phases. Solid
+    solutions are left out.
+    After ``process_data`` each search starts one ``T_incr`` above the phase's top in the
+    processed diagram.
+    """
+    table = tli.hull_table()
+    solids = table[table["Phase Name"] != LIQUID_PHASE]
+    counts = solids.groupby("Phase Name").size()
+    rows = solids.drop_duplicates("Phase Name").set_index("Phase Name")
+    lines = [name for name in counts.index if counts[name] == 1]
+    names = lines if names is None else [name for name in names if name in lines]
+    starts = {}
+    if getattr(tli, "equil_df_list", None):
+        frame = pd.concat(tli.equil_df_list, ignore_index=True)
+        tops = frame.groupby("Phase")["T"].max()
+        starts = {name: float(t) + 273.15 + float(tli.T_incr) for name, t in tops.items()}
+    out = {}
+    for name in names:
+        x_query = rows.loc[name, ["x0", "x1"]].to_numpy(float)
+        out[name] = _phase_top(
+            tli,
+            table,
+            x_query,
+            float(rows.at[name, "H"]),
+            float(rows.at[name, "S"]),
+            [name],
+            starts.get(name),
+            refine_liquid,
+        )
+    return out
