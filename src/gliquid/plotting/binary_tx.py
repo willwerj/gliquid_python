@@ -12,6 +12,7 @@ import logging
 import re
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -820,6 +821,37 @@ _MARGIN_T_PX = 72
 _MARGIN_B_PX = 72
 _PLOT_W_PX = _FIG_W_PX - _MARGIN_L_PX - _MARGIN_R_PX  # 615
 _PLOT_H_PX = _FIG_H_PX - _MARGIN_T_PX - _MARGIN_B_PX  # 456
+_PLOT_PX = (_PLOT_W_PX, _PLOT_H_PX)
+
+
+@dataclass(frozen=True)
+class TxCanvas:
+    """The size a :func:`plot_tx` figure is drawn at, which its labels are placed to fit.
+
+    Attributes:
+        width, height: the figure, px.
+        margin: the ``(left, right, top, bottom)`` margins, px.
+        label_font: the phase labels' font size, px.
+        liquid_font: the ``L`` label's font size, px.
+    """
+
+    width: float = _FIG_W_PX
+    height: float = _FIG_H_PX
+    margin: tuple[float, float, float, float] = (
+        _MARGIN_L_PX,
+        _MARGIN_R_PX,
+        _MARGIN_T_PX,
+        _MARGIN_B_PX,
+    )
+    label_font: float = 12
+    liquid_font: float = 14
+
+    @property
+    def plot_px(self) -> tuple[float, float]:
+        """The plot area's ``(width, height)``, px."""
+        left, right, top, bottom = self.margin
+        return self.width - left - right, self.height - top - bottom
+
 
 # Text-metric estimates (fractions of the font size, in px).
 _CHAR_W_FACTOR = 0.6  # mean glyph advance width
@@ -848,9 +880,13 @@ def _text_glyph_width(text: str) -> float:
 
 
 def _estimate_label_box(
-    label: dict, xlim: tuple[float, float], ylim: tuple[float, float]
+    label: dict,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    plot_px: tuple[float, float] = _PLOT_PX,
 ) -> tuple[float, float, float, float]:
-    """Estimate a label's bounding box in data coordinates.
+    """Estimate a label's bounding box in data coordinates, on a plot area ``plot_px``
+    (width, height) px.
 
     Returns ``(cx, cy, half_w, half_h)`` where (cx, cy) is the box centre. This is the
     single source of truth for the fragile font/pixel constants; tests import it directly.
@@ -864,8 +900,8 @@ def _estimate_label_box(
 
     span_x = (xlim[1] - xlim[0]) or 1.0
     span_y = (ylim[1] - ylim[0]) or 1.0
-    half_w = (w_px / (_PLOT_W_PX / span_x)) / 2.0
-    half_h = (h_px / (_PLOT_H_PX / span_y)) / 2.0
+    half_w = (w_px / (plot_px[0] / span_x)) / 2.0
+    half_h = (h_px / (plot_px[1] / span_y)) / 2.0
 
     cx, cy = float(label["x"]), float(label["y"])
     xanchor = label.get("xanchor", "center")
@@ -882,7 +918,11 @@ def _estimate_label_box(
 
 
 def _label_metrics(
-    text: str, xlim: tuple[float, float], ylim: tuple[float, float], font_size: int = 12
+    text: str,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    font_size: float = 12,
+    plot_px: tuple[float, float] = _PLOT_PX,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Estimate a label's footprint in both orientations.
 
@@ -904,7 +944,7 @@ def _label_metrics(
             "xanchor": "center",
             "yanchor": "middle",
         }
-        _, _, half_w, half_h = _estimate_label_box(probe, xlim, ylim)
+        _, _, half_w, half_h = _estimate_label_box(probe, xlim, ylim, plot_px)
         metrics.append((half_w, half_h / span_y))
     return metrics[0], metrics[1]
 
@@ -986,8 +1026,10 @@ def _resolve_label_collisions(
     max_iterations: int = 50,
     ceiling=None,
     tie_segments=None,
+    plot_px: tuple[float, float] = _PLOT_PX,
 ) -> list[dict]:
-    """Iteratively nudge overlapping labels apart (primarily in y for vertical text).
+    """Iteratively nudge overlapping labels apart (primarily in y for vertical text) on a
+    plot area ``plot_px`` (width, height) px.
 
     ``ceiling`` is an optional ``top(x) -> T`` callable (the liquidus envelope); when given,
     each label is kept below it so labels never cross into the liquid field. ``tie_segments``
@@ -1001,7 +1043,7 @@ def _resolve_label_collisions(
         lbl["y"] = float(lbl["y"])
 
     span_y = (ylim[1] - ylim[0]) or 1.0
-    one_px_y = span_y / _PLOT_H_PX
+    one_px_y = span_y / plot_px[1]
     ceil_margin = 0.6 * one_px_y * _LINE_H_FACTOR * 12  # ~ small gap below the liquidus
     bottom_pad = _BOTTOM_PAD_FRAC * span_y  # consistent gap above the lower boundary
     tie_segments = tie_segments or []
@@ -1140,8 +1182,10 @@ def _place_liquid_label(
     ylim: tuple[float, float],
     font_size: float = 14,
     blocked: list[tuple[float, float]] | None = None,
+    plot_px: tuple[float, float] = _PLOT_PX,
 ) -> tuple[float, float]:
-    """Place the ``L`` label in the widest sufficiently-tall empty band above the liquidus.
+    """Place the ``L`` label in the widest sufficiently-tall empty band above the liquidus,
+    on a plot area ``plot_px`` (width, height) px.
 
     ``blocked``: ``(x_lo, x_hi)`` composition ranges already occupied above the liquidus (the
     floated labels' boxes), withheld from the gap scan. When every scanned x is withheld the
@@ -1151,7 +1195,7 @@ def _place_liquid_label(
     xs = np.linspace(xlim[0] + 2, xlim[1] - 2, 49)
     tops = np.array([(top(x) if np.isfinite(top(x)) else ylim[0]) for x in xs])
     gaps = ylim[1] - tops
-    min_gap = _LINE_H_FACTOR * font_size * (ylim[1] - ylim[0]) / _PLOT_H_PX
+    min_gap = _LINE_H_FACTOR * font_size * (ylim[1] - ylim[0]) / plot_px[1]
 
     # Find the widest contiguous band tall enough for the label.
     ok = gaps >= min_gap
@@ -1475,16 +1519,18 @@ def _place_legend(
     n_entries: int,
     max_label_chars: int,
     float_top_by_side: dict | None = None,
+    plot_px: tuple[float, float] = _PLOT_PX,
 ) -> dict:
     """Pick the top corner with the most clearance and expand ``hsx.conds[1]`` (the upper
-    temperature limit) so the legend sits inside the plot area without overlapping either
-    liquidus or the floated polymorph labels on that side. Never placed above the plot.
+    temperature limit) so the legend sits inside the plot area (``plot_px``, width and height
+    px) without overlapping either liquidus or the floated polymorph labels on that side.
+    Never placed above the plot.
     """
     float_top_by_side = float_top_by_side or {0: -np.inf, 100: -np.inf}
     span_x = (xlim[1] - xlim[0]) or 1.0
     w_px = max_label_chars * _CHAR_W_FACTOR * 15 + 40  # text + colour swatch
     h_px = n_entries * 21 + 12
-    w_data = w_px / (_PLOT_W_PX / span_x)
+    w_data = w_px / (plot_px[0] / span_x)
     inset_x = 0.01 * span_x
     top = _liquidus_top_fn(liq_df, assessed_pts, combine="max")
 
@@ -1505,7 +1551,7 @@ def _place_legend(
     obs = obstacle(x0, x1, side)
 
     # Expand conds[1] so the legend band (h_px tall, at the top) clears that obstacle.
-    f = (h_px + 6) / _PLOT_H_PX
+    f = (h_px + 6) / plot_px[1]
     if np.isfinite(obs) and f < 1.0:
         needed_c1 = (obs - f * hsx.conds[0]) / (1.0 - f)
         if needed_c1 > hsx.conds[1]:
@@ -1902,6 +1948,7 @@ def plot_tx(
     components: list | None = None,
     mpds_temp_range: tuple[float, float] | None = None,
     non_dft_label: str | None = None,
+    canvas: TxCanvas | None = None,
 ) -> go.Figure:
     """Plots the binary phase diagram from computed phase boundaries and invariant points.
 
@@ -1933,12 +1980,17 @@ def plot_tx(
             without a reference bound.
         non_dft_label (str): The text of the ``imputed_phases`` legend entry; None uses
             ``IMPUTED_LEGEND_LABEL``.
+        canvas (TxCanvas): The size and label fonts the figure is drawn at; None uses
+            ``TxCanvas()``. Resize the returned figure only through this, since the labels
+            are placed to fit it.
 
     Returns:
         go.Figure: the T-x figure.
     """
     imputed_phases = imputed_phases or set()
     ss_phases = set(ss_phases or ())
+    canvas = canvas or TxCanvas()
+    plot_px, label_font = canvas.plot_px, canvas.label_font
     polymorph_names = set()
     if polymorph_transitions:
         polymorph_names = {pt["name"] for pt in polymorph_transitions}
@@ -2277,7 +2329,7 @@ def plot_tx(
     liq_floor = _liquidus_top_fn(liq_df, assessed_pts, combine="min")  # below BOTH curves
     liq_high = _liquidus_top_fn(liq_df, assessed_pts, combine="max")  # above BOTH curves
     _CLEAR_PX = 10.0  # clearance (px) between a floated label and the liquidus below it
-    clear_frac = _CLEAR_PX / _PLOT_H_PX
+    clear_frac = _CLEAR_PX / plot_px[1]
     gap_frac = 0.004  # stack gap as a fraction of the y-span
     entry_labels = ["Assessed Liquidus"] if digitized_liquidus else []
     entry_labels.append("Predicted Liquidus" if pred else "Fitted Liquidus")
@@ -2299,7 +2351,7 @@ def plot_tx(
         horiz_half_hs_frac, horiz_half_ws = [], []
         for text in texts:
             (vert_half_w, hh_frac), (h_hw, h_hh_frac) = _label_metrics(
-                text, xlim, (hsx.conds[0], hsx.conds[1]), font_size=12
+                text, xlim, (hsx.conds[0], hsx.conds[1]), label_font, plot_px
             )
             half_hs_frac.append(hh_frac)
             horiz_half_hs_frac.append(h_hh_frac)
@@ -2373,7 +2425,7 @@ def plot_tx(
         init_ylim = (hsx.conds[0], hsx.conds[1])
         half_ws = []
         for cp in compound_phase_list:
-            (hw, _), _ = _label_metrics(cp["text"], xlim, init_ylim, font_size=12)
+            (hw, _), _ = _label_metrics(cp["text"], xlim, init_ylim, label_font, plot_px)
             half_ws.append(hw)
         assigned_x = _assign_compound_sides(comps_x, half_ws, xlim)
         for cp, ax in zip(compound_phase_list, assigned_x):
@@ -2381,7 +2433,7 @@ def plot_tx(
             # band.
             label_x = (cp["comp"] + (1.5 if cp["comp"] <= 50 else -1.5)) if cp["is_stacked"] else ax
             (hw, hh_frac), (h_hw, h_hh_frac) = _label_metrics(
-                cp["text"], xlim, init_ylim, font_size=12
+                cp["text"], xlim, init_ylim, label_font, plot_px
             )
             # A floated compound label is horizontal, centred on its column and clamped inside the
             # axis.
@@ -2452,6 +2504,7 @@ def plot_tx(
             n_entries=len(entry_labels),
             max_label_chars=max(len(s) for s in entry_labels),
             float_top_by_side=float_top_by_side,
+            plot_px=plot_px,
         )
         if abs(hsx.conds[0] - c0_before) < 1e-6 and abs(hsx.conds[1] - c1_before) < 1e-6:
             break
@@ -2469,7 +2522,7 @@ def plot_tx(
                 "xanchor": p.get("xanchor", "center"),
                 "yanchor": "middle",
                 "textangle": p["angle"],
-                "font_size": 12,
+                "font_size": label_font,
                 "font_color": "black",
                 "pin": True,
             }
@@ -2511,7 +2564,7 @@ def plot_tx(
             "xanchor": "center",
             "yanchor": "middle",
             "textangle": p["angle"],
-            "font_size": 12,
+            "font_size": label_font,
             "font_color": "black",
         }
         vis_bottom, vis_top = max(col["t_min"], hsx.conds[0]), min(col["t_max"], hsx.conds[1])
@@ -2556,14 +2609,15 @@ def plot_tx(
         max_iterations=80,
         ceiling=liquidus_ceiling,
         tie_segments=tie_segments,
+        plot_px=plot_px,
     )
-    px_per_x = _PLOT_W_PX / (xlim[1] - xlim[0])
-    px_per_y = _PLOT_H_PX / (ylim[1] - ylim[0])
+    px_per_x = plot_px[0] / (xlim[1] - xlim[0])
+    px_per_y = plot_px[1] / (ylim[1] - ylim[0])
     for lbl in resolved_labels:
         common = dict(
             text=lbl["text"],
             textangle=lbl.get("textangle", -90),
-            font=dict(size=lbl.get("font_size", 12), color=lbl.get("font_color", "black")),
+            font=dict(size=lbl.get("font_size", label_font), color=lbl.get("font_color", "black")),
         )
         if lbl.get("showarrow") and not lbl.get("no_arrow"):
             ax_px = (lbl["x"] - lbl["home_x"]) * px_per_x
@@ -2677,13 +2731,13 @@ def plot_tx(
         ),
         xaxis=dict(range=[0, 100], title="Composition (at. %)"),
         yaxis=dict(range=[hsx.conds[0], hsx.conds[1]], title="Temperature (°C)", ticksuffix=" "),
-        width=_FIG_W_PX,  # 960 for show()
-        height=_FIG_H_PX,  # 700 for show()
+        width=canvas.width,
+        height=canvas.height,
         plot_bgcolor="white",
         font=dict(size=13, color="black"),
         showlegend=True,
         legend=legend_params,
-        margin=dict(t=_MARGIN_T_PX, b=_MARGIN_B_PX, r=_MARGIN_R_PX),
+        margin=dict(zip("lrtb", canvas.margin)),
     )
     axes_params_dict = dict(
         title_font=dict(size=16),
@@ -2704,7 +2758,7 @@ def plot_tx(
     float_spans = [
         (box[0] - box[2], box[0] + box[2])
         for box in (
-            _estimate_label_box(lbl, xlim, ylim)
+            _estimate_label_box(lbl, xlim, ylim, plot_px)
             for lbl in resolved_labels
             if lbl.get("above_liquidus")
         )
@@ -2714,10 +2768,13 @@ def plot_tx(
         assessed_pts,
         (0.0, 100.0),
         (hsx.conds[0], hsx.conds[1]),
-        font_size=14,
+        font_size=canvas.liquid_font,
         blocked=float_spans,
+        plot_px=plot_px,
     )
-    fig.add_annotation(x=l_x, y=l_y, text="L", showarrow=False, font=dict(size=14, color="black"))
+    fig.add_annotation(
+        x=l_x, y=l_y, text="L", showarrow=False, font=dict(size=canvas.liquid_font, color="black")
+    )
     fig.add_annotation(
         x=-0.05,
         y=-0.086,  # Position below the x-axis in paper coordinates
