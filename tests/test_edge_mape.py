@@ -7,12 +7,14 @@ re-derivation.
 """
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import plotly.graph_objects as go
 import pytest
 from matplotlib import colormaps
 
+from gliquid import ternary
 from gliquid.binary import BinaryLiquid
 from gliquid.plotting import binary_tx
 from gliquid.plotting.binary_tx import CORNER_NOTE_NAME, add_corner_note
@@ -328,3 +330,19 @@ class TestProgress:
             ("edges", 3, 3),
             ("hull", 1, 1),
         ]
+
+
+@pytest.mark.parametrize(
+    ("xs", "text"),
+    [
+        (np.linspace(0.0, 1.0, 40), "MAPE 13.2%"),
+        (
+            [*np.linspace(0.0, 0.07, 8), *np.linspace(0.89, 1.0, 12)],
+            "MAPE 13.2% (0–7, 89–100 at.% Ba)",
+        ),
+        (np.linspace(0.55, 1.0, 30), "MAPE 13.2% (55–100 at.% Ba)"),
+    ],
+)
+def test_the_chip_names_the_ranges_a_gapped_liquidus_covers(xs, text):
+    edge = SimpleNamespace(digitized_liq=[[x, 1000.0] for x in xs], components=["B", "Ba"])
+    assert ternary._mape_note(13.16, edge) == text

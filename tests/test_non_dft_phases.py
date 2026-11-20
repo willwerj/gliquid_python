@@ -601,6 +601,15 @@ def _names(ti) -> set:
     return set(ti.get_ternary_form_en(ti.components)["Phase Name"])
 
 
+def _dashed_3d(trace) -> bool:
+    """Whether a 3-D solid-phase line is broken into dashes at one composition."""
+    return (
+        (trace.hovertemplate or "").startswith("<b>Phase:")
+        and None in trace.z
+        and len({x for x in trace.x if x is not None}) == 1
+    )
+
+
 class TestTernariesCarryUserPhases:
     def test_from_binaries_collects_a_user_entry_unasked(self):
         ti = TernaryLiquidInterpolation.from_binaries(_edges(_deep_user()), **TERNARY_KW)
@@ -671,14 +680,14 @@ class TestTernariesCarryUserPhases:
     def test_the_surface_draws_it_dashed_and_names_it(self):
         ti = TernaryLiquidInterpolation.from_binaries(_edges(_deep_user()), **TERNARY_KW)
         fig = TLIPlotter(ti, order="given").get_plot("tx")
-        dashed = [t for t in fig.data if t.type == "scatter3d" and t.line.dash == "dash"]
+        dashed = [t for t in fig.data if t.type == "scatter3d" and _dashed_3d(t)]
         assert len(dashed) == 1 and f"{DEEP_LABEL} (user-defined)" in dashed[0].hovertemplate
         assert f"{DEEP_LABEL} (user-defined)" in {t.name for t in fig.data}
 
     def test_the_surface_of_a_dft_ternary_marks_nothing(self):
         ti = TernaryLiquidInterpolation.from_binaries(_edges(), **TERNARY_KW)
         fig = TLIPlotter(ti, order="given").get_plot("tx")
-        assert not [t for t in fig.data if t.type == "scatter3d" and t.line.dash == "dash"]
+        assert not [t for t in fig.data if t.type == "scatter3d" and _dashed_3d(t)]
         assert not any("(user-defined)" in (t.name or "") for t in fig.data)
 
 

@@ -22,13 +22,15 @@ below its first rung on the hull, hsx solves it on its facet.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import gliquid.api as api
 import gliquid.solution as solution
+import gliquid.ternary as ternary_mod
 from gliquid.phase import UNARY
-from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter
+from gliquid.ternary import TernaryLiquidInterpolation, TLIPlotter, _surface_heights
 
 AFFECTED = ["Hf", "Ti", "Zr"]  # every corner has a bcc transition below melting
 UNAFFECTED = ["Al", "Mg", "Si"]  # no sub-melting transition on any ladder
@@ -307,6 +309,30 @@ class TestLadderSurvivesIntoTheFigure:
                 f"the {ph_prev}->{ph} transition is invisible"
             )
 
+    @pytest.mark.parametrize("el", AFFECTED)
+    def test_each_polymorph_starts_at_its_transition_temperature(self, htz_plot, el):
+        """The segments meet at the ladder's transition temperatures, not on the T grid."""
+        _, at = _corner_rows(htz_plot, AFFECTED, el)
+        starts = {ph: float(g["T"].min()) for ph, g in at.groupby("Phase")}
+        ladder = {p.name: p.t_transition for p in UNARY[el].polymorphs}
+        upper = [ph for ph in starts if ladder.get(ph)]
+        assert upper, f"{el}: no polymorph above the ground state is drawn"
+        for ph in upper:
+            assert starts[ph] == pytest.approx(ladder[ph] - 273.15, abs=CORNER_TOL_K), ph
+            assert (ladder[ph] - 273.15 - float(htz_plot.conds[0])) % T_INCR > 1e-3, (
+                f"{ph}: its transition is on the T grid, so this cannot see snapping"
+            )
+
+    @pytest.mark.parametrize("el", AFFECTED)
+    def test_the_top_polymorph_reaches_the_corner_liquidus(self, htz, htz_plot, el):
+        """The line ends on the surface at t_fusion, not on the T grid below it."""
+        corners, _ = htz
+        _, at = _corner_rows(htz_plot, AFFECTED, el)
+        assert float(at["T"].max()) == pytest.approx(corners[el] - 273.15, abs=1e-6)
+        assert (corners[el] - 273.15 - float(htz_plot.conds[0])) % T_INCR > 1e-3, (
+            f"{el}: t_fusion is on the T grid, so this cannot see snapping"
+        )
+
     def test_no_solid_phase_is_lost_anywhere(self, htz_plot):
         """Not just corners: the dedupe is global, so nothing may vanish at any composition."""
         raw = set(_raw_solid(htz_plot)["Phase"])
@@ -336,3 +362,68 @@ class TestLadderSurvivesIntoTheFigure:
             f"{int((stacked > 1).sum())} composition(s) carry >1 phase -- "
             "the figure pins CAN move and must be re-frozen deliberately"
         )
+
+
+class TestFigureFollowsTheEdges:
+    """Names and line tops of the figure agree with the binary edges."""
+
+    @pytest.mark.parametrize(
+        ("order", "shown", "stored"),
+        [
+            ("given", "Al<sub>2</sub>Mg", "MgAl<sub>2</sub>"),
+            (["Si", "Mg", "Al"], "SiMg<sub>2</sub>", "Mg<sub>2</sub>Si"),
+        ],
+    )
+    def test_compounds_are_named_in_component_order(self, ams, order, shown, stored):
+        _, ti = ams
+        fig = TLIPlotter(ti, order=order).get_plot("tx")
+        names = {trace.name for trace in fig.data if trace.showlegend}
+        assert shown in names and stored not in names
+
+    @pytest.mark.parametrize(
+        ("order", "compounds"),
+        [
+            ("given", ["Al<sub>2</sub>Mg", "Al<sub>12</sub>Mg<sub>17</sub>", "Mg<sub>2</sub>Si"]),
+            (
+                ["Si", "Mg", "Al"],
+                ["SiMg<sub>2</sub>", "Mg<sub>17</sub>Al<sub>12</sub>", "MgAl<sub>2</sub>"],
+            ),
+        ],
+    )
+    def test_compounds_follow_the_polymorphs_by_composition(self, ams, order, compounds):
+        """Richest in the first component first, ties broken by the second."""
+        _, ti = ams
+        fig = TLIPlotter(ti, order=order).get_plot("tx")
+        names = [trace.name for trace in fig.data if trace.showlegend]
+        assert names[-len(compounds) :] == compounds
+
+    def test_no_line_ends_above_the_surface(self, ams_plot):
+        surface = ams_plot._liquidus_partition(ams_plot.triangulation.simplices).surface
+        rows = ams_plot.solid_plotting_df
+        tops = rows.loc[rows.groupby(["x0", "x1"])["T"].idxmax()]
+        heights = _surface_heights(surface, tops[["x0", "x1"]])
+        assert np.isfinite(heights).all()
+        assert (tops["T"].to_numpy(float) <= heights + 1e-6).all()
+
+    def test_a_line_below_the_surface_ends_on_the_edge_tie_line_through_it(
+        self, ams, ams_plot, monkeypatch
+    ):
+        """With no surface over MgAl2 (a third Mg on Al-Mg), a tie line through it within a
+        grid step above its last stable temperature ends it, one further above does not."""
+        _, ti = ams
+        monkeypatch.setattr(
+            ternary_mod, "_surface_heights", lambda surface, points: np.full(len(points), np.nan)
+        )
+        plain = TLIPlotter(ti, order="given")
+        plain.get_plot("tx")
+        rows = plain.solid_plotting_df
+        top = float(rows[rows["Phase"] == "MgAl2"]["T"].max())
+        grid = np.sort(np.asarray(ti.T_grid, float) - 273.15)
+        above = float(grid[grid > top][0])
+        plotter = TLIPlotter(ti, order="given")
+        plotter._edge_tie_lines = {
+            "Al-Mg": [(20.0, 50.0, (top + above) / 2), (10.0, 60.0, above + 1.0)]
+        }
+        plotter.get_plot("tx")
+        rows = plotter.solid_plotting_df
+        assert float(rows[rows["Phase"] == "MgAl2"]["T"].max()) == pytest.approx((top + above) / 2)

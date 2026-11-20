@@ -36,6 +36,11 @@ IMPUTED_MARKER_COLOR = "#7b2d8e"
 IMPUTED_LEGEND_LABEL = "Imputed"
 # A user-defined phase (added or edited by hand) is drawn in the same style under its own word.
 USER_DEFINED_LEGEND_LABEL = "User-defined"
+# The word for an imputed phase that stands in for a DFT entry, in the ternary liquidus figure.
+MODIFIED_LEGEND_LABEL = "Modified"
+# The dashes of an imputed or user-defined phase's line in the ternary liquidus figure: the
+# lengths of a dash and of a gap, as shares of the temperature window.
+SOLID_LINE_DASH_3D = (0.014, 0.006)
 IMPUTED_LINE_DASH = "4px,2px"  # Tx line of an imputed or user-defined phase, and its legend key
 IMPUTED_BORDER_DASHES = (0, (1, 1.2))  # dotted outline of a marked band, and its legend proxy
 IMPUTED_BORDER_WIDTH = 0.9
@@ -50,12 +55,10 @@ DIMMED_SURFACE_DESATURATION = 0.7
 DIMMED_PHASE_COLOR = "#c8c8c8"
 FIELD_OUTLINE_COLOR = "#1a1a1a"
 FIELD_OUTLINE_WIDTH = 5
+# The binary solidus lines of the ternary liquidus figure: the colour of a binary tie line.
+SOLIDUS_LINE_COLOR = "Silver"
+SOLIDUS_LINE_WIDTH = 4
 # The boundary of the two-liquid field, drawn in every view.
-# The solidus triangles of the ternary liquidus figure: the colour of a binary tie line, the
-# outline's width and the opacity of the fill.
-SOLIDUS_OUTLINE_COLOR = "Silver"
-SOLIDUS_OUTLINE_WIDTH = 4
-SOLIDUS_FILL_OPACITY = 0.25
 GAP_OUTLINE_COLOR = "#7f7f7f"
 GAP_OUTLINE_DASH = "dot"
 # Mole fraction from a side of the composition triangle within which that boundary is not drawn;
@@ -157,7 +160,7 @@ PHASE_PALETTE = [
 
 
 def build_phase_color_map(
-    phase_names, ss_names=(), polymorph_names=(), imputed_names=()
+    phase_names, ss_names=(), polymorph_names=(), imputed_names=(), keep=None
 ) -> dict[str, str]:
     """Deterministic phase -> color map shared by the binary AND ternary plot stacks.
 
@@ -167,6 +170,12 @@ def build_phase_color_map(
     cornflowerblue. Solid-solution names take their reserved SS_FIXED_COLORS
     (deterministic fallbacks if exhausted), and the reserved colors are excluded from
     the line-phase palette so SS and line phases can never collide.
+
+    ``keep`` maps line phases to the colors they had before. A listed phase in
+    ``phase_names`` keeps its color; a listed phase that is absent holds its color while the
+    palette has others free, and gives it up, in ``keep`` order, once it does not. The other
+    line phases take the free palette colors in the order above, and cycle the palette once
+    none is left.
     """
     ss_names = list(ss_names)
     polymorph_names = set(polymorph_names)
@@ -184,8 +193,18 @@ def build_phase_color_map(
         + [p for p in line_phases if p not in polymorph_names and p not in imputed_names]
         + [p for p in line_phases if p not in polymorph_names and p in imputed_names]
     )
-    for idx, phase in enumerate(ordered_line_phases):
-        phase_map[phase] = base_palette[idx % len(base_palette)]
+    keep = {p: c for p, c in (keep or {}).items() if c in base_palette}
+    held = {p: keep[p] for p in ordered_line_phases if p in keep}
+    claims = [p for p in keep if p not in held]
+    taken = set(held.values())
+    for idx, phase in enumerate(p for p in ordered_line_phases if p not in held):
+        free = [c for c in base_palette if c not in taken | {keep[p] for p in claims}]
+        while not free and claims:
+            claims.pop(0)
+            free = [c for c in base_palette if c not in taken | {keep[p] for p in claims}]
+        phase_map[phase] = free[0] if free else base_palette[idx % len(base_palette)]
+        taken.add(phase_map[phase])
+    phase_map.update(held)
 
     fallback_ss_palette = ["#6c5ce7", "#00a896", "#ef476f", "#ffd166"]
     used_colors = set(phase_map.values())
@@ -469,7 +488,8 @@ def abbreviate_phase_name(name: str, all_names: list[str], components=None) -> s
     Compounds render with subscripts (``ZrMn2`` -> ``ZrMn<sub>2</sub>``). Pass ``components``
     (the system's ordered component list) to put a compound through ``standard_formula``
     first, so it reads in component order with whole-number stoichiometry and no polymorph
-    suffix; omit it, as the ternary edge sub-plots do, to subscript the raw name.
+    suffix; omit it to subscript the raw name. A name ``standard_formula`` cannot read is
+    subscripted raw.
     ``"Liquid"``/``"L"`` -> ``"L"``.
     """
     name = str(name).strip()
