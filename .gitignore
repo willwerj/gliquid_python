@@ -33,6 +33,8 @@ cache/fit_results_cache_*
 figures/benchmark_*/
 # Newly fetched DFT caches; the tracked fixture set is unaffected.
 cache/*_ENTRIES_MP_GGA.json
+# MPDS diagrams saved into the cache, under any name.
+cache/*.json
 
 # Local secrets (API keys) - never commit
 .env

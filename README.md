@@ -46,6 +46,9 @@ cfg.set_cache_dir("path/to/gliquid_python/cache")
 
 Without this, systems are fetched as needed and saved to `./gliquid_cache`.
 
+To add a digitized phase diagram, open its entry on [MPDS](https://mpds.io), click **JSON** and
+save the file into the cache directory under any name. Each notebook lists the entries it uses.
+
 ### API keys
 
 To fit systems not in your cache, you'll need both MP and MPDS API keys.
