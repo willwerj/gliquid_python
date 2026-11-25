@@ -45,14 +45,15 @@ def dummy_mpds_store():
 
     While active, the configured directory store answers MPDS reads, existence checks and
     variant listings for ``cache/`` from the dummy directory alone, so an MPDS file in
-    ``cache/`` is never read; an MPDS write there raises. Other kinds of record, and every
-    other store, are untouched.
+    ``cache/`` is never read, nor searched for a download; an MPDS write there raises. Other
+    kinds of record, and every other store, are untouched.
     """
     backend = cache._GLOBAL_DIRECTORY_BACKEND
     dummy = cache.DirectoryBackend(MPDS_DUMMY_DIR)
     repo = os.path.normcase(str(REPO_CACHE_DIR.resolve()))
     resolved: dict[str, bool] = {}
     path_for, variants, write_json = backend.path_for, backend.variants, backend.write_json
+    download_dirs = mpds._download_dirs
 
     def routed(kind):
         if kind != cache.KIND_MPDS or config.cache_dir is None:
@@ -73,10 +74,16 @@ def dummy_mpds_store():
             raise AssertionError(f"a test wrote the MPDS record {key} into the repository cache")
         return write_json(key, payload)
 
+    def routed_download_dirs(store, sys_name):
+        if store is backend and routed(cache.KIND_MPDS):
+            return []
+        return download_dirs(store, sys_name)
+
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(backend, "path_for", routed_path_for)
         patch.setattr(backend, "variants", routed_variants)
         patch.setattr(backend, "write_json", routed_write_json)
+        patch.setattr(mpds, "_download_dirs", routed_download_dirs)
         yield
 
 

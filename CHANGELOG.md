@@ -9,6 +9,17 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+### Added
+
+- **A phase diagram downloaded from an MPDS entry page loads as saved.** Save the file (the
+  entry page's **JSON** button) into the cache directory under any name: `load_mpds_data` and
+  `BinaryLiquid.from_cache` find it, convert it to the record format gliquid reads, and write
+  it as `<A>-<B>.json`. The conversion names the entry page as the `reference`, labels the
+  one-phase fields from the download's label list, and draws each labelled line compound on
+  the two-phase field edges at its composition. `mpds.has_cached_diagram(system)` finds and
+  converts a download without loading it; `mpds.is_mpds_download` and
+  `mpds.from_mpds_download` recognize and convert one record.
+
 ## [0.3.5] - 2026-11-20
 
 ### Added

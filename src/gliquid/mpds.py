@@ -14,7 +14,9 @@ ORCID: https://orcid.org/0009-0004-6334-9426
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -66,6 +68,332 @@ _GLIQUID_KEY = "_gliquid"
 
 #: Bumped when the shape of the ``_gliquid`` block changes.
 LEAN_SCHEMA = 1
+
+
+# -- Diagrams downloaded from an MPDS entry page (the JSON button) --
+_MPDS_ENTRY_URL = "https://mpds.io/entry/{}"
+# Composition tolerances in at.%.
+_VERTICAL_TOL = 0.1  # widest segment read as vertical
+_EDGE_MERGE_TOL = 0.5  # vertical segments this close form one edge
+_AXIS_MARGIN = 0.5  # edges this close to a pure end are the axis
+_FORMULA_EDGE_TOL = 2.0  # furthest a compound's edge sits from its formula composition
+_LABEL_EDGE_TOL = 4.0  # furthest an unnamed compound's edge sits from its label
+_LEADER_REACH = 0.05  # how near a leader line starts to its label, in axis fractions
+_DOWNLOAD_MAX_BYTES = 5_000_000
+
+
+def is_mpds_download(record) -> bool:
+    """True when ``record`` is a phase diagram saved from an MPDS entry page."""
+    return (
+        isinstance(record, dict)
+        and record.get("object_type") == "C"
+        and record.get("use_visavis_type") == "pd"
+        and isinstance(record.get("shapes"), list)
+    )
+
+
+def _download_elements(record: dict) -> list[str] | None:
+    """The two axis elements, low-composition end first."""
+    end = record.get("comp_end")
+    if isinstance(end, dict) and len(end) == 2:
+        return sorted(end, key=lambda el: end[el])
+    elements = record.get("chemical_elements")
+    return list(elements) if elements and len(elements) == 2 else None
+
+
+def _svg_points(svgpath: str) -> list[tuple[float, float]]:
+    """``svgpath`` -> ``(x at.%, T degC)`` vertices."""
+    tokens = [t for t in (svgpath or "").split() if t not in ("M", "L")]
+    return [(float(x), float(t)) for x, t in (tok.split(",") for tok in tokens)]
+
+
+def _inside(point, polygon) -> bool:
+    x, t = point
+    hit = False
+    for (x1, t1), (x2, t2) in zip(polygon, polygon[1:] + polygon[:1]):
+        if (t1 > t) != (t2 > t) and x < x1 + (t - t1) * (x2 - x1) / (t2 - t1):
+            hit = not hit
+    return hit
+
+
+def _label_probes(record: dict) -> list[tuple[str, list[tuple[float, float]]]]:
+    """Each label's plain text and the points that place it: its anchor, and the far end of
+    any leader line drawn from it."""
+    t_lo, t_hi = record.get("temp") or (0.0, 1.0)
+    t_span = max(t_hi - t_lo, 1.0)
+    leaders = [_svg_points(s["svgpath"]) for s in record["shapes"] if s.get("kind") == "drawing"]
+    probes = []
+    for text, anchor, *_ in record.get("labels") or []:
+        anchor = (float(anchor[0]), float(anchor[1]))
+        points = [anchor]
+        for line in leaders:
+            if len(line) < 2:
+                continue
+            for near, far in ((line[0], line[-1]), (line[-1], line[0])):
+                reach = math.hypot((near[0] - anchor[0]) / 100, (near[1] - anchor[1]) / t_span)
+                if reach <= _LEADER_REACH:
+                    points.append(far)
+        probes.append((_HTML_TAG_RE.sub("", text or "").strip(), points))
+    return probes
+
+
+def _vertical_edges(shapes: list[dict]) -> list[dict]:
+    """Vertical lines shared by two or more two-phase fields: the drawn line compounds.
+
+    Edges at the axes, and edges on a one-phase field's boundary, are excluded.
+    """
+    edges: list[dict] = []
+    fields = []
+    for index, shape in enumerate(shapes):
+        nphases = shape.get("nphases")
+        if nphases not in (1, 2) or (nphases == 1 and not shape.get("is_solid")):
+            continue
+        points = _svg_points(shape.get("svgpath", ""))
+        for (x1, t1), (x2, t2) in zip(points, points[1:] + points[:1]):
+            if abs(x2 - x1) > _VERTICAL_TOL or t1 == t2:
+                continue
+            x, lo, hi = (x1 + x2) / 2, min(t1, t2), max(t1, t2)
+            if nphases == 1:
+                fields.append((x, lo, hi))
+                continue
+            if x < _AXIS_MARGIN or x > 100 - _AXIS_MARGIN:
+                continue
+            edge = next((e for e in edges if abs(e["x"] - x) <= _EDGE_MERGE_TOL), None)
+            if edge is None:
+                edges.append({"x": x, "t_lo": lo, "t_hi": hi, "named": False, "fields": {index}})
+            else:
+                edge["t_lo"], edge["t_hi"] = min(edge["t_lo"], lo), max(edge["t_hi"], hi)
+                edge["fields"].add(index)
+    return [
+        e
+        for e in edges
+        if len(e["fields"]) >= 2
+        and not any(
+            abs(e["x"] - x) <= _EDGE_MERGE_TOL and lo < e["t_hi"] and hi > e["t_lo"]
+            for x, lo, hi in fields
+        )
+    ]
+
+
+def _label_fields(shapes: list[dict], probes, elements) -> None:
+    """Give each unlabelled one-phase solid field the label that names it, in place.
+
+    A label placed inside the field (directly or through its leader line) wins; then a label
+    whose formula, or whose ``'(X)'`` component, falls within the field's composition span;
+    then the nearest label below or beside the field.
+    """
+    open_fields = []
+    for shape in shapes:
+        if shape.get("nphases") == 1 and shape.get("is_solid") and "label" not in shape:
+            polygon = _svg_points(shape.get("svgpath", ""))
+            if polygon:
+                open_fields.append((shape, polygon))
+    named = {s["label"] for s in shapes if "label" in s}
+    candidates = [
+        (text, points)
+        for text, points in probes
+        if text
+        and text not in named
+        and not is_fluid_phase_label(text)
+        and not is_multiphase_field_label(text)
+    ]
+
+    def score(polygon, text, points):
+        xs = [x for x, _ in polygon]
+        x_lo, x_hi = min(xs), max(xs)
+        if any(_inside(p, polygon) for p in points):
+            return 0.0
+        if is_component_phase_label(text, elements):
+            end = 0.0 if split_phase_label(text)[0].strip("()") == elements[0] else 100.0
+            comp = end
+        else:
+            comp = _label_comp(text, elements)
+            comp = None if comp is None else 100 * comp
+        if comp is not None and x_lo - _FORMULA_EDGE_TOL <= comp <= x_hi + _FORMULA_EDGE_TOL:
+            return 1.0 + abs(comp - (x_lo + x_hi) / 2) / 100
+        gap = max(x_lo - points[0][0], points[0][0] - x_hi, 0.0)
+        return 2.0 + gap / 100 if gap <= _LABEL_EDGE_TOL * 2 else None
+
+    pairs = sorted(
+        (s, i, j)
+        for i, (_, polygon) in enumerate(open_fields)
+        for j, (text, points) in enumerate(candidates)
+        if (s := score(polygon, text, points)) is not None
+    )
+    used_fields, used_labels = set(), set()
+    for _, i, j in pairs:
+        if i in used_fields or j in used_labels:
+            continue
+        open_fields[i][0]["label"] = candidates[j][0]
+        used_fields.add(i)
+        used_labels.add(j)
+
+
+def _label_comp(text: str, elements) -> float | None:
+    """The fraction of ``elements[1]`` a label's formula gives, fractional subscripts included."""
+    base = split_phase_label(text)[0]
+    if not base or base.startswith("("):
+        return None
+    try:
+        amounts = Composition(base).get_el_amt_dict()
+    except Exception:  # noqa: BLE001 - a label that is not a formula
+        return None
+    if not amounts or not set(amounts) <= set(elements):
+        return None
+    total = sum(amounts.values())
+    return amounts.get(elements[1], 0.0) / total if total > 0 else None
+
+
+def _edge_formula(x_pct: float, elements) -> str:
+    """The simplest formula of the two elements whose composition is nearest ``x_pct``."""
+    target = x_pct / 100
+    a, b = min(
+        ((a, b) for a in range(1, 13) for b in range(1, 13) if a + b <= 13),
+        key=lambda ab: (abs(ab[1] / sum(ab) - target), sum(ab)),
+    )
+    return Composition({elements[0]: a, elements[1]: b}).reduced_formula
+
+
+def from_mpds_download(record):
+    """Convert a diagram saved from an MPDS entry page to the record format gliquid reads.
+
+    The conversion applies to a download (:func:`is_mpds_download`) whose ``reference`` is
+    missing or names an ``mpds://`` entry; any other record is returned unchanged.
+    The converted record:
+
+    * names its entry as ``reference = {"entry": "https://mpds.io/entry/<id>"}``;
+    * labels each unlabelled one-phase field from the download's label list (see
+      :func:`_label_fields`);
+    * draws each labelled line compound as a ``kind='compound'`` vertical line on the edge
+      that two or more two-phase fields share at its formula's composition, over that edge's
+      temperature span.
+      A label naming only the system (``'Cu-Mg'``) is given the edge nearest it and the
+      simplest formula at that edge's composition;
+    * drops the leader lines (``kind='drawing'``).
+
+    Args:
+        record: a parsed JSON record.
+
+    Returns:
+        A new dict for a converted download, else ``record`` itself.
+    """
+    if not is_mpds_download(record):
+        return record
+    reference = record.get("reference", "missing")
+    converts = reference == "missing" or (
+        isinstance(reference, dict) and str(reference.get("entry", "")).startswith("mpds://")
+    )
+    elements = _download_elements(record)
+    if not converts or elements is None:
+        return record
+
+    probes = _label_probes(record)
+    shapes = [dict(s) for s in record["shapes"] if s.get("kind") != "drawing"]
+    _label_fields(shapes, probes, elements)
+    edges = _vertical_edges(shapes)
+    named = {s["label"] for s in shapes if s.get("nphases") == 1 and "label" in s}
+    system = set(elements)
+    for text, points in probes:
+        if (
+            not text
+            or text in named
+            or is_fluid_phase_label(text)
+            or is_multiphase_field_label(text)
+            or is_component_phase_label(text, elements)
+        ):
+            continue
+        free = [e for e in edges if not e["named"]]
+        comp = formula_comp(text, elements)
+        if comp is not None:
+            near = [e for e in free if abs(e["x"] - 100 * comp) <= _FORMULA_EDGE_TOL]
+            edge = min(near, key=lambda e: abs(e["x"] - 100 * comp), default=None)
+            name = text
+        elif set(text.split("-")) == system:
+            x_label = points[0][0]
+            near = [e for e in free if abs(e["x"] - x_label) <= _LABEL_EDGE_TOL]
+            edge = min(near, key=lambda e: abs(e["x"] - x_label), default=None)
+            name = _edge_formula(edge["x"], elements) if edge else text
+        else:
+            edge = None
+        if edge is None:
+            logger.debug(f"No two-phase edge carries the label {text!r}; it is not drawn.")
+            continue
+        edge["named"] = True
+        named.add(name)
+        x = f"{edge['x']:g}"
+        shapes.append(
+            {
+                "kind": "compound",
+                "label": name,
+                "nphases": 1,
+                "is_solid": True,
+                "svgpath": f"M {x},{edge['t_hi']:g} L {x},{edge['t_lo']:g}",
+            }
+        )
+
+    converted = {k: v for k, v in record.items() if k != "warning"}
+    converted["reference"] = {"entry": _MPDS_ENTRY_URL.format(record.get("entry"))}
+    converted["shapes"] = shapes
+    return converted
+
+
+def _download_dirs(backend, sys_name: str) -> list:
+    """The directories searched for an MPDS download of ``sys_name``."""
+    if not isinstance(backend, cache.DirectoryBackend):
+        return []
+    sys_dir = backend.sys_location(sys_name)
+    return [sys_dir, sys_dir.parent] if backend._structure() == "nested" else [sys_dir]
+
+
+def _find_download(backend, sys_name: str):
+    """``(path, record)`` of an MPDS download of ``sys_name`` in the cache, or None.
+
+    Any ``*.json`` that is not named as a cache record is read, whatever its name.
+    """
+    for directory in _download_dirs(backend, sys_name):
+        for path in sorted(directory.glob("*.json")):
+            key = cache.parse_record_filename(path.name)
+            if key is not None and (key.kind != cache.KIND_MPDS or key.variant != ""):
+                continue
+            if key is not None and set(key.sys_name.split("-")) <= cache._ELEMENT_SYMBOLS:
+                continue
+            if path.stat().st_size > _DOWNLOAD_MAX_BYTES:
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+            elements = _download_elements(record) if is_mpds_download(record) else None
+            if elements and api._canonical_sys_name(elements) == sys_name:
+                return path, record
+    return None
+
+
+def has_cached_diagram(system) -> bool:
+    """True when the cache holds an MPDS diagram for a binary ``system`` ('A-B' or a list).
+
+    An MPDS download of the system saved in the cache directory under any name is converted
+    (:func:`from_mpds_download`) and written as ``<A>-<B>.json``, elements in alphabetical
+    order. No request is made.
+    """
+    components, _, _ = validate_and_format_system(system)
+    cache_name = api._canonical_sys_name(components)
+    backend = cache.resolve_backend(None)
+    return bool(backend.variants(cache_name, cache.KIND_MPDS)) or _adopt_download(
+        backend, cache_name
+    )
+
+
+def _adopt_download(backend, sys_name: str) -> bool:
+    """Write a found download of ``sys_name`` as its indexless record; True if one was found."""
+    found = _find_download(backend, sys_name)
+    if found is None:
+        return False
+    path, record = found
+    key = cache.CacheKey(sys_name, cache.KIND_MPDS, "")
+    backend.write_json(key, from_mpds_download(record))
+    logger.info(f"Read the MPDS download {path.name} as {cache.store_label(backend, sys_name)}.")
+    return True
 
 
 def record_mode(mpds_json) -> str:
@@ -124,6 +452,7 @@ def lean_record(mpds_json: dict) -> dict:
     """
     import gliquid.cache as _cache  # local: cache imports config only, mpds imports cache
 
+    mpds_json = from_mpds_download(mpds_json)
     stitched, is_partial, covered = _stitched_liquidus(mpds_json, quiet=True)
     if stitched is None and not covered:
         covered = [] if is_partial else None
@@ -636,9 +965,10 @@ def load_mpds_data(system, pd_ind=None) -> tuple[dict, tuple[list[list] | None, 
     Returns:
         tuple[dict, tuple[list[list] | None, bool]]: The system MPDS JSON and the digitized
         liquidus curve formatted for fitting. Unary reference data is not returned; take it from
-        ``gliquid.phase.UNARY.component_data``. Note that the
-        MPDS json in the specified cache directory must follow the alphabetized, hyphenated
-        naming convention (e.g. 'A-B.json')
+        ``gliquid.phase.UNARY.component_data``. A cached diagram is named with the
+        alphabetized, hyphenated system (e.g. 'A-B.json'); an MPDS download of the system
+        saved in the cache directory under another name is converted and written under that
+        name (see :func:`has_cached_diagram`).
 
     Raises:
         CacheModeError: the configured store is read-only and holds no record for the
@@ -657,6 +987,8 @@ def load_mpds_data(system, pd_ind=None) -> tuple[dict, tuple[list[list] | None, 
     # ``"0"``, ``"1"``, ... are the indexed diagrams.
     backend = cache.resolve_backend(None)
     available = set(backend.variants(cache_name, cache.KIND_MPDS))
+    if not available and _adopt_download(backend, cache_name):
+        available = {""}
     has_indexless = "" in available
     has_pd0 = "0" in available
     sys_dir = cache.store_label(backend, cache_name)
@@ -693,7 +1025,7 @@ def load_mpds_data(system, pd_ind=None) -> tuple[dict, tuple[list[list] | None, 
 
     sys_key = cache.CacheKey(cache_name, cache.KIND_MPDS, variant)
     if backend.exists(sys_key):  # Load from cache
-        mpds_json = backend.read_json(sys_key)
+        mpds_json = from_mpds_download(backend.read_json(sys_key))
         if mpds_json.get("reference", None) is not None:
             logger.info(
                 "Reading MPDS json from entry at " + mpds_json["reference"]["entry"] + "..."
