@@ -9,6 +9,8 @@ source tree carries a version literal that could disagree with this file.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-24
+
 ### Added
 
 - **A phase diagram downloaded from an MPDS entry page loads as saved.** Save the file (the
@@ -1217,7 +1219,8 @@ earlier published versions to diff against; this entry describes what the packag
 - **An empty Materials Project fetch now raises rather than being cached.** A zero-entry result
   used to be written out as a 2-byte `[]`, which every later read then accepted as a warm cache.
 
-[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/willwerj/gliquid_python/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/willwerj/gliquid_python/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/willwerj/gliquid_python/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/willwerj/gliquid_python/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/willwerj/gliquid_python/compare/v0.3.2...v0.3.3
