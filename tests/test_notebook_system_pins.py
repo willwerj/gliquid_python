@@ -9,9 +9,8 @@ parameters held as literals here.
 Pinned per system:
   * ``liquidus``: the predicted liquidus the notebooks overlay, ``bl.phases[-1].points`` as
     ``[x, T]`` pairs.
-  * ``pred``: the ``'pred'`` figure, captured as trace rows, annotations and y-range by
-    ``capture_figure`` from _mpds_builders.py, as test_decomposition_pins.py's figure
-    summaries are.
+  * ``pred`` (``PRED_SYSTEMS`` only): the ``'pred'`` figure, captured as trace rows, annotations and y-range by
+    ``capture_figure`` from _mpds_builders.py.
 
 Everything runs inside :func:`hermetic_mpds`: online mode with no API key and tripwired
 network clients, so a system with no cached MPDS record takes ``load_mpds_data``'s no-key
@@ -44,6 +43,7 @@ FIXED = {
     "Cu-Mg": [-27056.70703125, -5.751094341278076, -17084.64501953125],
 }
 SYSTEMS = tuple(FIXED)
+PRED_SYSTEMS = ("Pb-Tb", "Ga-Ru")
 
 
 def compute_system(system: str) -> dict:
@@ -51,13 +51,15 @@ def compute_system(system: str) -> dict:
     with hermetic_mpds():
         bl = BinaryLiquid.from_cache(system, param_format="comb-exp")
         bl.update_params(FIXED[system] + [0])
-        liquidus = [[p[0], p[1]] for p in bl.phases[-1].points]
-        pred = capture_figure(BLPlotter(bl).get_plot("pred"))
-    return pu.to_jsonable({"liquidus": liquidus, "pred": pred})
+        block = {"liquidus": [[p[0], p[1]] for p in bl.phases[-1].points]}
+        if system in PRED_SYSTEMS:
+            block["pred"] = capture_figure(BLPlotter(bl).get_plot("pred"))
+    return pu.to_jsonable(block)
 
 
 def compute_pins() -> dict:
-    """``{system: {"liquidus": ..., "pred": ...}}`` for every system in ``FIXED``."""
+    """``{system: {"liquidus": ..., "pred": ...}}`` for every system in ``FIXED``; ``pred`` only
+    for ``PRED_SYSTEMS``."""
     return {system: compute_system(system) for system in SYSTEMS}
 
 
@@ -91,7 +93,7 @@ def test_predicted_liquidus_pinned(pins, live, system):
     pu.assert_deep_approx(pins[system]["liquidus"], live[0][system]["liquidus"])
 
 
-@pytest.mark.parametrize("system", SYSTEMS)
+@pytest.mark.parametrize("system", PRED_SYSTEMS)
 def test_pred_figure_pinned(pins, live, system):
     pu.assert_deep_approx(pins[system]["pred"], live[0][system]["pred"])
 

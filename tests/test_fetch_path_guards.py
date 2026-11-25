@@ -25,7 +25,7 @@ from gliquid.cache import (
     close_sqlite_backends,
 )
 
-from ._mpds_builders import Tripwire
+from ._mpds_builders import MPDS_DUMMY_DIR, Tripwire
 from ._mpds_builders import cu_mg_entry_pool as _entry_pool
 
 SYSTEM = "Cu-Mg"
@@ -276,8 +276,8 @@ class TestMpdsClientErrors:
 
 
 def _diagram_row(entry: str) -> list:
-    """One ``get_data`` row, in ``MPDS_FIELDS`` order, copied from a Cu-Mg diagram."""
-    diagram = json.loads((Path(__file__).resolve().parents[1] / "cache" / "Cu-Mg.json").read_text())
+    """One ``get_data`` row, in ``MPDS_FIELDS`` order, copied from the synthetic Cu-Mg diagram."""
+    diagram = json.loads((MPDS_DUMMY_DIR / "Cu-Mg.json").read_text())
     diagram["reference"] = {"entry": entry}
     return [diagram[field] for field in MPDS_FIELDS]
 

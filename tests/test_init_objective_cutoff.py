@@ -4,7 +4,7 @@
 ``init_objective_cutoff``, runs only those within that multiple of the best; the rest land on
 ``pruned_candidates``. The optimisation worker is replaced by a recorder here, so the
 candidates are assembled and scored exactly as in a fit but nothing is optimised. Runs
-offline on the shipped Cu-Mg cache.
+offline on the cached Cu-Mg DFT hull and synthetic diagram.
 """
 
 import pytest

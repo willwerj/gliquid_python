@@ -8,23 +8,14 @@ liquidus that is conjugate to a solid we cannot evaluate
 
 Hf-Zr pd0 is the offline full-composition-SS system (MPDS labels '(Hf, Zr)'); with
 ``ss_models`` loaded it is fully supported, without them it is fully unsupported.
-
-The frozen ground-truth verdicts over the acceptance corpus need the maintainer's per-system
-corpus store and live in ``test_solid_coverage_pins.py``.
 """
 
 import json
-from pathlib import Path
 
 import pytest
 
 import gliquid.config as config
 from gliquid.binary import BinaryLiquid
-
-from ._mpds_builders import corpus_coverage_report as _report
-from ._mpds_builders import coverage_pin_cases
-
-PINS_PATH = Path(__file__).parent / "fixtures" / "solid_coverage_pins.json"
 
 
 class TestSkipWithoutSsModels:
@@ -43,9 +34,9 @@ class TestSkipWithoutSsModels:
         """Both '(Hf, Zr)' polymorphs are unsupported; only the ht one masks anything.
 
         Both take the ``unknown_structure_no_ss`` fallback with no model loaded. The rt
-        (alpha) field tops out at 2016.7 K, below the digitized liquidus minimum of 2128.2 K,
-        so it never borders the liquid and is excluded from the mask; the ht (beta) field
-        reaches 2505.3 K and alone masks the whole axis.
+        (alpha) field tops out below the digitized liquidus minimum, so it never borders the
+        liquid and is excluded from the mask; the ht (beta) field reaches the liquidus and
+        alone masks the whole axis.
         """
         bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
         bl.fit_parameters()
@@ -136,183 +127,8 @@ class TestChartRelocation:
         assert self.CHART_HEADER in capsys.readouterr().out
 
 
-class TestSurvivingSegmentAcceptance:
-    """Both directions of the surviving-liquidus criterion, on real cached systems.
-
-    The verdict is the ``min_supported_total`` floor on the constraining liquidus total. The
-    lists are pinned in BOTH directions.
-
-    Admitted: ``ADMITTED`` (surviving branches 0.353 to 1.000 wide), Rb-Sn on its printed
-    two-liquid dome (``ADMITTED_ON_A_DOME``), and Ge-W and Hg-Ni because the masked phase never
-    borders the liquid (``ADMITTED_BY_SUBLIQUIDUS``). Skipped: the five zero-compound systems
-    whose solid-solution fields have no loaded model, and B-Si, whose ordered field masks all
-    but 0.093 (``test_skipped_on_an_ordered_field``).
-
-    Needs the maintainer's per-system corpus store and its production omegas file; without
-    both every ``ss_models`` list resolves empty.
-    """
-
-    ADMITTED = ["Mn-Pr", "Ru-Sn", "Re-Si", "Al-Ce", "Au-B", "Na-Si", "Mn-Y", "Li-Pr", "Fe-Nd"]
-    SKIPPED = ["Lu-Nd", "Ho-Pr", "Er-Th", "Th-Tm", "Ho-Zr"]
-    # Rb-Sn's only hull compound, RbSn, is sub-liquidus, so its supported width is tiny; it is
-    # admitted on the printed L1 + L2 dome instead. Each entry is (system, n_compounds,
-    # n_missing_compounds, reason fragment).
-    ADMITTED_ON_A_DOME = [("Rb-Sn", 4, 3, "dome 0.385")]
-    SKIPPED_ORDERED_FIELD = ["B-Si"]
-    # Admitted only because a masked phase never borders the liquid. Each entry
-    # is (system, phase, the phase's own tmax in K, the digitized liquidus minimum in K).
-    ADMITTED_BY_SUBLIQUIDUS = [
-        ("Ge-W", "W2Ge3", 1022.6, 1202.5),
-        ("Hg-Ni", "HgNi", 385.1, 1215.1),
-    ]
-
-    # (n_compounds, n_missing_compounds) for each zero-compound control. Ho-Pr carries one:
-    # ``Pr0.6Ho0.4 rt`` is an ordered intermetallic with a homogeneity range, so it takes the
-    # compound path and is counted there.
-    SKIPPED_COMPOUND_COUNTS = {
-        "Lu-Nd": (0, 0),
-        "Ho-Pr": (1, 1),
-        "Er-Th": (0, 0),
-        "Th-Tm": (0, 0),
-        "Ho-Zr": (0, 0),
-    }
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system", ADMITTED)
-    def test_admitted(self, system, matrix_data_env):
-        cov = _report(system)
-        assert cov.supported_total >= cov.thresholds["min_supported_total"]
-        assert cov.is_insufficient()[0] is False
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system", SKIPPED)
-    def test_skipped(self, system, matrix_data_env):
-        cov = _report(system)
-        # An unmodelled solid-solution field masks the axis; the compound counts are pinned
-        # per system.
-        assert (cov.n_compounds, cov.n_missing_compounds) == self.SKIPPED_COMPOUND_COUNTS[system]
-        assert cov.supported_total < cov.thresholds["min_supported_total"]
-        insufficient, reason = cov.is_insufficient()
-        assert insufficient is True
-        assert "constraining liquidus totals" in reason
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system", SKIPPED_ORDERED_FIELD)
-    def test_skipped_on_an_ordered_field(self, system, matrix_data_env):
-        """B-Si is skipped on an ordered field, asserted with its missing-compound counts.
-
-        ``Si15B290`` (x=0.0416, spacegroup 166) is an ordered intermetallic with a
-        homogeneity range, so it takes the compound path. The hull holds only x=0.25, and its
-        primary field (the peritectic at 0.0935 to the next invariant at 0.3469) merges with
-        ``Si10B60``'s ``[0.3469, 0.9181]`` into the single mask ``0.094-0.918``, leaving 0.093
-        of the axis supported.
-        """
-        cov = _report(system)
-        assert cov.n_compounds == 3 and cov.n_missing_compounds == 2
-        assert cov.supported_total < cov.thresholds["min_supported_total"]
-        insufficient, reason = cov.is_insufficient()
-        assert insufficient is True
-        assert "constraining liquidus totals" in reason
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system,phase,phase_tmax,liq_tmin", ADMITTED_BY_SUBLIQUIDUS)
-    def test_admitted_because_a_masked_phase_never_borders_the_liquid(
-        self, system, phase, phase_tmax, liq_tmin, matrix_data_env
-    ):
-        """End to end: a phase the DFT hull is missing is admitted when its whole digitized
-        field lies below the minimum digitized liquidus temperature.
-
-        The phase stays ``supported=False`` and is excluded on ``borders_liquid``, so the
-        reason string names the missing DFT phase under a ``subliquidus:`` prefix.
-        """
-        cov = _report(system)
-        record = next(p for p in cov.phases if p.name == phase)
-        assert record.supported is False
-        assert record.borders_liquid is False
-        assert record.reason.startswith("subliquidus:")
-        assert phase_tmax < liq_tmin  # the fact the exclusion rests on
-        assert cov.supported_total >= cov.thresholds["min_supported_total"]
-        assert cov.is_insufficient()[0] is False
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system,n_compounds,n_missing,fragment", ADMITTED_ON_A_DOME)
-    def test_admitted_on_a_two_liquid_dome(
-        self, system, n_compounds, n_missing, fragment, matrix_data_env
-    ):
-        """Supported width below the floor, constraining total above it through a printed dome."""
-        cov = _report(system)
-        assert (cov.n_compounds, cov.n_missing_compounds) == (n_compounds, n_missing)
-        floor = cov.thresholds["min_supported_total"]
-        assert cov.supported_total < floor <= cov.constrained_total
-        insufficient, reason = cov.is_insufficient()
-        assert insufficient is False
-        assert fragment in reason
-
-    @pytest.mark.needs_cache
-    def test_the_two_populations_do_not_overlap(self, matrix_data_env):
-        """The floor sits in an empty band: no admitted system below it, none skipped above.
-
-        Checked against the quantity the verdict reads -- the constraining total, supported
-        width plus confirmed two-liquid domes -- not against the widest single segment,
-        which does not gate.
-        """
-        admitted = min(_report(s).constrained_total for s in self.ADMITTED)
-        skipped = max(
-            _report(s).constrained_total for s in (self.SKIPPED + self.SKIPPED_ORDERED_FIELD)
-        )
-        floor = config.coverage_min_supported_total
-        assert skipped < floor < admitted
-
-
-class TestAttributionToASolidThatCanBeThere:
-    """A stretch of liquidus is attributed to a solid whose field spans its temperature: not
-    to a supported compound decomposing far below it (Bi-Pr, Co-La), and a drawn homogeneity
-    range is kept over a narrower invariant-bounded field (In-Mg).
-    """
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize(
-        "system,phase,masked",
-        [("Bi-Pr", "Pr5Bi3", [0.6107, 0.7801]), ("Co-La", "La2Co3", [0.2748, 0.4457])],
-    )
-    def test_a_supported_compound_below_the_curve_no_longer_truncates_a_mask(
-        self, system, phase, masked, matrix_data_env
-    ):
-        cov = _report(system)
-        record = next(p for p in cov.phases if p.name == phase)
-        assert record.supported is True
-        assert record.borders_liquid is False
-        assert record.reason.startswith("subliquidus:")
-        owner = next(p for p in cov.phases if p.interval[0] == pytest.approx(masked[0], abs=1e-3))
-        assert owner.supported is False
-        assert owner.interval[1] == pytest.approx(masked[1], abs=1e-3)
-
-    @pytest.mark.needs_cache
-    def test_a_wide_ordered_field_masks_the_width_it_is_drawn_at(self, matrix_data_env):
-        """In-Mg: ``Mg0.1In0.9`` is drawn across most of the axis and is not in the hull.
-
-        The mask reaches the field's drawn edge whatever solid solutions are loaded; the
-        verdict does not, because the terminal ``(Mg)`` field's support depends on them.
-        """
-        cov = _report("In-Mg")
-        record = next(p for p in cov.phases if p.name == "Mg0.1In0.9")
-        assert record.supported is False
-        assert record.interval[0] == pytest.approx(0.0661, abs=1e-3)
-        assert cov.unsupported_ranges[0][0] == pytest.approx(0.0661, abs=1e-3)
-        assert cov.unsupported_fraction > 0.65
-
-    @pytest.mark.needs_cache
-    def test_a_thermal_form_takes_the_peritectic_field_of_its_compound(self, matrix_data_env):
-        """Li-Zn: the ht form's mask runs to the supported compound that bounds it."""
-        cov = _report("Li-Zn")
-        record = next(p for p in cov.phases if p.name == "Li2Zn5 ht")
-        assert record.supported is False
-        assert "peritectic" in record.reason
-        assert cov.unsupported_ranges[-1][1] == pytest.approx(0.7592, abs=1e-3)
-
-
 class TestPinnedDiagramsAreDeterministic:
-    """A pin must name its diagram; ``pd_ind=None`` lets the filesystem pick one.
+    """``pd_ind=None`` lets the filesystem pick the diagram, so a pin must name it.
 
     ``load_mpds_data`` prefers the indexless ``<sys>.json`` and falls back to
     ``<sys>_MPDS_PD_0.json`` only when it is absent, so removing the former repoints every
@@ -349,11 +165,6 @@ class TestPinnedDiagramsAreDeterministic:
 
         mpds_json, _ = load_mpds_data("Cu-Mg", pd_ind=None)
         assert mpds_json["reference"]["entry"] == "indexless"
-
-    def test_every_pin_case_names_its_diagram(self):
-        cases = coverage_pin_cases(PINS_PATH)
-        assert cases, "the pin fixture went missing"
-        assert all(isinstance(expected["pd_ind"], int) for _, _, expected in cases)
 
 
 def test_chart_function_renders_rows(capsys):

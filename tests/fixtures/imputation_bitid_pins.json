@@ -1,0 +1,324 @@
+{
+ "Cu-Mg": {
+  "params": [
+   -41302.26,
+   -5.1627,
+   -8148.05,
+   0.0
+  ],
+  "liquid_gibbs": [
+   [
+    6423.660783356664,
+    5341.863909028349,
+    -6358.696110992358,
+    -10085.924029398162,
+    -7577.035873227453,
+    2048.7044640662225
+   ],
+   [
+    2517.212315695353,
+    1214.980068124045,
+    -12004.341421665127,
+    -16129.917162622165,
+    -13242.9423169189,
+    -1626.3051946563355
+   ],
+   [
+    -1389.2360920548417,
+    -2911.129129158913,
+    -17637.088679009434,
+    -22154.49327108872,
+    -18891.963012636872,
+    -5301.314757953967
+   ]
+  ],
+  "synthetic": [
+   [
+    -18454.708545916328,
+    -14913.748462686646,
+    -13968.373172988078,
+    -16032.522663307403,
+    -16711.65593668765
+   ],
+   [
+    -6854.733386876831,
+    -14913.748462686646,
+    -13968.373172988078,
+    -14430.447576642278,
+    -16711.65593668765
+   ],
+   [
+    -6854.733386876831,
+    -6046.26978224068,
+    -13968.373172988078,
+    -14430.447576642278,
+    -10949.795541030095
+   ]
+  ],
+  "clamp": [
+   {
+    "x_s": 0.3,
+    "h_deep": -32655.13165552252,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -3.4946987761663237,
+      "composition": {
+       "Cu": 0.7,
+       "Mg": 0.3
+      },
+      "entry_id": "imputed:Probe0.3",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.3",
+       "x_b": 0.3,
+       "h_form_j_per_mol": -14275.313387700255,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -32655.13165552252,
+         "clamped_h_form_j_per_mol": -14275.313387700255,
+         "blocked_by": [
+          "mp-1038-GGA",
+          "mp-2481-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -3.4946987761663237,
+       "composition": {
+        "Cu": 0.7,
+        "Mg": 0.3
+       },
+       "entry_id": "imputed:Probe0.3",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.3",
+        "x_b": 0.3,
+        "h_form_j_per_mol": -14275.313387700255,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -32655.13165552252,
+          "clamped_h_form_j_per_mol": -14275.313387700255,
+          "blocked_by": [
+           "mp-1038-GGA",
+           "mp-2481-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   },
+   {
+    "x_s": 0.55,
+    "h_deep": -31954.218941935622,
+    "clamped": {
+     "entry": {
+      "@module": "pymatgen.entries.computed_entries",
+      "@class": "ComputedEntry",
+      "energy": -2.8696752073684233,
+      "composition": {
+       "Cu": 0.44999999999999996,
+       "Mg": 0.55
+      },
+      "entry_id": "imputed:Probe0.55",
+      "correction": 0.0,
+      "energy_adjustments": [],
+      "parameters": {},
+      "data": {
+       "imputed": true,
+       "label": "Probe0.55",
+       "x_b": 0.55,
+       "h_form_j_per_mol": -14470.96228910359,
+       "provenance": {
+        "calibration": "invariant",
+        "gliquid_version": "<masked>",
+        "param_format": "comb-exp",
+        "fit_params": [
+         -41302.26,
+         -5.1627,
+         -8148.05,
+         0.0
+        ],
+        "anchor": null,
+        "clamp": {
+         "inverted_h_form_j_per_mol": -31954.218941935622,
+         "clamped_h_form_j_per_mol": -14470.96228910359,
+         "blocked_by": [
+          "mp-1038-GGA",
+          "mp-2481-GGA"
+         ]
+        }
+       }
+      }
+     },
+     "data_keys": [
+      "imputed",
+      "label",
+      "x_b",
+      "h_form_j_per_mol",
+      "provenance"
+     ]
+    },
+    "accepted": [
+     {
+      "entry": {
+       "@module": "pymatgen.entries.computed_entries",
+       "@class": "ComputedEntry",
+       "energy": -2.8696752073684233,
+       "composition": {
+        "Cu": 0.44999999999999996,
+        "Mg": 0.55
+       },
+       "entry_id": "imputed:Probe0.55",
+       "correction": 0.0,
+       "energy_adjustments": [],
+       "parameters": {},
+       "data": {
+        "imputed": true,
+        "label": "Probe0.55",
+        "x_b": 0.55,
+        "h_form_j_per_mol": -14470.96228910359,
+        "provenance": {
+         "calibration": "invariant",
+         "gliquid_version": "<masked>",
+         "param_format": "comb-exp",
+         "fit_params": [
+          -41302.26,
+          -5.1627,
+          -8148.05,
+          0.0
+         ],
+         "anchor": null,
+         "clamp": {
+          "inverted_h_form_j_per_mol": -31954.218941935622,
+          "clamped_h_form_j_per_mol": -14470.96228910359,
+          "blocked_by": [
+           "mp-1038-GGA",
+           "mp-2481-GGA"
+          ]
+         }
+        }
+       }
+      },
+      "data_keys": [
+       "imputed",
+       "label",
+       "x_b",
+       "h_form_j_per_mol",
+       "provenance"
+      ]
+     }
+    ],
+    "rejected": []
+   }
+  ]
+ },
+ "Al-Cu": {
+  "params": [
+   -68087.2,
+   -3.6819,
+   2945.42,
+   0.0
+  ],
+  "liquid_gibbs": [
+   [
+    2678.7554761246583,
+    1526.848376515767,
+    -11544.08768362828,
+    -15668.671947007668,
+    -10948.619420702704,
+    6423.6425890420705
+   ],
+   [
+    -1910.4913691019628,
+    -3261.776352109606,
+    -17493.643981244757,
+    -21753.08976276954,
+    -16594.59395484856,
+    2517.1946414440263
+   ],
+   [
+    -6499.738236708134,
+    -8050.690374232241,
+    -23447.998220056106,
+    -27844.707198941873,
+    -22246.814535002264,
+    -1389.2533413713754
+   ]
+  ],
+  "synthetic": [
+   [
+    -23484.967878261035,
+    -18869.711666403535,
+    -19731.493474536222,
+    -22310.23211341274,
+    -22940.605362394017
+   ],
+   [
+    -10396.263322818933,
+    -18869.711666403535,
+    -19731.493474536222,
+    -18244.341433916765,
+    -22940.605362394017
+   ],
+   [
+    -10396.263322818933,
+    -13537.042689725036,
+    -19731.493474536222,
+    -18244.341433916765,
+    -19504.838094118044
+   ]
+  ]
+ }
+}

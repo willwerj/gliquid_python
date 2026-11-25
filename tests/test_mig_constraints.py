@@ -5,7 +5,7 @@ free-energy slope at the two feet on the monotectic isotherm) when both feet sit
 digitized liquidus, and the top-of-dome equation (zero curvature at the apex) when the
 record carries a known apex. Self-consistency: a diagram generated from known parameters
 yields feet and an apex from which each equation recovers ``L0_a`` at the true
-``(L0_b, L1_a)``. Runs offline on the shipped Ag-V and Hf-Zr caches.
+``(L0_b, L1_a)``. Runs offline on the cached Ag-V and Hf-Zr DFT hulls and synthetic diagrams.
 """
 
 import copy
@@ -19,7 +19,7 @@ from gliquid.binary import BinaryLiquid
 from ._mpds_builders import by_order as _by_order
 from ._mpds_builders import recovered_L0_a as _recovered_L0_a
 
-# Parameters that open a two-liquid dome on each diagram.
+# Parameters that open a two-liquid dome on each system.
 TRUTH = {
     "Ag-V": ([54923.70, 6.8246, 608.58, 0.0], {}),
     "Hf-Zr": ([45000.0, 3.0, -5000.0, 0.0], {"pd_ind": 0}),

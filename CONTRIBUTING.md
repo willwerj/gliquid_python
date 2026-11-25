@@ -28,7 +28,7 @@ directory is named `gliquid_python`. The store is the first of: `set_cache_dir()
 
 Run `pytest` from the repository root. It collects `tests/`, which is excluded from the sdist.
 The value pins, figure goldens and gated families carry markers (below), so `-m "not pins"`
-or `-m "not needs_cache"` deselects them.
+deselects the pins.
 
 The gate is the whole suite in parallel under pytest-xdist. Run it before you push; CI runs the
 same command with `-m "not needs_network"`:
@@ -65,13 +65,12 @@ the command line, to run it.
 
 ### Markers
 
-Four markers are declared, and `addopts = "--strict-markers"` means an undeclared or misspelled
+Three markers are declared, and `addopts = "--strict-markers"` means an undeclared or misspelled
 one fails the run instead of silently applying no marker at all.
 
 | marker | meaning |
 | --- | --- |
 | `pins` | A frozen-value characterization pin. It asserts that today's numbers equal the numbers captured when the pin was frozen. |
-| `needs_cache` | Needs the maintainer's per-system corpus store. **Skips**, rather than fails, without it. |
 | `needs_network` | Needs `NEW_MP_API_KEY` and a live Materials Project connection. |
 | `directory_only` | Needs a directory cache store. Skipped when `GLIQUID_TEST_SQLITE_STORE` swaps in a single-file store. |
 

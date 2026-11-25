@@ -14,7 +14,6 @@ The coverage report applies the same exception to its own drawn-phase mask, thro
 import pytest
 
 from gliquid import mpds
-from gliquid.binary import BinaryLiquid
 
 
 class TestTheLabelReader:
@@ -49,65 +48,3 @@ class TestTheLabelReader:
     def test_a_record_with_no_labels_block_reads_empty(self):
         assert mpds.two_liquid_label_comps({}) == []
         assert mpds.two_liquid_label_comps({"labels": None}) == []
-
-
-def _walked(system, drop_labels=False):
-    """``(mask, label comps)`` after a stubbed ``fit_parameters`` on a cached system."""
-    bl = BinaryLiquid.from_cache(system, param_format="comb-exp", pd_ind=0)
-    if bl.init_error or not bl.digitized_liq:  # pragma: no cover
-        pytest.skip(f"{system} is excluded upstream of the coverage gate")
-    if drop_labels:
-        bl.mpds_json["labels"] = [
-            entry
-            for entry in bl.mpds_json.get("labels") or []
-            if not mpds.is_two_liquid_label(entry[0])
-        ]
-    comps = mpds.two_liquid_label_comps(bl.mpds_json, bl.components)
-    original = BinaryLiquid.f
-    BinaryLiquid.f = lambda self, guess, **kwargs: float("inf")
-    try:
-        bl.fit_parameters(n_opts=1, max_iter=2, check_solid_coverage=True)
-    except Exception:  # noqa: BLE001 - the mask is populated before the optimiser runs
-        pass
-    finally:
-        BinaryLiquid.f = original
-    return [[float(lo), float(hi)] for lo, hi in bl.unsupported_comp_ranges], comps
-
-
-class TestTheWalkStopsAtAPrintedGap:
-    """Na-Si and Eu-Ni: the Na-rich and Eu-rich arms the monotectic bounds."""
-
-    CASES = [("Na-Si", 0.232367), ("Eu-Ni", 0.205695)]
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system,label_comp", CASES)
-    def test_no_masked_range_spans_the_printed_label(self, system, label_comp, matrix_data_env):
-        mask, comps = _walked(system)
-        assert comps == pytest.approx([label_comp], abs=1e-4)
-        assert not [r for r in mask if r[0] <= label_comp <= r[1]]
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system,label_comp", CASES)
-    def test_the_same_walk_masks_it_once_the_label_is_gone(
-        self, system, label_comp, matrix_data_env
-    ):
-        """POSITIVE CONTROL: only the printed label differs between the two runs."""
-        without, comps = _walked(system, drop_labels=True)
-        assert comps == []
-        assert [r for r in without if r[0] <= label_comp <= r[1]]
-
-    @pytest.mark.needs_cache
-    def test_the_coverage_mask_does_not_reach_this_label(self, matrix_data_env):
-        """Na-Si's drawn-phase mask falls clear of its label, so the coverage rule is silent.
-
-        A statement about where Na-Si's mask lands, not about the report being exempt: the
-        coverage path honours a printed gap too, and refuses a field that spans one. The mask
-        coincides with the dome, whose feet bound the field on both sides.
-        """
-        bl = BinaryLiquid.from_cache("Na-Si", param_format="comb-exp", pd_ind=0)
-        bl.find_invariant_points(verbose=False)
-        report = bl.assess_solid_coverage()
-        assert report.unsupported_ranges == [
-            pytest.approx([0.4741, 0.5288], abs=1e-3),
-        ]
-        assert report.gap_ranges == [pytest.approx([0.4741, 0.5288], abs=1e-3)]

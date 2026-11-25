@@ -103,9 +103,9 @@ class TestFromCacheGate:
         assert bl.calculate_deviation_metrics() == (float("inf"),) * 4
 
 
-class TestRealCachedSystem:
+class TestCachedSystem:
     def test_hf_zr_pd0_is_unaffected(self):
-        """A real, ordinarily-sampled cached system passes the gate at from_cache time
+        """An ordinarily-sampled cached diagram passes the gate at from_cache time
         (its fit/skip verdict then belongs to the solid-coverage gate, not this one)."""
         bl = BinaryLiquid.from_cache("Hf-Zr", pd_ind=0)
         assert bl.init_error is False

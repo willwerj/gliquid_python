@@ -5,8 +5,8 @@ canonicalize to the alphabetical system name, so 'Zr-Hf' and 'Hf-Zr' hit the SAM
 files, avoiding duplicate reversed-order directories in a per-system corpus. MPDS-derived
 artifacts (digitized liquidus, low-T phase data) are stored in the json's own
 alphabetical frame and mirrored into the construction frame at their consumption
-boundaries. Everything runs offline against the shipped Hf-Zr fixtures and a synthetic
-Al-Mg-Si entries record.
+boundaries. Everything runs offline against the cached Hf-Zr DFT hull, the synthetic Hf-Zr diagram and a
+synthetic Al-Mg-Si entries record.
 """
 
 import json

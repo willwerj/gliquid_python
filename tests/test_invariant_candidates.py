@@ -4,7 +4,8 @@
 collects into initial conditions, one per candidate constraint set. A format consuming two
 invariant equations per candidate pairs the hottest equation with each other one; a format
 consuming one equation makes every equation its own candidate, solved together with the
-format's identity constraints. Runs offline on the shipped Cu-Mg cache.
+format's identity constraints. Runs offline on the cached Cu-Mg DFT hull and synthetic
+diagram.
 """
 
 import math

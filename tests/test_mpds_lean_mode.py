@@ -33,6 +33,7 @@ import gliquid.config as config
 import gliquid.mpds as mpds
 from gliquid.binary import SKIP_NARROW_SPAN, BinaryLiquid, BLPlotter
 
+from ._mpds_builders import MPDS_DUMMY_DIR
 from ._mpds_builders import from_record as _bl_on
 from ._mpds_builders import liquid_shape as _liquid
 from ._mpds_builders import svgpath as _svgpath
@@ -158,10 +159,10 @@ class TestTheReductionDropsShapesAndKeepsTheRest:
         }
 
     @pytest.mark.parametrize("name", ["Hf-Zr.json", "Al-Cu.json", "C-Nb.json"])
-    def test_the_reduction_is_smaller_on_real_diagrams(self, package_corpus, name):
-        """On real cached diagrams the lean record is at least 1.5x smaller. The kept
-        liquidus points are full-precision floats, never rounded."""
-        source = json.loads((package_corpus / name).read_text())
+    def test_the_reduction_is_smaller_on_drawn_diagrams(self, name):
+        """On diagrams drawn with solid and two-phase fields the lean record is at least 1.5x
+        smaller. The kept liquidus points are full-precision floats, never rounded."""
+        source = json.loads((MPDS_DUMMY_DIR / name).read_text())
         full_bytes = len(json.dumps(source))
         lean_bytes = len(json.dumps(mpds.lean_record(source)))
         assert lean_bytes * 1.5 < full_bytes, f"{name}: {full_bytes} -> {lean_bytes}"
@@ -390,15 +391,16 @@ def package_corpus():
 
 @pytest.fixture(scope="module")
 def lean_corpus(package_corpus, tmp_path_factory):
-    """A copy of ``package_corpus``'s MPDS records plus the Hf-Zr DFT entries record."""
-    hf_zr_entries = cache.CacheKey("Hf-Zr", cache.KIND_DFT_ENTRIES, "GGA")
+    """A flat copy of the synthetic MPDS diagrams plus ``package_corpus``'s Hf-Zr DFT entries
+    record."""
     root = tmp_path_factory.mktemp("lean_corpus")
-    scan = cache.scan_directory_store(package_corpus, config.dir_structure)
-    for key, path in scan.records:
-        if key.kind == cache.KIND_MPDS or key == hf_zr_entries:
-            dest = root / path.relative_to(package_corpus)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(path, dest)
+    for key, path in cache.scan_directory_store(MPDS_DUMMY_DIR, "flat").records:
+        if key.kind == cache.KIND_MPDS:
+            shutil.copy2(path, root / path.name)
+    entries = cache.DirectoryBackend(package_corpus, config.dir_structure).path_for(
+        cache.CacheKey("Hf-Zr", cache.KIND_DFT_ENTRIES, "GGA")
+    )
+    shutil.copy2(entries, root / entries.name)
     return root
 
 
@@ -417,10 +419,10 @@ def lean_store(lean_corpus, tmp_path_factory):
 
 
 class TestLeanStore:
-    def test_records_round_trip_through_the_store(self, package_corpus, lean_store):
+    def test_records_round_trip_through_the_store(self, lean_store):
         backend = cache.SqliteBackend(lean_store)
         try:
-            source = json.loads((package_corpus / "Hf-Zr.json").read_text())
+            source = json.loads((MPDS_DUMMY_DIR / "Hf-Zr.json").read_text())
             key = cache.CacheKey("Hf-Zr", cache.KIND_MPDS, "")
             assert backend.read_json(key) == mpds.lean_record(source)
         finally:

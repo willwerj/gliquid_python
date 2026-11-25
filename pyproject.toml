@@ -134,7 +134,6 @@ ignore = [
 testpaths = ["tests"]
 markers = [
     "pins: frozen-value characterization pin. Re-freeze deliberately with the freezer script named in the file's docstring -- never edit a pin to make it pass.",
-    "needs_cache: needs the maintainer's per-system corpus store. Skips (does not fail) without it.",
     "needs_network: needs NEW_MP_API_KEY and a live Materials Project connection.",
     "directory_only: needs a DIRECTORY cache store (on-disk filenames, dir_structure, the atomic-write or cold-fetch write path). Skipped when GLIQUID_TEST_SQLITE_STORE swaps in a single-file store; see conftest.py.",
 ]

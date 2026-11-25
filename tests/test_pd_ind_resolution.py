@@ -1,15 +1,14 @@
 """Which cached diagram ``load_mpds_data`` resolves, for every ``pd_ind`` / store shape.
 
 Two cache namings coexist: indexed ``<sys>_MPDS_PD_<n>.json``, and indexless ``<sys>.json``
-wherever a store holds one diagram per system (``cache/``). ``load_mpds_data``
-serves both:
+wherever a store holds one diagram per system. ``load_mpds_data`` serves both:
 
 * ``pd_ind=None`` prefers the indexless file, so an indexless sibling SHADOWS PD_0; a warning
   fires on exactly that ambiguous case.
 * ``pd_ind=0`` on an indexless-only store resolves the sole indexless record rather than
   falling through to the API branch and returning ``{"reference": None}``.
 
-Everything runs offline against copies of the Ag-V fixture in ``tmp_path``; the MPDS
+Everything runs offline against copies of the synthetic Ag-V diagram in ``tmp_path``; the MPDS
 client is monkeypatched to raise so any fall-through to the API branch fails loudly.
 """
 
@@ -23,6 +22,8 @@ import pytest
 import gliquid.api as api
 import gliquid.config as config
 import gliquid.mpds as mpds
+
+from ._mpds_builders import MPDS_DUMMY_DIR
 
 SYSTEM = "Ag-V"
 SENTINEL_ENTRY = "https://mpds.io/entry/C000000-INDEXED"
@@ -46,18 +47,18 @@ def flat_store(tmp_path, monkeypatch):
         config.set_dir_structure(original_struct)
 
 
-def _shipped_fixture() -> Path:
-    """The indexless Ag-V json in this checkout's ``cache/``."""
-    return Path(__file__).resolve().parents[1] / "cache" / f"{SYSTEM}.json"
+def _dummy_fixture() -> Path:
+    """The synthetic indexless Ag-V diagram."""
+    return MPDS_DUMMY_DIR / f"{SYSTEM}.json"
 
 
 def _put_indexless(store: Path) -> None:
-    shutil.copy(_shipped_fixture(), store / f"{SYSTEM}.json")
+    shutil.copy(_dummy_fixture(), store / f"{SYSTEM}.json")
 
 
 def _put_indexed(store: Path, ind: int = 0) -> None:
     """An indexed sibling that is distinguishable from the indexless one by entry alone."""
-    js = json.loads(_shipped_fixture().read_text())
+    js = json.loads(_dummy_fixture().read_text())
     js["reference"]["entry"] = SENTINEL_ENTRY
     (store / f"{SYSTEM}_MPDS_PD_{ind}.json").write_text(json.dumps(js))
 

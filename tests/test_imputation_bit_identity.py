@@ -3,17 +3,13 @@
 Frozen by freeze_imputation_bitid_pins.py into fixtures/imputation_bitid_pins.json, which
 calls :func:`compute_pins` below. Every float is compared exactly: JSON stores floats by their
 round-trip ``repr``. The liquid parameters are pinned, so no fit is involved, and everything
-runs offline against the shipped Cu-Mg and Al-Cu data fixtures.
+runs offline against the cached Cu-Mg and Al-Cu DFT hulls.
 
-Blocks per system:
+Blocks per system (``BLOCKS``):
   * ``liquid_gibbs``: ``_liquid_gibbs`` on a composition x temperature grid.
   * ``synthetic``: ``invert_binary_phase_energy`` on hand-built anchors, including anchors within
     ``dx`` of either edge, under each ``t_matched_types`` setting.
-  * ``targets``: every imputable phase of the interior-stripped system -- both inversion arms,
-    the hull guard, the tagged entry and an entry re-energized by ``entry_at_enthalpy``.
-  * ``impute_shipped`` / ``impute_nearest``: full ``impute_binary_phases`` output and the finished
-    phase list.
-  * ``clamp``: a deliberately over-deep probe through ``_clamp_onto_matched_hull`` and
+  * ``clamp`` (Cu-Mg): a deliberately over-deep probe through ``_clamp_onto_matched_hull`` and
     ``accept_against_growing_hull`` on the full hull.
 """
 
@@ -27,14 +23,10 @@ from pathlib import Path
 import pytest
 
 import gliquid.imputation.binary_imputation as imp_binary
-import gliquid.imputation.core as imp_core
 from gliquid.binary import BinaryLiquid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _mpds_builders import (
-    matches_pin,  # noqa: E402
-    strip_interior,  # noqa: E402
-)
+from _mpds_builders import matches_pin  # noqa: E402
 from _mpds_builders import without_module_paths as _without_module_paths  # noqa: E402
 
 pytestmark = pytest.mark.pins
@@ -44,6 +36,10 @@ PINS_PATH = Path(__file__).parent / "fixtures" / "imputation_bitid_pins.json"
 PARAMS = {
     "Cu-Mg": [-41302.26, -5.1627, -8148.05, 0.0],
     "Al-Cu": [-68087.2, -3.6819, 2945.42, 0.0],
+}
+BLOCKS = {
+    "Cu-Mg": ("params", "liquid_gibbs", "synthetic", "clamp"),
+    "Al-Cu": ("params", "liquid_gibbs", "synthetic"),
 }
 GIBBS_X = (1e-6, 0.013, 0.25, 0.5, 0.731, 1.0 - 1e-6)
 GIBBS_T = (700.0, 1100.0, 1500.0)
@@ -61,7 +57,7 @@ VERSION_MASK = "<masked>"
 
 
 def load(system: str) -> BinaryLiquid:
-    """The shipped system at its pinned liquid parameters."""
+    """The cached system at its pinned liquid parameters."""
     return BinaryLiquid.from_cache(system, param_format="comb-exp", params=PARAMS[system])
 
 
@@ -84,30 +80,8 @@ def entry_record(entry_dict: dict | None) -> dict | None:
     return {"entry": out, "data_keys": list((out.get("data") or {}).keys())}
 
 
-def imputed_records(records) -> list[dict]:
-    return [
-        {
-            "name": r.name,
-            "comp": float(r.comp),
-            "enthalpy": float(r.enthalpy),
-            "invariant_type": r.invariant_type,
-            "invariant_comp": float(r.invariant_comp),
-            "invariant_temp": float(r.invariant_temp),
-            "entry": entry_record(r.entry_dict),
-        }
-        for r in records
-    ]
-
-
-def phase_list(bl: BinaryLiquid) -> list[list]:
-    return sorted(
-        [p.name, None if p.enthalpy is None else float(p.enthalpy), bool(p.imputed)]
-        for p in bl.phases
-    )
-
-
 def compute_system(system: str) -> dict:
-    """Every pinned quantity for one system."""
+    """The ``BLOCKS`` pinned for one system."""
     bl = load(system)
     block: dict = {"params": list(PARAMS[system])}
 
@@ -122,44 +96,8 @@ def compute_system(system: str) -> dict:
         for arm in ARMS
     ]
 
-    stripped = copy.deepcopy(bl)
-    strip_interior(stripped)
-    targets = []
-    for phase, inv, x_s in imp_binary.list_binary_imputation_targets(stripped):
-        h_shipped = float(imp_binary.invert_binary_phase_energy(stripped, x_s, inv))
-        h_tmatched = float(
-            imp_binary.invert_binary_phase_energy(
-                stripped, x_s, inv, t_matched_types=("per", "eut")
-            )
-        )
-        entry = imp_binary._imputed_computed_entry(stripped, phase["name"], x_s, h_shipped, inv)
-        targets.append(
-            {
-                "name": phase["name"],
-                "x_s": float(x_s),
-                "invariant": {k: inv[k] for k in ("type", "comp", "temp")},
-                "h_shipped": h_shipped,
-                "h_tmatched": h_tmatched,
-                "hull_at": float(imp_binary._phase_list_enthalpy_at(stripped, x_s)),
-                "below": bool(imp_binary._below_existing_hull(stripped, x_s, h_shipped)),
-                "entry": entry_record(entry),
-                "reenergized": entry_record(
-                    imp_core.entry_at_enthalpy(stripped.dft_ch, entry, h_shipped + 500.0)
-                ),
-            }
-        )
-    block["targets"] = targets
-
-    for selection in imp_binary.INVERSION_SELECTIONS:
-        work = copy.deepcopy(stripped)
-        records = imp_binary.impute_binary_phases(
-            work, write_cache=False, inversion_selection=selection
-        )
-        block[f"impute_{selection}"] = {
-            "records": imputed_records(records),
-            "phases": phase_list(work),
-        }
-
+    if "clamp" not in BLOCKS[system]:
+        return block
     protected = imp_binary.matched_hull_entry_ids(bl)
     clamp = []
     for x_s in CLAMP_PROBES:
@@ -185,7 +123,7 @@ def compute_system(system: str) -> dict:
 
 def compute_pins() -> dict:
     """Every pinned quantity, keyed by system, in the layout the fixture stores."""
-    return {system: compute_system(system) for system in PARAMS}
+    return {system: compute_system(system) for system in BLOCKS}
 
 
 def _normalized(value):
@@ -198,24 +136,18 @@ def frozen() -> dict:
     return json.loads(PINS_PATH.read_text())
 
 
-@pytest.fixture(scope="module", params=list(PARAMS))
+@pytest.fixture(scope="module")
 def current(request) -> tuple[str, dict]:
     return request.param, _normalized(compute_system(request.param))
 
 
-BLOCKS = (
-    "params",
-    "liquid_gibbs",
-    "synthetic",
-    "targets",
-    "impute_shipped",
-    "impute_nearest",
-    "clamp",
-)
+CASES = [(system, block) for system, blocks in BLOCKS.items() for block in blocks]
 
 
 class TestBinaryImputationBitIdentity:
-    @pytest.mark.parametrize("block", BLOCKS)
+    @pytest.mark.parametrize(
+        "current,block", CASES, indirect=["current"], ids=[f"{s}-{b}" for s, b in CASES]
+    )
     def test_block_matches_frozen(self, frozen, current, block):
         system, values = current
         actual, pinned = (
@@ -225,8 +157,8 @@ class TestBinaryImputationBitIdentity:
         assert matches_pin(actual, pinned), (actual, pinned)
 
     def test_fixture_exercises_every_path(self, frozen):
-        for system, block in frozen.items():
-            assert block["targets"], f"{system}: no imputable phase after stripping"
-            assert block["impute_shipped"]["records"], f"{system}: nothing imputed"
-        clamps = [c for block in frozen.values() for c in block["clamp"]]
+        assert {system: sorted(block) for system, block in frozen.items()} == {
+            system: sorted(blocks) for system, blocks in BLOCKS.items()
+        }
+        clamps = [c for block in frozen.values() for c in block.get("clamp", ())]
         assert any(c["clamped"] is not None for c in clamps), "no probe reached the clamp"

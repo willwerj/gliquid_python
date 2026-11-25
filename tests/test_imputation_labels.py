@@ -83,7 +83,7 @@ CELLS = [
 
 
 def load(system: str) -> BinaryLiquid:
-    """The shipped system at its pinned liquid parameters."""
+    """The cached system at its pinned liquid parameters."""
     return BinaryLiquid.from_cache(system, param_format="comb-exp", params=list(PARAMS[system]))
 
 

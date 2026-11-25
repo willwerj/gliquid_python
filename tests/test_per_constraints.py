@@ -4,8 +4,8 @@
 lies on the tangent to the liquid free energy at the invariant liquid composition. A diagram
 generated from known parameters yields peritectics at which the equation holds at the true
 parameters, its residual a small fraction of RT, and from which it recovers ``L0_a``.
-``_reacting_solid`` finds the solid the liquid reacts with. Runs offline on the shipped
-Al-Cu and C-Nb caches.
+``_reacting_solid`` finds the solid the liquid reacts with. Runs offline on the cached
+Al-Cu and C-Nb DFT hulls and synthetic diagrams.
 """
 
 import math

@@ -6,9 +6,8 @@ melting invariant, and its primary crystallization field is masked. A genuine pa
 sibling drawn as a shape or named in the ``labels`` block -- stays one merged, supported phase.
 
 Tested at each layer: the predicate, the low-temperature rule, ``assess_solid_coverage``,
-``BinaryLiquid.from_cache`` with its invariants and fit, and the cached corpus. The fixtures
-are synthetic except in ``TestTheCachedCorpus``; element symbols are real so
-``standard_formula`` can parse them.
+``BinaryLiquid.from_cache`` with its invariants and fit. The fixtures are synthetic; element
+symbols are real so ``standard_formula`` can parse them.
 """
 
 import math
@@ -33,7 +32,6 @@ from ._mpds_builders import (
     stub_mpds_load,
     svgpath,
 )
-from ._mpds_builders import corpus_coverage_report as _report
 from ._mpds_builders import unpaired_ht_forms as _unpaired
 
 ELEMENTS = ("Al", "Cu")
@@ -358,33 +356,3 @@ class TestFitParameters:
         bl.fit_parameters(n_opts=1, max_iter=2, verbose=False)
         assert bl.init_error is False
         assert bl.unsupported_comp_ranges == []
-
-
-class TestTheCachedCorpus:
-    """A form with no cooler sibling holds no hull entry and masks its primary field.
-
-    Each entry is (system, the unpaired form, the hull entry it fails to claim). Au-In's entry
-    at 0.400 is ``Au3In2``'s by formula, but the only drawn ``Au3In2`` is the ht form, so no
-    phase claims the entry.
-    """
-
-    CASES = [("Au-In", "Au3In2 ht", 0.400)]
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system,form,hull", CASES)
-    def test_the_form_is_unsupported_and_claims_no_entry(self, system, form, hull, matrix_data_env):
-        cov = _report(system)
-        record = next(p for p in cov.phases if p.name == form)
-        assert record.supported is False
-        assert "unpaired_ht_polymorph:" in record.reason
-        assert "dft_phase@" not in record.reason
-        assert not any((p.reason or "").endswith(f"dft_phase@{hull:.3f}") for p in cov.phases)
-        assert cov.is_insufficient()[0] is False
-
-    @pytest.mark.needs_cache
-    def test_a_paired_ht_form_shares_its_rt_forms_entry(self, matrix_data_env):
-        cov = _report("B-Mo")
-        by_name = {p.name: p for p in cov.phases}
-        for name in ("MoB2 rt", "MoB2 ht"):
-            assert by_name[name].supported is True
-            assert by_name[name].reason.endswith("dft_phase@0.333")

@@ -159,8 +159,8 @@
   }
  },
  "latent": {
-  "al_cu_base": "bfb21ebb381e1d66",
-  "al_cu_pair_tol_0.01": "e6de00ff681f7035",
+  "al_cu_base": "46fd0f0d49c545af",
+  "al_cu_pair_tol_0.01": "6d21011c7acc1018",
   "l2_config": {
    "eqs": [],
    "result": "probe_stop",

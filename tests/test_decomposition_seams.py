@@ -14,8 +14,7 @@ carry ``latent`` in their names:
     ``coverage_thresholds['dft_cover_tol']``;
   * L3 -- the right-hand miscibility-gap walk skips two segments where the left skips one;
   * L4 -- a vertical liquidus segment on either walk raises ``ZeroDivisionError``;
-  * L5 -- ``identify_invariant_points`` retypes the returned phase dicts (pinned in
-    ``test_decomposition_pins.py``);
+  * L5 -- ``identify_invariant_points`` retypes the returned phase dicts;
   * L6 -- ``fit_parameters`` logs a failing attempt and returns ``[]`` however many run;
   * L7 -- the flank fallbacks of ``fit_parameters`` are the ints ``0`` and ``1``.
 
@@ -1194,8 +1193,7 @@ class TestInvariantPassSeams:
 class TestFindInvariantPointsWrapper:
     """The wrapper passes the instance's inputs and its keywords through, assigns the returned
     lists to ``invariants`` and ``low_t_exp_phases`` and returns them, and records a
-    full-composition solid solution on ``full_comp_ss`` with ``init_error`` left unset. The
-    values are pinned in ``test_decomposition_pins.py``."""
+    full-composition solid solution on ``full_comp_ss`` with ``init_error`` left unset."""
 
     def test_the_wrapper_forwards_its_inputs_and_assigns_the_results(self, monkeypatch):
         calls = []

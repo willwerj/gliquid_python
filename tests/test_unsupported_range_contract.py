@@ -29,7 +29,7 @@ from gliquid.binary import (
 )
 
 SYSTEM = "Hf-Zr"  # offline-cached, the same system the skip-reason contract drives
-MASKED_SYSTEM = "Al-Cu"  # fits, and masks a real stretch of its liquidus
+MASKED_SYSTEM = "Al-Cu"  # fits, and masks a stretch of its liquidus
 # The unmasked system is cu_mg_fit's Cu-Mg: its coverage report and invariant walk mask nothing.
 
 
@@ -269,7 +269,7 @@ class TestTheMaskFractionCapRulesOnTheInvariantSourceOnly:
         assert bl.unsupported_comp_ranges == [[0, 0.45], [0.55, 1]]
 
     def test_a_wholly_coverage_derived_mask_escapes_even_a_zero_cap(self, monkeypatch):
-        """The real-corpus control on the synthetic pin above: ``Al-Cu``'s mask comes
+        """The cached-system control on the synthetic pin above: ``Al-Cu``'s mask comes
         entirely from its coverage report, and the cap never sees it."""
         monkeypatch.setattr(binary, "MASK_FRACTION_CAP", 0.0)
         system = BinaryLiquid.from_cache(MASKED_SYSTEM, param_format="comb-exp", pd_ind=0)

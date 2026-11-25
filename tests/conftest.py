@@ -11,6 +11,10 @@ Resolution order for each key:
 Tests that need the API gate on ``os.getenv('NEW_MP_API_KEY')`` and skip when it is
 absent, so the offline (cached) suite still runs everywhere.
 
+MPDS diagrams come from ``fixtures/mpds_dummy/``, synthetic diagrams written by
+make_dummy_mpds.py: for the session, every MPDS read of the repository ``cache/`` is served
+from there (``mpds_dummy_store``), so no MPDS file in ``cache/`` is read.
+
 The shared fixtures are defined in ``_mpds_builders.py``.
 """
 
@@ -21,8 +25,7 @@ from gliquid.api import load_dotenv
 from ._mpds_builders import (  # noqa: F401
     cu_mg_fit,
     cu_mg_full,
-    matrix_data_env,
-    matrix_data_store,
+    mpds_dummy_store,
     no_persist,
     ss_from_cache,
 )

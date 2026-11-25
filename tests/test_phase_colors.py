@@ -3,8 +3,7 @@
 The palette scheme (the max-contrast PHASE_PALETTE) lives in
 gliquid.plotting.style.build_phase_color_map. Two contracts:
 1. ASSIGNMENT — line phases cycle PHASE_PALETTE in ``phase_names`` order and 'L' is
-   cornflowerblue; the live-vs-frozen dict check runs in
-   test_decomposition_pins.py (the ``color_map`` figure summaries).
+   cornflowerblue.
 2. COLLISION-FREE — no line-phase or liquid color may equal any of the 3 reserved
    SS_FIXED_COLORS, compared numerically (hex vs 'rgb(r, g, b)' vs named colors).
 """

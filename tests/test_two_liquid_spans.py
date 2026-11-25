@@ -2,8 +2,8 @@
 
 ``HSX.two_liquid_spans`` reads the facets of the last ``compute_tx`` and returns the merged
 composition intervals tied by a two-liquid facet, without a second hull. The facet rule is
-the pure function ``two_liquid_spans_from_facets``. Runs offline on the shipped Ag-V, Cu-Mg
-and Hf-Zr caches.
+the pure function ``two_liquid_spans_from_facets``. Runs offline on the cached Ag-V, Cu-Mg
+and Hf-Zr DFT hulls and synthetic diagrams.
 """
 
 import numpy as np

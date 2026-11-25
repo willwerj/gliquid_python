@@ -1,23 +1,21 @@
 """A liquid or gas field tagged ``is_solid`` must not become a compound named 'L'.
 
 MPDS normally draws the liquid field as an area (``kind: 'phase'``, ``is_solid: false``).
-Five shapes in the cached corpus are drawn as STROKES instead and flagged solid:
+Some diagrams draw it as a STROKE instead and flag it solid, in two forms:
 
-* Er-Nb PD_0 shape 6, Fe-Sn PD_6 shape 8, Hg-Pd PD_0 shape 3, Tl-V PD_0 shape 6 -- a
-  terminal liquid sliver too narrow to fill, emitted as a 2- or 3-point line. Each ends
-  on the low-melting component's own melting point (Hg-Pd's last vertex is -38.85 degC,
-  Tl-V's is 303.35 degC) and passes through that diagram's printed invariants, so these
-  are real liquid boundaries wearing the wrong flag.
-* Li-Mo PD_0 shape 6 -- not a liquid boundary at all, but the right frame edge (a
-  2-point vertical at x = 100.019 at.%, spanning the full 0-5000 degC frame, twin of the
-  unlabelled shape 7 at x = 0) that captured the nearby printed 'L' text.
+* a terminal liquid sliver too narrow to fill, emitted as a 2- or 3-point line close to a
+  pure-element axis, often ending on that component's melting point -- a real liquid
+  boundary wearing the wrong flag;
+* a frame edge: a 2-point vertical just past x = 100 at.% spanning the whole temperature
+  frame, which captured a nearby printed 'L' text.
 
 ``identify_mpds_phases`` names a stroke from ``split_phase_label(...)[0]``; none of these
 may come back as a line compound called 'L'. ``liquid_shape_paths`` refuses them on the
 liquidus side with a ``kind in (None, 'phase')`` filter, which cannot serve the phase-list
 gate (every genuine line compound is ``kind: 'compound'``): the label is the discriminator.
 
-Fixtures are synthetic but carry the real labels, svgpaths and temperature frames.
+Fixtures are synthetic strokes of both forms, on the element pairs and temperature frames
+such diagrams use.
 """
 
 import pytest
@@ -44,18 +42,15 @@ def _json(shapes, temp, elements):
     return mpds_record(shapes, elements, temp)
 
 
-# (system, svgpath, temp frame, elements) -- verbatim from the cached jsons.
-REAL_STROKES = [
-    ("Er-Nb", "M 98.7419,2459.45 L 98.6466,2499.49", (500.0, 2500.0), ("Er", "Nb")),
-    (
-        "Fe-Sn",
-        "M 99.6759,804.156 L 99.7522,574.252 L 99.8284,424.937",
-        (400.0, 1600.0),
-        ("Fe", "Sn"),
-    ),
-    ("Hg-Pd", "M 0.209684,237.858 L 0.0953107,90.0228 L 0,-38.8453", (-100.0, 600.0), ("Hg", "Pd")),
-    ("Li-Mo", "M 100.019,5000 L 100.019,0", (0.0, 5000.0), ("Li", "Mo")),
-    ("Tl-V", "M 0.133435,1917.38 L 0,303.345", (0.0, 3000.0), ("Tl", "V")),
+# (system, svgpath, temp frame, elements): two- and three-point slivers near either axis, one
+# ending on the low-melting component's melting point, and a full-height frame edge past 100.
+HG_PD_STROKE = "M 0.25,250 L 0.1,100 L 0,-38.8"
+STROKES = [
+    ("Er-Nb", "M 98.6,2420 L 98.5,2499", (500.0, 2500.0), ("Er", "Nb")),
+    ("Fe-Sn", "M 99.6,800 L 99.7,600 L 99.8,450", (400.0, 1600.0), ("Fe", "Sn")),
+    ("Hg-Pd", HG_PD_STROKE, (-100.0, 600.0), ("Hg", "Pd")),
+    ("Li-Mo", "M 100.02,5000 L 100.02,0", (0.0, 5000.0), ("Li", "Mo")),
+    ("Tl-V", "M 0.15,1900 L 0,304", (0.0, 3000.0), ("Tl", "V")),
 ]
 
 
@@ -113,9 +108,7 @@ class TestLabelRecognition:
 
 
 class TestTheFiveRealShapes:
-    @pytest.mark.parametrize(
-        "system,svgpath,temp,elements", REAL_STROKES, ids=[r[0] for r in REAL_STROKES]
-    )
+    @pytest.mark.parametrize("system,svgpath,temp,elements", STROKES, ids=[r[0] for r in STROKES])
     def test_no_compound_named_l_is_emitted(self, system, svgpath, temp, elements):
         data = _json([_stroke("L", svgpath)], temp, elements)
         phases = mpds.identify_mpds_phases(data, elements=elements)
@@ -125,11 +118,11 @@ class TestTheFiveRealShapes:
         """Hg-Pd: the stroke goes, its four genuine neighbours stay."""
         data = _json(
             [
-                _stroke("L", "M 0.209684,237.858 L 0.0953107,90.0228 L 0,-38.8453"),
-                _line("Hg4Pd", 20.0154, -99.82, 90.02),
-                _line("Hg5Pd2", 28.6309, -99.82, 238.03),
-                _line("HgPd", 50.0, -99.82, 500.02),
-                _line("(Pd)", 85.8747, -99.82, 399.87),
+                _stroke("L", HG_PD_STROKE),
+                _line("Hg4Pd", 20.0, -99.8, 100.0),
+                _line("Hg5Pd2", 28.6, -99.8, 250.0),
+                _line("HgPd", 50.0, -99.8, 480.0),
+                _line("(Pd)", 86.0, -99.8, 400.0),
             ],
             (-100.0, 600.0),
             ("Hg", "Pd"),

@@ -9,7 +9,7 @@ reach the tests through ``tests/conftest.py``.
 from __future__ import annotations
 
 import contextlib
-import json
+import os
 from functools import partial
 from pathlib import Path
 
@@ -23,17 +23,63 @@ from pymatgen.core import Composition, Element
 from pymatgen.entries.computed_entries import ComputedEntry
 
 import gliquid.api as api
+import gliquid.cache as cache
 import gliquid.config as config
 import gliquid.imputation.binary_imputation as imp_binary
 import gliquid.mpds as mpds
 from gliquid.binary import BinaryLiquid, build_phases_from_chull
-from gliquid.cache import CacheKey
 from gliquid.solid_coverage import SolidCoverageReport
 from gliquid.solution import l_sym, x_vals
 from gliquid.ternary import TernaryLiquidInterpolation
 
-
 # -- MPDS records and shapes --
+#: Synthetic MPDS diagrams written by make_dummy_mpds.py; the suite reads the MPDS records of
+#: the repository ``cache/`` from here.
+MPDS_DUMMY_DIR = Path(__file__).resolve().parent / "fixtures" / "mpds_dummy"
+REPO_CACHE_DIR = Path(__file__).resolve().parents[1] / "cache"
+
+
+@contextlib.contextmanager
+def dummy_mpds_store():
+    """Serve every MPDS record of the repository ``cache/`` from :data:`MPDS_DUMMY_DIR`.
+
+    While active, the configured directory store answers MPDS reads, existence checks and
+    variant listings for ``cache/`` from the dummy directory alone, so an MPDS file in
+    ``cache/`` is never read; an MPDS write there raises. Other kinds of record, and every
+    other store, are untouched.
+    """
+    backend = cache._GLOBAL_DIRECTORY_BACKEND
+    dummy = cache.DirectoryBackend(MPDS_DUMMY_DIR)
+    repo = os.path.normcase(str(REPO_CACHE_DIR.resolve()))
+    resolved: dict[str, bool] = {}
+    path_for, variants, write_json = backend.path_for, backend.variants, backend.write_json
+
+    def routed(kind):
+        if kind != cache.KIND_MPDS or config.cache_dir is None:
+            return False
+        root = str(config.cache_dir)
+        if root not in resolved:
+            resolved[root] = os.path.normcase(str(Path(root).resolve())) == repo
+        return resolved[root]
+
+    def routed_path_for(key):
+        return dummy.path_for(key) if routed(key.kind) else path_for(key)
+
+    def routed_variants(sys_name, kind):
+        return dummy.variants(sys_name, kind) if routed(kind) else variants(sys_name, kind)
+
+    def routed_write_json(key, payload):
+        if routed(key.kind):
+            raise AssertionError(f"a test wrote the MPDS record {key} into the repository cache")
+        return write_json(key, payload)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(backend, "path_for", routed_path_for)
+        patch.setattr(backend, "variants", routed_variants)
+        patch.setattr(backend, "write_json", routed_write_json)
+        yield
+
+
 def svgpath(points):
     """``[[x_pct, T_celsius], ...]`` -> MPDS-style svgpath string."""
     return "M " + " L ".join(f"{x},{t}" for x, t in points)
@@ -89,20 +135,6 @@ def mpds_record(shapes, elements, temp, labels=(), reference="synthetic", comp_r
 def liquidus_record(shapes, elements=("Hf", "Zr"), temp=(0, 2600)):
     """:func:`mpds_record` with the ``synthetic-test-json`` reference and integer comp range."""
     return mpds_record(shapes, elements, temp, reference="synthetic-test-json", comp_range=(0, 100))
-
-
-def load_cached_mpds(system):
-    """A cached ``<sys>_MPDS_PD_0.json`` or ``<sys>.json``, or skip when neither is on this
-    machine."""
-    name = f"{system}_MPDS_PD_0.json"
-    candidates = [api.resolve_cache_path(CacheKey(system, "mpds", v)) for v in ("0", "")]
-    root = config.project_root
-    parents = Path(root).resolve().parents if root is not None else ()
-    candidates += [parent / "matrix_data" / system / name for parent in parents]
-    path = next((p for p in candidates if p is not None and p.exists()), None)
-    if path is None:
-        pytest.skip(f"{system} not in the local MPDS cache")
-    return json.loads(path.read_text())
 
 
 def stub_mpds_load(monkeypatch, record):
@@ -183,23 +215,6 @@ def eutectic_inv(comp, phases=(None, None), phase_comps=(None, None)):
     }
 
 
-def coverage_pin_cases(pins_path):
-    """``(ref_mode, system, expected)`` for every case in a solid-coverage pin file.
-
-    ``expected`` carries ``pd_ind``: the file's default, overridden by an entry's own. A
-    missing file gives no cases.
-    """
-    if not pins_path.exists():
-        return []
-    pins = json.loads(pins_path.read_text(encoding="utf-8"))
-    default_pd_ind = pins["pd_ind"]
-    return [
-        (ref_mode, system, {"pd_ind": default_pd_ind, **expected})
-        for ref_mode, arm in pins["arms"].items()
-        for system, expected in arm.items()
-    ]
-
-
 def coverage_report(ranges, floor, fraction=0.0, ignored=None, span=(0.0, 1.0), slope=0.0):
     """A ``SolidCoverageReport`` with ``ranges`` unsupported, ``min_supported_total=floor`` and
     ``ignored_floor_slope=slope``."""
@@ -214,17 +229,6 @@ def coverage_report(ranges, floor, fraction=0.0, ignored=None, span=(0.0, 1.0), 
         thresholds={"min_supported_total": floor, "ignored_floor_slope": slope},
         ignored_ranges=None if ignored is None else [list(r) for r in ignored],
     )
-
-
-def corpus_coverage_report(system):
-    """The coverage report of a cached system under the unary-db reference mode."""
-    bl = BinaryLiquid.from_cache(
-        system, param_format="comb-exp", pd_ind=0, ss_kwargs={"ref_mode": "from_unary_db"}
-    )
-    if bl.init_error or not bl.digitized_liq:  # pragma: no cover
-        pytest.skip(f"{system} is excluded upstream of the coverage gate")
-    bl.find_invariant_points(verbose=False)
-    return bl.assess_solid_coverage()
 
 
 # -- hulls and binary models --
@@ -499,6 +503,13 @@ def code_cells(notebook: dict) -> list[str]:
 
 
 # -- fixtures --
+@pytest.fixture(scope="session", autouse=True)
+def mpds_dummy_store():
+    """The session's MPDS reads of the repository ``cache/`` come from :data:`MPDS_DUMMY_DIR`."""
+    with dummy_mpds_store():
+        yield MPDS_DUMMY_DIR
+
+
 @pytest.fixture(autouse=True)
 def close_figures():
     """Close every matplotlib figure after each test of a module that imports this."""
@@ -545,29 +556,3 @@ def no_persist():
     config.set_persist_ternary_imputed(False)
     yield
     config.set_persist_ternary_imputed(before)
-
-
-@pytest.fixture
-def matrix_data_store():
-    """The workspace ``matrix_data`` corpus as the nested cache, or skip where it is absent."""
-    for parent in Path(__file__).resolve().parents:
-        candidate = parent / "matrix_data"
-        if candidate.is_dir() and (candidate / "omegas_hcp.json").exists():
-            break
-    else:
-        pytest.skip("workspace matrix_data cache not present in this checkout")
-    original_dir, original_struct = config.cache_dir, config.dir_structure
-    config.set_cache_dir(candidate)
-    config.set_dir_structure("nested")
-    try:
-        yield candidate
-    finally:
-        config.set_cache_dir(original_dir)
-        config.set_dir_structure(original_struct)
-
-
-@pytest.fixture
-def matrix_data_env(matrix_data_store, monkeypatch):
-    """``matrix_data_store`` with solid solutions on."""
-    monkeypatch.setattr(config, "solid_solutions", True)
-    return matrix_data_store

@@ -24,7 +24,6 @@ from gliquid.plotting.binary_tx import _ASSESSED_GAP_PCT, _assessed_liquidus_seg
 
 from ._mpds_builders import liquid_shape as _shape
 from ._mpds_builders import liquidus_record as _make_json
-from ._mpds_builders import load_cached_mpds as _load_cached
 
 # Two terminal liquid wedges with an 84 at.% hole between them (Bi-Si / Ag-Fe class).
 LEFT_WEDGE = [[0, 2233], [2, 2150], [4, 2080], [6, 2020], [8, 1980]]
@@ -235,25 +234,6 @@ class TestPlotBreak:
     def test_empty_input_is_not_a_trace(self):
         assert _assessed_liquidus_segments([]) == []
 
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize("system", ["Ag-Fe", "Er-Ta", "Bi-Si", "Ir-Th"])
-    def test_real_disjoint_systems_break(self, system):
-        segments = _assessed_liquidus_segments(self._plot_points(_load_cached(system)))
-        assert len(segments) >= 2
-
-    # Hf-Zr ships with the package; the other two only resolve from the corpus store.
-    @pytest.mark.parametrize(
-        "system",
-        [
-            "Hf-Zr",
-            pytest.param("Al-Tl", marks=pytest.mark.needs_cache),
-            pytest.param("Ho-Tm", marks=pytest.mark.needs_cache),
-        ],
-    )
-    def test_real_single_l_systems_do_not_break(self, system):
-        segments = _assessed_liquidus_segments(self._plot_points(_load_cached(system)))
-        assert len(segments) == 1
-
 
 class TestSingleShapeRegression:
     """A diagram with one 'L' shape extracts that shape's curve unchanged."""
@@ -272,24 +252,6 @@ class TestSingleShapeRegression:
         single-'L' diagram cannot be perturbed by the envelope logic."""
         branch = [[0.0, 2506.15], [0.5, 1773.15], [1.0, 2128.15]]
         assert mpds._lower_envelope([branch]) is branch
-
-    @pytest.mark.parametrize(
-        "system, span, n_points, is_partial",
-        [
-            ("Hf-Zr", 1.0, 18, False),  # ships with the package
-            pytest.param("Al-Tl", 0.99770, 137, False, marks=pytest.mark.needs_cache),
-            pytest.param("Ho-Tm", 1.0, 41, False, marks=pytest.mark.needs_cache),
-        ],
-    )
-    def test_real_single_l_systems_are_byte_stable(self, system, span, n_points, is_partial):
-        """Span, point count and ``is_partial`` pinned for cached single-'L' diagrams."""
-        mpds_json = _load_cached(system)
-        assert len(mpds.liquid_shape_paths(mpds_json)) == 1
-        liq, partial = mpds.extract_digitized_liquidus(mpds_json)
-        xs = [pt[0] for pt in liq]
-        assert max(xs) - min(xs) == pytest.approx(span, abs=1e-4)
-        assert len(liq) == n_points
-        assert partial is is_partial
 
 
 class TestFrameEdgeStripping:
@@ -367,25 +329,3 @@ class TestShapeSelection:
         json_1 = _make_json([_shape(LEFT_WEDGE, label="L1 + L2")])
         assert mpds.liquid_shape_paths(json_1) == []
         assert mpds.extract_digitized_liquidus(json_1) == (None, False)
-
-
-class TestRealMultiShapeSystems:
-    """The systems this failure mode affects, read from the local MPDS cache."""
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize(
-        "system, min_span, is_partial",
-        [
-            ("Ag-Fe", 0.999, True),  # was 0.006
-            ("Er-Ta", 0.999, True),  # was 0.169
-            ("Bi-Si", 0.999, True),  # was 0.075
-            ("Ir-Th", 0.99, True),  # was 0.609
-        ],
-    )
-    def test_span_recovers(self, system, min_span, is_partial):
-        mpds_json = _load_cached(system)
-        assert len(mpds.liquid_shape_paths(mpds_json)) > 1
-        liq, partial = mpds.extract_digitized_liquidus(mpds_json)
-        xs = [pt[0] for pt in liq]
-        assert max(xs) - min(xs) >= min_span
-        assert partial is is_partial

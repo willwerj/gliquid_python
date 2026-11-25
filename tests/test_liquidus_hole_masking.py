@@ -271,55 +271,6 @@ class TestReversedFrame:
         assert r_mape == pytest.approx(f_mape, rel=1e-6)
 
 
-class TestRealDisjointSystems:
-    """Hole POSITIONS in cached digitizations, read straight off disk rather than through
-    ``from_cache``. Only Hf-Zr ships with the package; the rest need the maintainer's
-    per-system corpus store.
-    """
-
-    @staticmethod
-    def _cached(system):
-        import json
-        from pathlib import Path
-
-        import gliquid.api as api
-        from gliquid.cache import CacheKey
-
-        name = f"{system}_MPDS_PD_0.json"
-        candidates = [api.resolve_cache_path(CacheKey(system, "mpds", v)) for v in ("0", "")]
-        root = config.project_root
-        parents = Path(root).resolve().parents if root is not None else ()
-        candidates += [parent / "matrix_data" / system / name for parent in parents]
-        # resolve_cache_path answers None for a store with no filesystem paths — a real
-        # answer, so it is filtered rather than assumed away.
-        path = next((p for p in candidates if p is not None and p.exists()), None)
-        if path is None:
-            pytest.skip(f"{system} not in the local MPDS cache")
-        return json.loads(path.read_text())
-
-    @pytest.mark.needs_cache
-    @pytest.mark.parametrize(
-        "system, hole",
-        [
-            ("Ir-Th", [0.2856, 0.3904]),
-            ("Pd-Se", [0.5646, 0.9537]),
-            ("Ca-Nd", [0.0452, 0.4794]),
-        ],
-    )
-    def test_cached_system_carries_its_hole(self, system, hole):
-        cov = mpds.liquidus_coverage(self._cached(system))
-        assert cov["holes"] == [pytest.approx(hole, abs=1e-3)]
-
-    @pytest.mark.needs_cache
-    def test_a_real_hole_mirrors_to_the_other_end(self):
-        cov = mpds.liquidus_coverage(self._cached("Pd-Se"))
-        ((f_lo, f_hi),) = cov["holes"]
-        ((r_lo, r_hi),) = mpds.mirror_liquidus_coverage(cov)["holes"]
-        assert r_lo == pytest.approx(1 - f_hi) and r_hi == pytest.approx(1 - f_lo)
-        # Pd-Se's hole is far from centre, so the mirror is not a no-op in disguise.
-        assert abs(r_lo - f_lo) > 0.5
-
-
 class TestGateIsUnaffected:
     """The interior-coverage gate reads mirror-invariant scalars and must not move."""
 

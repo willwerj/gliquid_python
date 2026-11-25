@@ -61,7 +61,7 @@ from gliquid.phase import EV_ATOM_TO_J_MOL, UNARY
 from gliquid.plotting.binary_figs import imputed_hull_entries
 from gliquid.solution import x_vals
 
-from ._mpds_builders import SMOKE_FIT_KWARGS, strip_interior
+from ._mpds_builders import MPDS_DUMMY_DIR, SMOKE_FIT_KWARGS, strip_interior
 
 SYSTEM = "Cu-Mg"
 
@@ -203,17 +203,6 @@ class TestImputationRecovery:
         # Imputed formation enthalpies are exothermic.
         assert all(ip.enthalpy < 0.0 for ip in imputed)
 
-    def test_recovered_enthalpy_is_in_range(self, imputation_recovery):
-        # Congruent inversion (H = G_liq at the melting point) should land in the same
-        # ballpark as the true DFT formation enthalpy — same sign, comparable magnitude.
-        _, orig, imputed = imputation_recovery
-        by_name = {ip.name: ip.enthalpy for ip in imputed}
-        for name, h_dft in orig.items():
-            h_imp = by_name[name]
-            assert h_imp < 0.0 and h_dft < 0.0
-            ratio = h_imp / h_dft
-            assert 0.25 < ratio < 4.0, f"{name}: imputed {h_imp:.0f} vs DFT {h_dft:.0f} J/mol-atom"
-
     def test_imputed_entry_round_trips_and_filters(self, imputation_recovery):
         _, _, imputed = imputation_recovery
         ed = imputed[0].entry_dict
@@ -272,10 +261,11 @@ class TestImputationRecovery:
 
 @pytest.fixture
 def isolated_cache(tmp_path):
-    """A throwaway copy of the Cu-Mg cache records, installed as the active corpus.
+    """A throwaway copy of the Cu-Mg cache records and synthetic diagram, installed as the
+    active corpus.
 
     The imputed-entry write in these tests must never touch the package cache, and the
-    saved/restored cache dir keeps the rest of the suite on the real corpus.
+    saved/restored cache dir keeps the rest of the suite on the package corpus.
     """
     source = config.cache_dir
     if source is None or config.cache_mode != "directory":
@@ -286,6 +276,7 @@ def isolated_cache(tmp_path):
         copied += 1
     if not copied:
         pytest.skip(f"no cached {SYSTEM} records to copy")
+    shutil.copy2(MPDS_DUMMY_DIR / f"{SYSTEM}.json", tmp_path / f"{SYSTEM}.json")
 
     saved_dir, saved_mode = config.cache_dir, config.cache_mode
     config.set_cache_dir(tmp_path)

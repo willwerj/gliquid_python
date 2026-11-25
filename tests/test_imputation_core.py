@@ -3,7 +3,8 @@
 Envelope values are checked against an independent oracle: a linear program over the same
 points (the envelope is ``min sum(w g)`` subject to ``sum(w) = 1``, ``sum(w x) = x_q``,
 ``w >= 0``), and in one dimension against ``np.interp`` over a monotone-chain lower hull.
-Runs offline against the shipped Cu-Mg and Al-Mg-Si data fixtures.
+Runs offline against the cached Cu-Mg and Al-Mg-Si DFT entries and the synthetic Cu-Mg
+diagram.
 """
 
 from __future__ import annotations

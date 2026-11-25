@@ -5,7 +5,7 @@ slope at the eutectic equals the slope through the two solids) and the tangent e
 (the lower-energy solid lies on the tangent to the liquid free energy at the eutectic). A
 diagram generated from known parameters yields eutectics at which each equation holds at
 the true parameters, its residual a small fraction of RT, and from which the tangent
-equation recovers ``L0_a``. Runs offline on the shipped Cu-Mg cache.
+equation recovers ``L0_a``. Runs offline on the cached Cu-Mg DFT hull and synthetic diagram.
 """
 
 import pytest
